@@ -31,6 +31,41 @@ jobs:
       - name: go test
         run: go test ./...
 
+  # The chart tests skip themselves when helm or kubeconform is missing, so
+  # the Go job above stays tool-free and this job is where they really run.
+  chart:
+    name: Chart
+    runs-on: ubuntu-latest
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+      - name: Install kubeconform
+        run: |
+          curl -sSfL -o kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+          rm kubeconform kubeconform.tar.gz
+          kubeconform -v
+      # The chart has required values, so a bare lint only warns. Linting
+      # with each rendering fixture under --strict turns warnings into errors.
+      - name: helm lint
+        run: |
+          for values in prod-small staging-medium prod-large; do
+            helm lint --strict chart/application --values "chart/application/testdata/${values}.yaml"
+          done
+      - name: go test
+        run: go test -v ./chart/...
+
   release-config:
     name: GoReleaser check
     runs-on: ubuntu-latest

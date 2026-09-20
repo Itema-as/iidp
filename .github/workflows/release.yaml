@@ -29,3 +29,30 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # See "Releasing" in README.md.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+  # Publishes chart/application to GHCR as an OCI artifact with the tag's
+  # version, so the Platform repository can pin the same version the CLI
+  # reports. See chart/application/README.md.
+  chart:
+    name: Chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+      - name: Package and push chart
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # The owner is read from the repository, so this keeps working when
+          # the repository moves between GitHub accounts. GHCR namespaces are
+          # lowercase.
+          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          printf '%s' "${GITHUB_TOKEN}" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          helm package chart/application --version "${version}" --destination dist
+          helm push "dist/application-${version}.tgz" "oci://ghcr.io/${owner}/charts"
