@@ -4,3 +4,4 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 
 | Ticket | Notes |
 |---|---|
+| #2 | [02-skeleton.md](02-skeleton.md) |
