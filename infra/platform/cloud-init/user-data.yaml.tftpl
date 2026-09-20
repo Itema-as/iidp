@@ -1,0 +1,116 @@
+#cloud-config
+# First boot of the Platform node. Provider-neutral: any host that accepts
+# cloud-init user data can run this unchanged. Rendered by OpenTofu with
+# templatefile(): a dollar sign followed by a brace is a template value, so
+# shell expansions that need braces must be written with a doubled dollar.
+#
+# The bootstrap script is written to disk and then run once by cloud-init.
+# It is safe to re-run by hand (ssh root@<node> iidp-bootstrap) after a
+# failure: every step either converges or is skipped when already done.
+
+write_files:
+  - path: /usr/local/sbin/iidp-bootstrap
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      # Installs k3s and ArgoCD, creates the age key once, and applies the
+      # root ArgoCD Application. Everything after that is reconciled by
+      # ArgoCD from the Platform repository.
+      set -euo pipefail
+      exec > >(tee -a /var/log/iidp-bootstrap.log) 2>&1
+
+      K3S_VERSION="${k3s_version}"
+      ARGOCD_VERSION="${argocd_version}"
+      PLATFORM_REPO_URL="${platform_repo_url}"
+      PLATFORM_REPO_PATH="${platform_repo_bootstrap_path}"
+
+      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+      export DEBIAN_FRONTEND=noninteractive
+
+      log() { printf '[iidp-bootstrap] %s\n' "$*"; }
+
+      # At first boot apt-daily may still hold the dpkg lock; wait for it
+      # instead of failing.
+      log "installing packages"
+      apt-get -o DPkg::Lock::Timeout=300 -q update
+      apt-get -o DPkg::Lock::Timeout=300 -q -y install age curl
+
+      # Traefik and ServiceLB stay enabled: ServiceLB is what binds Traefik's
+      # LoadBalancer Service to the node's public IP (no Hetzner load balancer,
+      # ADR-0001). The installer restarts k3s every time it runs, so skip it
+      # when the requested version is already installed.
+      installed_k3s=$(k3s --version 2>/dev/null | awk 'NR == 1 { print $3 }' || true)
+      if [ "$installed_k3s" = "$K3S_VERSION" ]; then
+        log "k3s $K3S_VERSION already installed"
+      else
+        log "installing k3s $K3S_VERSION"
+        curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" sh -s - server
+      fi
+
+      log "waiting for the node to become Ready"
+      deadline=$(( $(date +%s) + 600 ))
+      until kubectl wait --for=condition=Ready node --all --timeout=60s >/dev/null 2>&1; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+          log "node not Ready after 10 minutes; see journalctl -u k3s"
+          exit 1
+        fi
+        sleep 5
+      done
+
+      log "installing ArgoCD $ARGOCD_VERSION"
+      kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+      # Server-side apply is required: the ArgoCD CRDs exceed the annotation
+      # size limit of client-side apply.
+      kubectl apply -n argocd --server-side --force-conflicts \
+        -f "https://raw.githubusercontent.com/argoproj/argo-cd/$ARGOCD_VERSION/manifests/install.yaml"
+      kubectl wait --for=condition=established crd/applications.argoproj.io --timeout=120s
+
+      # The age private key exists only in this Secret, in the layout KSOPS
+      # mounts into argocd-repo-server (key keys.txt). Generated once; a
+      # re-run keeps the existing key.
+      if ! kubectl -n argocd get secret sops-age >/dev/null 2>&1; then
+        log "generating the age key pair"
+        keydir=$(mktemp -d)
+        chmod 700 "$keydir"
+        age-keygen -o "$keydir/keys.txt"
+        kubectl -n argocd create secret generic sops-age --from-file=keys.txt="$keydir/keys.txt"
+        rm -rf "$keydir"
+      fi
+
+      # Derive the public key from the Secret so /root/age.pub always matches
+      # the key the cluster holds, including after a restored key.
+      kubectl -n argocd get secret sops-age -o jsonpath='{.data.keys\.txt}' \
+        | base64 -d | age-keygen -y > /root/age.pub
+      chmod 644 /root/age.pub
+      log "age public key: $(cat /root/age.pub)"
+
+      log "applying the root ArgoCD Application"
+      kubectl apply -f - <<EOF
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: platform
+        namespace: argocd
+      spec:
+        project: default
+        source:
+          repoURL: $PLATFORM_REPO_URL
+          targetRevision: HEAD
+          path: $PLATFORM_REPO_PATH
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: argocd
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true
+          syncOptions:
+            - CreateNamespace=true
+            - ServerSideApply=true
+      EOF
+
+      log "bootstrap complete"
+
+runcmd:
+  - [/usr/local/sbin/iidp-bootstrap]

@@ -20,3 +20,10 @@ Thumbs.db
 # Build output
 dist/
 /iidp
+
+# OpenTofu
+infra/**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example

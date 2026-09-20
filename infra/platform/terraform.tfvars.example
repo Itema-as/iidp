@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Secrets can also be passed
+# as TF_VAR_hcloud_token. The state backend reads its own credentials from
+# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY; see backend.tf.
+
+hcloud_token   = "..."
+ssh_public_key = "ssh-ed25519 AAAA... admin@example"
+
+# Everything else has an agreed default in variables.tf; set it here only to
+# override, for example:
+# server_type = "cpx32"
+# k3s_version = "v1.36.5+k3s1"

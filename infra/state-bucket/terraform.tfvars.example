@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (gitignored) and fill in, or export the two keys as
+# TF_VAR_object_storage_access_key and TF_VAR_object_storage_secret_key.
+
+object_storage_access_key = "..."
+object_storage_secret_key = "..."
+
+# location           = "hel1"
+# state_bucket_name  = "itema-iidp-tofu-state"
+# backup_bucket_name = "itema-iidp-db-backups"

@@ -1,0 +1,46 @@
+name: infra
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    name: tofu fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: "1.12.6"
+          tofu_wrapper: false
+      - run: tofu fmt -check -recursive -diff infra
+
+  validate:
+    name: tofu validate (${{ matrix.root }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [state-bucket, platform]
+    defaults:
+      run:
+        working-directory: infra/${{ matrix.root }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: "1.12.6"
+          tofu_wrapper: false
+      - run: tofu init -backend=false -input=false
+      - run: tofu validate
