@@ -16,3 +16,7 @@ Thumbs.db
 .claude/settings.local.json
 .claude/.cc-writes/
 .claude/worktrees/
+
+# Build output
+dist/
+/iidp
