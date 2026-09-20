@@ -380,10 +380,10 @@ func TestRenderingRefusesInvalidValues(t *testing.T) {
 	}
 }
 
-// kubernetesVersion is the Kubernetes minor the rendered manifests are
-// validated against. It is meant to track the k3s version pinned in infra/;
-// bump it here when that changes.
-const kubernetesVersion = "1.33.0"
+// kubernetesVersion is the Kubernetes version the rendered manifests are
+// validated against: the minor of the k3s release pinned by k3s_version in
+// infra/platform/variables.tf. Bump it here when that changes.
+const kubernetesVersion = "1.36.0"
 
 func TestRenderedManifestsPassKubeconform(t *testing.T) {
 	requireTool(t, "kubeconform")

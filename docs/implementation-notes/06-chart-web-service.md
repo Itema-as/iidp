@@ -20,9 +20,9 @@ cert-manager writes a Certificate's secret into the Certificate's own namespace,
 
 ## Which Kubernetes version does kubeconform validate against?
 
-The rule given was to use the k3s minor from `infra/` if that pull request had merged into `main`, otherwise 1.33. It had not merged when this was built; the unmerged infra branch pins `v1.36.4+k3s1`.
+Options: a fixed recent minor, or the minor of the k3s release the Platform node runs.
 
-Chosen: `1.33.0`, in the single constant `kubernetesVersion` in `chart/application/chart_test.go`. Bump it to `1.36.0` when the infra pull request merges. The three objects rendered today have the same schema in both versions, so nothing in this ticket depends on the choice.
+Chosen: the node's. `infra/platform/variables.tf` pins `k3s_version` to `v1.36.4+k3s1` (#3), so the tests validate against `1.36.0`, in the single constant `kubernetesVersion` in `chart/application/chart_test.go`. kubeconform's default schema source publishes per-version schemas, so the patch level is irrelevant and the constant only needs bumping when the k3s minor changes. There is no automatic link between the two files; the comment on the constant names its source.
 
 ## Which YAML library parses the rendered manifests?
 
