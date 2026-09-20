@@ -6,10 +6,6 @@ version: 2
 
 project_name: iidp
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - id: iidp
     main: ./cmd/iidp
@@ -46,13 +42,10 @@ snapshot:
 
 changelog:
   sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
 
 # The release owner and name are read from the git remote, so releases keep
-# working when the repository moves between GitHub accounts.
+# working when the repository moves between GitHub accounts. The cask homepage
+# below is derived from the same remote for the same reason.
 release:
   draft: false
   prerelease: auto
@@ -75,8 +68,8 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Casks
     commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
-    homepage: https://github.com/Itema-as/iidp
     description: "Command line interface to Itema's Internal Developer Platform"
+    homepage: "{{ trimsuffix .GitURL \".git\" }}"
     # Pre-release tags (v1.2.3-rc1) publish a GitHub Release but do not
     # update the cask, so brew users only ever get stable versions.
     skip_upload: auto

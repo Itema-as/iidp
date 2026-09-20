@@ -30,7 +30,7 @@ Chosen: `homebrew_casks`, the replacement GoReleaser generates for plain binarie
 
 Options: hardcode `Itema-as/iidp` in `release.github`, or leave it out and let GoReleaser read owner and name from the git remote.
 
-Chosen: read from the remote. The repository lives under a personal account today and moves to `Itema-as`; nothing but the compiled-in constant may hardcode an owner, and this way tags release correctly both before and after the move. The tap repository (`Itema-as/homebrew-tap`) and the homepage are the one exception, since the tap is defined by the spec as living under the org.
+Chosen: read from the remote. The repository lives under a personal account today and moves to `Itema-as`; nothing but the compiled-in constant may hardcode an owner, and this way tags release correctly both before and after the move. The cask's `homepage` is templated from the same remote (`{{ trimsuffix .GitURL ".git" }}`) rather than written out. The tap repository (`Itema-as/homebrew-tap`) is the one exception, since the spec defines the tap as living under the org.
 
 ## Name of the tap token secret
 
@@ -38,8 +38,8 @@ Chosen: `HOMEBREW_TAP_GITHUB_TOKEN`, an Actions secret holding a fine-grained to
 
 ## What runs in CI beyond `go vet` and `go test`?
 
-Chosen: a `gofmt -l` check (the same gate the ticket asks for locally) in the Go job, and a separate job running `goreleaser check` so a broken release configuration fails a pull request instead of the tag. Both are cheap and there is no other place a release-config error would surface before a release.
+Chosen: a `gofmt -l` check (the gate required before every commit, so CI enforces what contributors are asked to do by hand) in the Go job, and a separate job running `goreleaser check` so a broken release configuration fails a pull request instead of the tag. Both are cheap and there is no other place a release-config error would surface before a release. GoReleaser's `before.hooks: go mod tidy` was left out on purpose: a release should build exactly what is committed, and a tidy that changes `go.mod` would abort the release as a dirty tree anyway.
 
-## Formula licence
+## Licence
 
-The repository has no `LICENSE` file, so the cask carries no licence stanza. Add one to both when the licence is decided.
+The repository has no `LICENSE` file, so the cask carries no `license` stanza. Add one to both when the licence is decided.

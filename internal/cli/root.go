@@ -15,6 +15,8 @@ import (
 // and streams, and returns the process exit code. main calls it with the real
 // process streams; tests call it with buffers.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	// cobra treats SetArgs(nil) as "use os.Args[1:]", which would let a caller
+	// passing nil escape the in-process seam. An empty slice means no arguments.
 	if args == nil {
 		args = []string{}
 	}
