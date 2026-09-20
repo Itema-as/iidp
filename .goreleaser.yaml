@@ -1,0 +1,90 @@
+# GoReleaser configuration for the iidp CLI. Run by .github/workflows/release.yaml
+# on every v* tag. Verify locally with:
+#   goreleaser check
+#   goreleaser build --snapshot --clean --single-target
+version: 2
+
+project_name: iidp
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: iidp
+    main: ./cmd/iidp
+    binary: iidp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/Itema-as/iidp/internal/version.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: iidp
+    ids:
+      - iidp
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+# The release owner and name are read from the git remote, so releases keep
+# working when the repository moves between GitHub accounts.
+release:
+  draft: false
+  prerelease: auto
+
+# Homebrew publishes to the tap as a cask, which is what GoReleaser generates
+# for plain binaries since v2.10 (the formula-based `brews` section is
+# deprecated). Casks are macOS only; Linux users install from GitHub Releases.
+homebrew_casks:
+  - name: iidp
+    ids:
+      - iidp
+    binaries:
+      - iidp
+    repository:
+      owner: Itema-as
+      name: homebrew-tap
+      branch: main
+      # A token with contents write access to the tap repository. The default
+      # GITHUB_TOKEN of the release workflow cannot push to another repository.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
+    homepage: https://github.com/Itema-as/iidp
+    description: "Command line interface to Itema's Internal Developer Platform"
+    # Pre-release tags (v1.2.3-rc1) publish a GitHub Release but do not
+    # update the cask, so brew users only ever get stable versions.
+    skip_upload: auto
+    # The binaries are not signed or notarized, so clear the quarantine bit
+    # Gatekeeper would otherwise put on them.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/iidp"]
+          end
