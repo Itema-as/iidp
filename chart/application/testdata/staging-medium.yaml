@@ -1,0 +1,16 @@
+application:
+  name: shop
+environment: staging
+platform:
+  baseDomain: app.itma.no
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e
+size: medium
+port: 8080
+probe:
+  path: /healthz
+env:
+  NODE_ENV: production
+  LOG_LEVEL: debug

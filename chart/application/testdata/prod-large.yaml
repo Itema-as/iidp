@@ -1,0 +1,11 @@
+application:
+  name: warehouse
+environment: prod
+platform:
+  baseDomain: app.itma.no
+  wildcardTLSSecret: platform-wildcard-tls
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/warehouse
+  tag: 2.0.0
+size: large

@@ -1,0 +1,41 @@
+{{- include "application.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "application.fullname" . }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "application.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "application.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: {{ include "application.name" . }}
+          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" (.Values.image.tag | toString)) | quote }}
+          ports:
+            - name: http
+              containerPort: {{ include "application.port" . }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ include "application.port" . | quote }}
+            {{- range $name, $value := .Values.env }}
+            - name: {{ $name | quote }}
+              value: {{ $value | toString | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probe.path | quote }}
+              port: http
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probe.path | quote }}
+              port: http
+          resources:
+            {{- include "application.resources" . | nindent 12 }}

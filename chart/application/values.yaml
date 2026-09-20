@@ -1,0 +1,47 @@
+# Values for one Environment of one Application. The CLI writes this file
+# into the Platform repository; developers do not edit it by hand.
+#
+# Every convention (probes, sizes, labels, ingress shape) lives in the
+# templates, not here. See README.md for the full table.
+
+application:
+  # The Application's name: lowercase, DNS-safe, unique on the Platform.
+  # Required.
+  name: ""
+
+# The Environment this values file describes: prod or staging.
+environment: prod
+
+platform:
+  # The Platform base domain. Platform addresses are <name>.<baseDomain>
+  # for prod and <name>-staging.<baseDomain> for staging. Required.
+  baseDomain: ""
+  # The TLS secret holding the Platform's wildcard certificate, written by
+  # the bootstrap's cert-manager Certificate. It must exist in the namespace
+  # the Application is installed into.
+  wildcardTLSSecret: wildcard-tls
+
+# What the Application fundamentally is. Only web-service renders today;
+# static-site is reserved and fails clearly until it is implemented.
+kind: web-service
+
+image:
+  # Required, for example ghcr.io/itema-as/shop.
+  repository: ""
+  # Required, the CI-written image tag (a commit SHA or a version).
+  tag: ""
+
+# small, medium or large. The CPU and memory each size gets is fixed in the
+# chart; see _helpers.tpl and README.md.
+size: small
+
+# The port the container listens on. It is injected as PORT and is the port
+# the Service and the probes use.
+port: 3000
+
+probe:
+  # The path the readiness and liveness probes request on port.
+  path: /
+
+# Plain environment variables, name to value. Secrets do not go here.
+env: {}

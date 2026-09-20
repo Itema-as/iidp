@@ -1,0 +1,10 @@
+application:
+  name: nightly
+environment: prod
+platform:
+  baseDomain: app.itma.no
+kind: cron-job
+image:
+  repository: ghcr.io/itema-as/nightly
+  tag: 1.0.0
+size: small

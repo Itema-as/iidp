@@ -1,0 +1,10 @@
+application:
+  name: brochure
+environment: prod
+platform:
+  baseDomain: app.itma.no
+kind: static-site
+image:
+  repository: ghcr.io/itema-as/brochure
+  tag: 1.0.0
+size: small
