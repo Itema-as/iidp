@@ -47,15 +47,15 @@ State locking is not configured. OpenTofu's S3-native locking (`use_lockfile`) i
 
 **Choice.** On the node. The bootstrap script installs the `age` package from Ubuntu 24.04 (universe, 1.1.1), and if the Secret `argocd/sops-age` does not exist, runs `age-keygen` into a `mktemp -d` directory, creates the Secret with `--from-file=keys.txt=...` (the layout the KSOPS README mounts into `argocd-repo-server` as `SOPS_AGE_KEY_FILE=/.config/sops/age/keys.txt`), and deletes the temporary file. The public key in `/root/age.pub` is derived from the Secret with `age-keygen -y` on every run, so it always matches what the cluster holds, including after the admin restores a saved key. The private key is never written to the OpenTofu state or to user data.
 
-The consequence, spelled out in `infra/README.md`: recreating the node generates a new key unless the admin saves the Secret first and restores it afterwards.
+The consequence, spelled out in `infra/README.md`: a rebuilt node generates a new key unless the admin saves the Secret first and restores it afterwards. That is one of the reasons version bumps never rebuild the node (next section).
 
-## Version bumps recreate the server
+## Version bumps are applied in place, never by recreating the server
 
-**Question.** The k3s and ArgoCD versions are in the user data, and Hetzner does not allow user data to change on an existing server, so `tofu apply` after a bump destroys and recreates the node. Should `lifecycle { ignore_changes = [user_data] }` prevent that?
+**Question.** The k3s and ArgoCD versions are in the user data, and Hetzner does not allow user data to change on an existing server, so a plain `tofu apply` after a bump would destroy and recreate the node. Should `lifecycle { ignore_changes = [user_data] }` prevent that?
 
-**Options.** Ignore user data changes and rely on an in-place command; or let the change recreate the node.
+**Options.** Let the change recreate the node (the literal reading of "change the variable and re-apply"); or ignore user data changes and apply bumps in place on the node.
 
-**Choice.** Let it recreate, as the ticket asks ("Destroying and re-applying gives an identical node") and ADR-0001 accepts. With `ignore_changes`, editing the variable would be a silent no-op against a running node, and the state of the node would drift from the configuration. The in-place path exists as well: the bootstrap script on the node is idempotent, skips the k3s installer when the requested version is already installed, and upgrades in place when `K3S_VERSION` is edited; `infra/README.md` documents both, including saving the age key before a rebuild.
+**Choice.** Ignore user data changes. Recreating the node destroys not only the age key but every local volume, and CloudNativePG on a single node stores every Application's Postgres data on that disk, so a routine k3s bump would be a data-loss event. The upgrade procedure is: change the variable in OpenTofu (it stays the record of what is meant to be running; `tofu plan` shows no change), then re-run `iidp-bootstrap` on the node with `K3S_VERSION` and `ARGOCD_VERSION` in the environment. The script reads those with the rendered values as fallback, skips the k3s installer when the installed version already matches and otherwise lets it upgrade in place (the k3s manual-upgrade procedure), re-applies the ArgoCD manifests server-side with `--force-conflicts` (the form the ArgoCD documentation gives for upgrades), and leaves the age key alone because its Secret exists. A deliberate rebuild is `tofu apply -replace=hcloud_server.node`, documented as disaster recovery only, after backups are confirmed, with the age key saved and restored around it. The first version of this note chose the opposite; it was reversed once the local-volume consequence was spelled out.
 
 ## Root Application shape
 

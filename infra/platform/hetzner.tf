@@ -74,8 +74,6 @@ resource "hcloud_server" "node" {
   ssh_keys     = [hcloud_ssh_key.admin.id]
   firewall_ids = [hcloud_firewall.node.id]
 
-  # user_data forces replacement when it changes; that is the intended way to
-  # roll a new k3s or ArgoCD version in Phase 1 (ADR-0001).
   user_data = local.user_data
 
   public_net {
@@ -85,6 +83,16 @@ resource "hcloud_server" "node" {
 
   labels = {
     platform = "iidp"
+  }
+
+  # A changed user_data would replace the server, and replacing the server
+  # destroys every local volume (each Application's Postgres data lives on
+  # this disk) and the age key. Version bumps are therefore applied in place
+  # by re-running iidp-bootstrap on the node (see infra/README.md); the
+  # variables stay the record of what should be running. A deliberate
+  # rebuild is `tofu apply -replace=hcloud_server.node`.
+  lifecycle {
+    ignore_changes = [user_data]
   }
 }
 

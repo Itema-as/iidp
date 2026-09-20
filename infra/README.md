@@ -70,27 +70,44 @@ ssh root@<ip> cat /etc/rancher/k3s/k3s.yaml | sed "s/127.0.0.1/<ip>/" > ~/.kube/
 
 ## Bumping k3s or ArgoCD
 
-There are two ways. Both are deliberate, manual steps, as ADR-0001 requires.
+Upgrades are deliberate, manual steps (ADR-0001) and they happen **in place**. The node is never recreated for a version bump: its disk holds every Application's Postgres volume (CloudNativePG uses the node's local storage) and the age key, so replacing the server would be a data-loss event. The server resource therefore ignores changes to its user data.
 
-**Rebuild (the OpenTofu way).** Change `k3s_version` or `argocd_version` and run `tofu apply`. Both versions are baked into the server's user data, and Hetzner does not allow user data to change on an existing server, so the plan shows the server being **destroyed and recreated**. ADR-0001 accepts that a single node is an outage, and everything on it is rebuilt from the Platform repository. Two things do not come back by themselves:
+1. Change `k3s_version` or `argocd_version` in OpenTofu (in `terraform.tfvars`, or the default in [`platform/variables.tf`](platform/variables.tf)) and commit. The variables are the record of what is meant to be running; `tofu plan` shows no change, by design.
+2. Apply the same versions on the node by re-running the bootstrap with them in the environment:
 
-- **Databases.** Node disk is not durable. Every Application database is restored from its continuous backup in the backup bucket once CloudNativePG comes back; make sure backups are healthy before you recreate the node.
-- **The age key.** A fresh node generates a fresh key, and every SOPS-encrypted secret in the Platform repository was encrypted for the old one. Before recreating, save the key: `kubectl -n argocd get secret sops-age -o yaml > sops-age.yaml` (treat that file as the crown jewels). After the new node is up, put it back and restart the repo server:
+   ```sh
+   ssh root@$(tofu output -raw node_public_ipv4) \
+     K3S_VERSION=$(tofu output -raw k3s_version) \
+     ARGOCD_VERSION=$(tofu output -raw argocd_version) \
+     iidp-bootstrap
+   ```
 
-  ```sh
-  kubectl -n argocd delete secret sops-age
-  kubectl apply -f sops-age.yaml
-  kubectl -n argocd rollout restart deployment argocd-repo-server
-  ssh root@<ip> iidp-bootstrap   # refreshes /root/age.pub from the restored Secret
-  ```
+   Either variable can be left out to keep that component as it is. The k3s installer upgrades the existing installation when the requested version differs from the installed one (the control plane restarts, about a minute; workloads keep running) and is skipped when it does not; the ArgoCD manifests of the requested version are re-applied server-side; the age key is left alone because its Secret exists; the root Application is re-applied unchanged. Databases and volumes are untouched.
 
-  If the key is gone, re-encrypt every Platform secret for the new public key with `iidp secret set`.
+A first boot uses the versions rendered into the user data at that time. A node that was rebuilt later therefore comes up on whatever the variables said when `tofu apply -replace` ran, which is why step 1 comes first.
 
-**In place (the documented command).** On the node, edit `K3S_VERSION` or `ARGOCD_VERSION` at the top of `/usr/local/sbin/iidp-bootstrap` and run it. The k3s installer upgrades the existing installation (a restart of the control plane, a minute or so), and the ArgoCD manifests are re-applied server-side. Databases and the age key stay where they are. Then change the matching variable in OpenTofu so the next rebuild agrees, and expect `tofu plan` to propose a recreate you can leave un-applied until you want one.
+## Rebuilding the node
+
+Only for disaster recovery, after confirming the database backups in the backup bucket are current. A rebuild **destroys every local volume, so every Application database on the node, and the age key**:
+
+```sh
+tofu apply -replace=hcloud_server.node
+```
+
+Before running it, save the age key: `kubectl -n argocd get secret sops-age -o yaml > sops-age.yaml` (treat that file as the crown jewels). After the new node is up, put it back and restart the repo server:
+
+```sh
+kubectl -n argocd delete secret sops-age
+kubectl apply -f sops-age.yaml
+kubectl -n argocd rollout restart deployment argocd-repo-server
+ssh root@<ip> iidp-bootstrap   # refreshes /root/age.pub from the restored Secret
+```
+
+If the key is gone, every SOPS-encrypted secret in the Platform repository has to be re-encrypted for the new public key with `iidp secret set`. Application databases are restored from their continuous backups once CloudNativePG is back.
 
 ## Re-running the bootstrap
 
-`/usr/local/sbin/iidp-bootstrap` on the node is the script cloud-init ran; its log is `/var/log/iidp-bootstrap.log`. It can be run again by hand after a transient failure (a download that timed out, say). Every step converges: the k3s installer is skipped when the requested version is already installed, the manifests are applied server-side, the age key is only generated when the Secret is absent, and the root Application is re-applied unchanged. If the node does not become Ready within ten minutes the script exits non-zero and points at `journalctl -u k3s`.
+`/usr/local/sbin/iidp-bootstrap` on the node is the script cloud-init ran; its log is `/var/log/iidp-bootstrap.log`. It can be run again by hand after a transient failure (a download that timed out, say), with or without `K3S_VERSION` and `ARGOCD_VERSION` in the environment. Every step converges: the k3s installer is skipped when the requested version is already installed, the manifests are applied server-side, the age key is only generated when the Secret is absent, and the root Application is re-applied unchanged. If the node does not become Ready within ten minutes the script exits non-zero and points at `journalctl -u k3s`.
 
 ## Verification without a Hetzner account
 

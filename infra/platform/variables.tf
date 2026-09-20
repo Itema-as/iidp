@@ -37,8 +37,10 @@ variable "ssh_public_key" {
   }
 }
 
-# Software pinned by cloud-init. Changing either of these changes the user
-# data, and a change to user data recreates the server (see infra/README.md).
+# Software pinned by cloud-init. These are baked into the user data at first
+# boot; a later change is applied in place by re-running iidp-bootstrap on
+# the node with the new value (see infra/README.md), never by recreating
+# the server.
 
 variable "k3s_version" {
   description = "k3s release to install, in the form vX.Y.Z+k3sN. Default is the k3s stable channel as of 2026-09-21."

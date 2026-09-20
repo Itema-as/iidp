@@ -7,6 +7,9 @@
 # The bootstrap script is written to disk and then run once by cloud-init.
 # It is safe to re-run by hand (ssh root@<node> iidp-bootstrap) after a
 # failure: every step either converges or is skipped when already done.
+# Version bumps are applied the same way, by re-running it with K3S_VERSION
+# and ARGOCD_VERSION set in the environment; the values rendered below are
+# the defaults for the first boot.
 
 write_files:
   - path: /usr/local/sbin/iidp-bootstrap
@@ -20,8 +23,10 @@ write_files:
       set -euo pipefail
       exec > >(tee -a /var/log/iidp-bootstrap.log) 2>&1
 
-      K3S_VERSION="${k3s_version}"
-      ARGOCD_VERSION="${argocd_version}"
+      # Overridable from the environment for in-place upgrades:
+      #   K3S_VERSION=vX.Y.Z+k3sN ARGOCD_VERSION=vX.Y.Z iidp-bootstrap
+      K3S_VERSION="$${K3S_VERSION:-${k3s_version}}"
+      ARGOCD_VERSION="$${ARGOCD_VERSION:-${argocd_version}}"
       PLATFORM_REPO_URL="${platform_repo_url}"
       PLATFORM_REPO_PATH="${platform_repo_bootstrap_path}"
 
@@ -39,7 +44,8 @@ write_files:
       # Traefik and ServiceLB stay enabled: ServiceLB is what binds Traefik's
       # LoadBalancer Service to the node's public IP (no Hetzner load balancer,
       # ADR-0001). The installer restarts k3s every time it runs, so skip it
-      # when the requested version is already installed.
+      # when the requested version is already installed; with a different
+      # version it upgrades the existing installation in place.
       installed_k3s=$(k3s --version 2>/dev/null | awk 'NR == 1 { print $3 }' || true)
       if [ "$installed_k3s" = "$K3S_VERSION" ]; then
         log "k3s $K3S_VERSION already installed"
