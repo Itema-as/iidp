@@ -261,12 +261,12 @@ func TestServiceIsClusterIPOnThePort(t *testing.T) {
 
 func TestIngressHostFollowsTheEnvironment(t *testing.T) {
 	cases := []struct {
-		fixture, name, host, tlsSecret string
-		port                           int
+		fixture, name, host string
+		port                int
 	}{
-		{"prod-small.yaml", "shop", "shop.app.itma.no", "wildcard-tls", 3000},
-		{"staging-medium.yaml", "shop-staging", "shop-staging.app.itma.no", "wildcard-tls", 8080},
-		{"prod-large.yaml", "warehouse", "warehouse.app.itma.no", "platform-wildcard-tls", 3000},
+		{"prod-small.yaml", "shop", "shop.app.itma.no", 3000},
+		{"staging-medium.yaml", "shop-staging", "shop-staging.app.itma.no", 8080},
+		{"prod-large.yaml", "warehouse", "warehouse.app.itma.no", 3000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
@@ -311,8 +311,13 @@ func TestIngressHostFollowsTheEnvironment(t *testing.T) {
 			if len(tls) != 1 {
 				t.Fatalf("Ingress has %d tls entries, want 1", len(tls))
 			}
-			if secret := get[string](t, tls[0], "secretName"); secret != tc.tlsSecret {
-				t.Errorf("tls secretName = %q, want %q", secret, tc.tlsSecret)
+			// The Platform's wildcard certificate is Traefik's default
+			// certificate (the bootstrap's TLSStore), so a Platform host
+			// names no secret: Traefik serves the default for any host
+			// without one.
+			entry, _ := tls[0].(map[string]any)
+			if secret, set := entry["secretName"]; set {
+				t.Errorf("tls secretName = %v, want none (the wildcard is Traefik's default certificate)", secret)
 			}
 			if hosts := get[[]any](t, tls[0], "hosts"); len(hosts) != 1 || hosts[0] != tc.host {
 				t.Errorf("tls hosts = %v, want [%s]", hosts, tc.host)
@@ -364,7 +369,6 @@ func TestRenderingRefusesInvalidValues(t *testing.T) {
 	}{
 		{"unknown-size.yaml", `size must be one of large, medium, small, got "xlarge"`},
 		{"unknown-kind.yaml", `kind must be web-service or static-site, got "cron-job"`},
-		{"static-site.yaml", `kind static-site is not implemented yet; only web-service renders`},
 		{"missing-name.yaml", `application.name is required`},
 		{"bad-name.yaml", `application.name must be lowercase letters, digits and dashes, start with a letter and be at most 55 characters, got "1shop"`},
 		{"env-sets-port.yaml", `env must not set PORT; it is injected from port`},

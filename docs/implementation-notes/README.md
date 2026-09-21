@@ -7,3 +7,4 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #2 | [02-skeleton.md](02-skeleton.md) |
 | #3 | [03-infra.md](03-infra.md) |
 | #6 | [06-chart-web-service.md](06-chart-web-service.md) |
+| #8 | [08-chart-static-domains-secrets.md](08-chart-static-domains-secrets.md) |

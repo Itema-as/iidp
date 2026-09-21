@@ -1,0 +1,36 @@
+{{- include "application.validate" . -}}
+{{- $domains := include "application.domains" . | fromJson -}}
+{{- if $domains.foreign }}
+{{- /*
+The custom domains the Platform's wildcard certificate does not cover. They
+sit on their own Ingress because cert-manager's ingress-shim acts on the
+whole object it finds the issuer annotation on: kept apart, it issues one
+Certificate per host here and never tries to issue for the wildcard hosts
+on the Platform Ingress.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "application.fullname" . }}-http01
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # ingress-shim creates a Certificate per tls entry below, solved over
+    # HTTP-01 by the bootstrap's ClusterIssuer.
+    cert-manager.io/cluster-issuer: {{ .Values.platform.httpIssuer | quote }}
+spec:
+  ingressClassName: traefik
+  tls:
+    {{- range $domains.foreign }}
+    - hosts:
+        - {{ . }}
+      secretName: {{ include "application.tlsSecretName" (list $ .) }}
+    {{- end }}
+  rules:
+    {{- range $domains.foreign }}
+    - host: {{ . }}
+      {{- include "application.ingressPaths" $ | nindent 6 }}
+    {{- end }}
+{{- end }}
