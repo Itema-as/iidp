@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,6 +48,9 @@ func helmTemplate(t *testing.T, fixture string) (string, error) {
 	return out.String(), err
 }
 
+// parseObjects splits the multi-document stream helm template prints into
+// objects, failing on a duplicate Kind/name because that would be two
+// objects fighting over one resource in the cluster.
 func parseObjects(t *testing.T, manifests string) map[string]object {
 	t.Helper()
 	objects := map[string]object{}
@@ -71,10 +77,15 @@ func parseObjects(t *testing.T, manifests string) map[string]object {
 }
 
 // requireTool skips the test when the tool is not on PATH, so go test ./...
-// stays green on machines without helm or kubeconform.
+// stays green on machines without helm or kubeconform. CI sets
+// IIDP_REQUIRE_CHART_TOOLS so that a broken tool install fails loudly there
+// instead of skipping every assertion.
 func requireTool(t *testing.T, name string) {
 	t.Helper()
 	if _, err := exec.LookPath(name); err != nil {
+		if os.Getenv("IIDP_REQUIRE_CHART_TOOLS") != "" {
+			t.Fatalf("%s not on PATH and IIDP_REQUIRE_CHART_TOOLS is set", name)
+		}
 		t.Skipf("%s not on PATH", name)
 	}
 }
@@ -103,18 +114,25 @@ func get[T any](t *testing.T, obj any, path ...string) T {
 	return v
 }
 
+// mustObject returns the rendered object with the given "Kind/name" key,
+// listing what was rendered when it is missing.
+func mustObject(t *testing.T, objects map[string]object, key string) object {
+	t.Helper()
+	obj, ok := objects[key]
+	if !ok {
+		t.Fatalf("no %s rendered; got %v", key, keys(objects))
+	}
+	return obj
+}
+
 // container returns the single container of the named Deployment.
 func container(t *testing.T, objects map[string]object, deployment string) map[string]any {
 	t.Helper()
-	dep, ok := objects["Deployment/"+deployment]
-	if !ok {
-		t.Fatalf("no Deployment/%s rendered; got %v", deployment, keys(objects))
-	}
-	containers := get[[]any](t, dep, "spec", "template", "spec", "containers")
+	containers := get[[]any](t, mustObject(t, objects, "Deployment/"+deployment), "spec", "template", "spec", "containers")
 	if len(containers) != 1 {
 		t.Fatalf("Deployment/%s has %d containers, want 1", deployment, len(containers))
 	}
-	return containers[0].(map[string]any)
+	return get[map[string]any](t, map[string]any{"container": containers[0]}, "container")
 }
 
 // envVars returns the container's env as name to value.
@@ -122,19 +140,15 @@ func envVars(t *testing.T, c map[string]any) map[string]string {
 	t.Helper()
 	vars := map[string]string{}
 	for _, item := range get[[]any](t, c, "env") {
-		entry := item.(map[string]any)
-		vars[get[string](t, entry, "name")] = get[string](t, entry, "value")
+		vars[get[string](t, item, "name")] = get[string](t, item, "value")
 	}
 	return vars
 }
 
+// keys lists the rendered "Kind/name" keys in a stable order for messages
+// and comparisons.
 func keys(objects map[string]object) []string {
-	out := make([]string, 0, len(objects))
-	for k := range objects {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(objects))
 }
 
 func TestEverySizeSetsRequestsAndLimits(t *testing.T) {
@@ -213,22 +227,14 @@ func TestPlainEnvIsPassedToTheContainer(t *testing.T) {
 	vars := envVars(t, c)
 
 	want := map[string]string{"PORT": "8080", "NODE_ENV": "production", "LOG_LEVEL": "debug"}
-	if len(vars) != len(want) {
-		t.Errorf("env has %d entries %v, want %v", len(vars), vars, want)
-	}
-	for name, value := range want {
-		if vars[name] != value {
-			t.Errorf("env %s = %q, want %q", name, vars[name], value)
-		}
+	if !maps.Equal(vars, want) {
+		t.Errorf("env = %v, want %v", vars, want)
 	}
 }
 
 func TestServiceIsClusterIPOnThePort(t *testing.T) {
 	objects := render(t, "staging-medium.yaml")
-	svc, ok := objects["Service/shop-staging"]
-	if !ok {
-		t.Fatalf("no Service/shop-staging rendered; got %v", keys(objects))
-	}
+	svc := mustObject(t, objects, "Service/shop-staging")
 
 	if typ := get[string](t, svc, "spec", "type"); typ != "ClusterIP" {
 		t.Errorf("type = %q, want ClusterIP", typ)
@@ -245,7 +251,7 @@ func TestServiceIsClusterIPOnThePort(t *testing.T) {
 	}
 
 	// The Service must select exactly the Pods the Deployment creates.
-	podLabels := get[map[string]any](t, objects["Deployment/shop-staging"], "spec", "template", "metadata", "labels")
+	podLabels := get[map[string]any](t, mustObject(t, objects, "Deployment/shop-staging"), "spec", "template", "metadata", "labels")
 	for key, value := range get[map[string]any](t, svc, "spec", "selector") {
 		if podLabels[key] != value {
 			t.Errorf("selector %s=%v does not match pod label %v", key, value, podLabels[key])
@@ -264,11 +270,7 @@ func TestIngressHostFollowsTheEnvironment(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
-			objects := render(t, tc.fixture)
-			ing, ok := objects["Ingress/"+tc.name]
-			if !ok {
-				t.Fatalf("no Ingress/%s rendered; got %v", tc.name, keys(objects))
-			}
+			ing := mustObject(t, render(t, tc.fixture), "Ingress/"+tc.name)
 
 			if class := get[string](t, ing, "spec", "ingressClassName"); class != "traefik" {
 				t.Errorf("ingressClassName = %q, want traefik", class)
@@ -329,7 +331,7 @@ func TestEveryObjectIsLabelledWithApplicationAndEnvironment(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
 			objects := render(t, tc.fixture)
-			if want := []string{"Deployment/" + tc.instance, "Ingress/" + tc.instance, "Service/" + tc.instance}; !equalStrings(keys(objects), want) {
+			if want := []string{"Deployment/" + tc.instance, "Ingress/" + tc.instance, "Service/" + tc.instance}; !slices.Equal(keys(objects), want) {
 				t.Fatalf("rendered %v, want exactly %v", keys(objects), want)
 			}
 
@@ -380,20 +382,40 @@ func TestRenderingRefusesInvalidValues(t *testing.T) {
 	}
 }
 
-// kubernetesVersion is the Kubernetes version the rendered manifests are
-// validated against: the minor of the k3s release pinned by k3s_version in
-// infra/platform/variables.tf. Bump it here when that changes.
-const kubernetesVersion = "1.36.0"
+// k3sVersionFile is where the Platform pins the k3s release its node runs.
+// The rendered manifests are validated against that release's Kubernetes
+// minor, so there is one pin, in infra, and a k3s bump moves this test with it.
+const k3sVersionFile = "../../infra/platform/variables.tf"
+
+var k3sVersionDefault = regexp.MustCompile(`(?s)variable "k3s_version" \{.*?default\s*=\s*"v(\d+\.\d+)\.\d+\+k3s\d+"`)
+
+// kubernetesVersion returns the Kubernetes version kubeconform validates
+// against, derived from the k3s release pinned in infra: v1.36.4+k3s1 gives
+// 1.36.0, because kubeconform's schemas are published per minor.
+func kubernetesVersion(t *testing.T) string {
+	t.Helper()
+	tf, err := os.ReadFile(k3sVersionFile)
+	if err != nil {
+		t.Fatalf("read the k3s pin: %v", err)
+	}
+	match := k3sVersionDefault.FindSubmatch(tf)
+	if match == nil {
+		t.Fatalf("%s: no default for variable k3s_version of the form vX.Y.Z+k3sN", k3sVersionFile)
+	}
+	return string(match[1]) + ".0"
+}
 
 func TestRenderedManifestsPassKubeconform(t *testing.T) {
 	requireTool(t, "kubeconform")
+	version := kubernetesVersion(t)
+	t.Logf("validating against Kubernetes %s (from %s)", version, k3sVersionFile)
 	for _, fixture := range []string{"prod-small.yaml", "staging-medium.yaml", "prod-large.yaml"} {
 		t.Run(fixture, func(t *testing.T) {
 			manifests, err := helmTemplate(t, fixture)
 			if err != nil {
 				t.Fatalf("helm template %s: %v\n%s", fixture, err, manifests)
 			}
-			cmd := exec.Command("kubeconform", "-strict", "-summary", "-kubernetes-version", kubernetesVersion)
+			cmd := exec.Command("kubeconform", "-strict", "-summary", "-kubernetes-version", version)
 			cmd.Stdin = strings.NewReader(manifests)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
@@ -402,16 +424,4 @@ func TestRenderedManifestsPassKubeconform(t *testing.T) {
 			t.Logf("kubeconform: %s", strings.TrimSpace(string(out)))
 		})
 	}
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

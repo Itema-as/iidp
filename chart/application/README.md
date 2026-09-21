@@ -67,7 +67,7 @@ helm lint --strict chart/application --values chart/application/testdata/prod-sm
 
 ## Tests
 
-`chart_test.go` is a Go test package that shells out to `helm template` with the fixtures in `testdata/`, parses the rendered manifests, and asserts on them: each size's resources, the prod and staging hosts, the default and an overridden probe path, the injected `PORT`, the labels, the TLS secret name, and that unknown sizes, unknown Kinds and bad names are refused. It then runs `kubeconform -strict` on the rendered output against the Kubernetes version pinned in `kubernetesVersion` at the top of the kubeconform test. The tests skip themselves when `helm` or `kubeconform` is not on `PATH`, so `go test ./...` passes on any machine; the `Chart` job in CI installs both and runs them on every pull request.
+`chart_test.go` is a Go test package that shells out to `helm template` with the fixtures in `testdata/`, parses the rendered manifests, and asserts on them: each size's resources, the prod and staging hosts, the default and an overridden probe path, the injected `PORT`, the labels, the TLS secret name, and that unknown sizes, unknown Kinds and bad names are refused. It then runs `kubeconform -strict` on the rendered output against the Kubernetes minor of the k3s release pinned in `infra/platform/variables.tf`, so the node's version is the only pin. The tests skip themselves when `helm` or `kubeconform` is not on `PATH`, so `go test ./...` passes on any machine; the `Chart` job in CI installs both, sets `IIDP_REQUIRE_CHART_TOOLS` so a missing tool fails instead of skipping, and runs them on every pull request.
 
 ```sh
 go test ./chart/...
@@ -81,16 +81,13 @@ The `Release` workflow packages this chart on every `v*` tag with the tag's vers
 oci://ghcr.io/<owner>/charts/application
 ```
 
-where `<owner>` is the lowercase owner of this repository, so `oci://ghcr.io/itema-as/charts/application` once the repository lives under `Itema-as`. An ArgoCD Application in the Platform repository pins it as:
+where `<owner>` is the lowercase owner of this repository, so `oci://ghcr.io/itema-as/charts/application` once the repository lives under `Itema-as`. An ArgoCD Application in the Platform repository pins it by version and supplies the Environment's values file:
 
 ```yaml
 source:
   repoURL: ghcr.io/itema-as/charts
   chart: application
   targetRevision: 0.3.1
-  helm:
-    valueFiles:
-      - $values/apps/shop/prod.yaml
 ```
 
 Pull it by hand with:

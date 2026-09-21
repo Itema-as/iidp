@@ -5,6 +5,3 @@ type: application
 # The release workflow overrides this with the iidp tag's version when it
 # packages and pushes the chart, so the chart and the CLI share one version.
 version: 0.1.0
-home: https://github.com/Itema-as/iidp
-sources:
-  - https://github.com/Itema-as/iidp

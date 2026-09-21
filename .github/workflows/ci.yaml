@@ -64,6 +64,9 @@ jobs:
             helm lint --strict chart/application --values "chart/application/testdata/${values}.yaml"
           done
       - name: go test
+        # The chart tests skip when a tool is missing; here that must fail.
+        env:
+          IIDP_REQUIRE_CHART_TOOLS: "1"
         run: go test -v ./chart/...
 
   release-config:

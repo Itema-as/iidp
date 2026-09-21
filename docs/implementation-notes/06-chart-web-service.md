@@ -20,19 +20,25 @@ cert-manager writes a Certificate's secret into the Certificate's own namespace,
 
 ## Which Kubernetes version does kubeconform validate against?
 
-Options: a fixed recent minor, or the minor of the k3s release the Platform node runs.
+Options: a fixed recent minor written into the test, or the minor of the k3s release the Platform node runs, read from where infra pins it.
 
-Chosen: the node's. `infra/platform/variables.tf` pins `k3s_version` to `v1.36.4+k3s1` (#3), so the tests validate against `1.36.0`, in the single constant `kubernetesVersion` in `chart/application/chart_test.go`. kubeconform's default schema source publishes per-version schemas, so the patch level is irrelevant and the constant only needs bumping when the k3s minor changes. There is no automatic link between the two files; the comment on the constant names its source.
+Chosen: read from infra. The test parses the `default` of `variable "k3s_version"` in `infra/platform/variables.tf` (`v1.36.4+k3s1` as of #3) and validates against `1.36.0`; kubeconform publishes schemas per minor, so the patch level is dropped. A second constant in the test would have been a second pin that a k3s bump could silently leave behind. The cost is that the chart tests fail when that file moves or its default changes shape, which is the right failure: it means the pin has to be found again.
 
 ## Which YAML library parses the rendered manifests?
 
 Options: `sigs.k8s.io/yaml` or `gopkg.in/yaml.v3`.
 
-Chosen: `gopkg.in/yaml.v3`. Its `Decoder` reads the multi-document stream `helm template` prints natively, it decodes into plain `map[string]any` with no Kubernetes types, and it brings no transitive dependencies; `sigs.k8s.io/yaml` converts through JSON and has no stream decoder, so the output would have to be split by hand first. It is only imported by the test package.
+Chosen: `gopkg.in/yaml.v3`. Its `Decoder` reads the multi-document stream `helm template` prints natively, it decodes into plain `map[string]any` with no Kubernetes types, and it brings no transitive dependencies; `sigs.k8s.io/yaml` converts through JSON and has no stream decoder, so the output would have to be split by hand first. The skeleton notes recorded cobra as the one dependency beyond the standard library; this adds a second, imported only by the chart test package and never by the binary, because the standard library has no YAML parser and the spec asks the chart tests to parse rendered YAML.
+
+## A liveness probe as well as readiness?
+
+`docs/design.md` names only the readiness probe ("The readiness probe hits `/` unless the values file overrides it"); the ticket instructions ask for readiness and liveness probes on `probe.path`.
+
+Chosen: both, on the same path, with Kubernetes' default timings (three failures ten seconds apart before a restart). A Web service that stops answering its own root for half a minute is better restarted than left wedged, and the single node has no other recovery. If an Application needs a slower liveness check, that is a chart change, not a values one, and design.md should then say so; until then the design doc's sentence is read as describing the default path, not the number of probes.
 
 ## Chart tests: which job, and how is lint run?
 
-Chosen: a separate `Chart` job in CI that installs Helm (`azure/setup-helm`, pinned to `v4.3.0`, the version installed locally) and kubeconform (`v0.8.0`, downloaded from its GitHub release and verified against the published SHA-256 since there is no official setup action), runs `helm lint --strict` against each rendering fixture, and runs `go test ./chart/...`. The `Go` job is untouched; the chart tests skip themselves there because neither tool is on its PATH, so `go test ./...` stays green everywhere.
+Chosen: a separate `Chart` job in CI that installs Helm (`azure/setup-helm`, pinned to `v4.3.0`, the version installed locally) and kubeconform (`v0.8.0`, downloaded from its GitHub release and verified against the published SHA-256 since there is no official setup action), runs `helm lint --strict` against each rendering fixture, and runs `go test ./chart/...` with `IIDP_REQUIRE_CHART_TOOLS` set. The `Go` job is untouched; the chart tests skip themselves there because neither tool is on its PATH, so `go test ./...` stays green everywhere. In the `Chart` job the same skip would hide a broken tool install behind a green run, so the variable turns it into a failure there.
 
 `helm lint` renders with `values.yaml`, whose required values are empty, and reports each `required` failure as a warning while still exiting 0. Linting with the fixtures under `--strict` is the form that actually fails on a broken template, so that is what CI runs and what the README documents.
 
