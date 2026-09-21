@@ -49,7 +49,7 @@ jobs:
           version: v4.3.0
       - name: Install kubeconform
         run: |
-          curl -sSfL -o kubeconform.tar.gz \
+          curl -sSfL --retry 5 --retry-delay 5 --retry-all-errors -o kubeconform.tar.gz \
             "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
           echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
           tar -xzf kubeconform.tar.gz kubeconform
