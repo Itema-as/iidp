@@ -20,6 +20,10 @@ applications/
     staging/                  the same files, when the Application has a staging Environment
                                (--staging on iidp app create), its own address
                                (<name>-staging.<baseDomain>) and its own database
+    final-backup-<environment>/  left behind by iidp app delete for each Environment that had
+                               Postgres enabled; see "iidp app delete" below
+      application.yaml        an ArgoCD Application applying only backup.yaml, no resources finalizer
+      backup.yaml             a CloudNativePG Backup targeting the deleted Environment's Cluster
 ```
 
 The CLI only ever adds and changes files under `applications/<name>/`. Anything else in the repository is left alone, so an emergency hand edit elsewhere does not break the next `iidp` run.
@@ -196,6 +200,26 @@ sops:
 The Secret's name (`<fullname>-<key-slug>`: the bare Application name for prod, `<name>-staging` for staging, so both Environments can share a namespace without their Secrets colliding, the same `fullname` the chart's own objects use) is added to the `secrets` list of `values.yaml`; the chart mounts every listed Secret's keys as container environment variables (`chart/application/README.md`, `values.yaml`'s `secrets:` field). `needs-hash: "false"` keeps that name stable; `sync-wave: "-2"` puts the Secret a wave before the migration Job's `"-1"` (notes for #7), so a migration or the Application container never starts before the Secret it needs exists. No `namespace`: the ArgoCD Application's `spec.destination.namespace` applies.
 
 `iidp secret set` validates the Application name, the Environment (`prod` or `staging`) and every `KEY` before cloning anything. It then clones `main` to read `platform.yaml` and check that the Environment (`applications/<app>/<env>/`) already exists; a missing `agePublicKey` or a missing Environment is refused there, with a clear error, before anything is written. The private key never reaches the CLI or the Platform repository; only the cluster (`bootstrap/README.md`, Secret `argocd/sops-age`) can decrypt.
+
+## `iidp app add-capability`
+
+Edits an Application's existing Environment files in place with the yaml.v3 node helpers `internal/render` already uses for `secret set` (`AddSecretName`, `AddKustomizeSource`), so unrelated keys, comments and `secrets:` survive. It refuses an Application with no directory under `applications/`, and refuses a Capability already present (Postgres already `enabled`, a `staging` directory that already exists, a domain already in `domains`, the requested size equal to the current one), naming it; nothing is written when any check fails.
+
+- **`--postgres`** sets `postgres.enabled: true` (and `postgres.migrationCommand`, when given) and `platform.backupsBucket`/`objectStorageEndpoint` in every Environment the Application already has, exactly the fields `app create` writes.
+- **`--staging`** copies `prod`'s values.yaml into a new `applications/<name>/staging/values.yaml` (`environment: staging`, `image.tag` reset to `""`, `domains: []`, and no `secrets:` list — prod's secrets are not copied, since the CLI cannot decrypt them to move them, and the command logs that) plus the same `application.yaml` shape `app create` writes.
+- **`--domain`** (repeatable) validates and classifies each host exactly as `app create` does (`ValidateDomains`) and appends it to `prod`'s `domains`.
+- **`--size`** rewrites `size` in every Environment the Application already has.
+
+Committed as `iidp app add-capability <name> <capabilities>` (space-separated Capability names: `postgres`, `staging`, `domain`, `size`), pushed with the same retry-once-on-a-moved-`main` behaviour as `app create`.
+
+## `iidp app delete`
+
+Removes an Application in two commits pushed together, after the developer types the Application name back (or `--force` on a script):
+
+1. For each Environment with `postgres.enabled`, writes `applications/<name>/final-backup-<environment>/{backup.yaml,application.yaml}` (only when at least one Environment has Postgres) and commits `iidp app delete <name>: final backup`. `backup.yaml` is a CloudNativePG `Backup` targeting that Environment's Cluster (`<fullname>-db`, the same name the chart's `Cluster`/`ObjectStore`/`ScheduledBackup` share, `docs/implementation-notes/07-chart-postgres.md`), using the Barman Cloud Plugin the same way the chart's `ScheduledBackup` does (`spec.method: plugin`, `spec.pluginConfiguration.name: barman-cloud.cloudnative-pg.io`), annotated `iidp.itema.no/retain-until: <30 days ahead, YYYY-MM-DD>`. `application.yaml` is a plain ArgoCD Application, matching `bootstrap/applications.yaml`'s `*/*/application.yaml` include glob, whose source is this Platform repository at `main`, `path: applications/<name>/final-backup-<environment>`, `directory.include: backup.yaml`, destination namespace `<name>-<environment>`, automated sync with `prune: false` and, unlike every other Application this document describes, **no resources finalizer**: deleting it later must not delete the `Backup` object it recorded.
+2. Removes `applications/<name>/prod/` and `applications/<name>/staging/` (whichever exist) and commits `iidp app delete <name>`. Their own ArgoCD Applications carry the resources finalizer, so ArgoCD deletes the Environment's resources once it notices the directory is gone; `final-backup-<environment>/` is left behind as the record.
+
+Both commits are pushed in one push. This means ArgoCD may apply the Environment's deletion before the final `Backup` completes — ArgoCD reconciles both commits' effects independently, and nothing here waits for the `Backup` to finish before the second commit lands. What actually makes the Environment recoverable regardless is not this `Backup`'s own success: it is the continuous WAL archive and the daily `ScheduledBackup` already running against the same `ObjectStore` since the Environment was created (`docs/implementation-notes/07-chart-postgres.md`), which the Cluster's deletion does not touch — the Barman Cloud Plugin's `ObjectStore` resource is a Kubernetes object describing where the data lives, not the data itself, and deleting it does not delete anything in Object Storage. `iidp app delete` never touches the Application repository.
 
 ## How the CLI writes
 

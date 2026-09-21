@@ -150,10 +150,14 @@ type argocdApplication struct {
 }
 
 type metadata struct {
-	Name       string            `yaml:"name"`
-	Namespace  string            `yaml:"namespace"`
-	Labels     map[string]string `yaml:"labels"`
-	Finalizers []string          `yaml:"finalizers"`
+	Name      string            `yaml:"name"`
+	Namespace string            `yaml:"namespace"`
+	Labels    map[string]string `yaml:"labels"`
+	// Finalizers is omitted (rather than rendered as an empty list) when
+	// there are none: the final-backup ArgoCD Application
+	// (render.FinalBackupApplication) deliberately carries no resources
+	// finalizer, unlike every Environment's own Application.
+	Finalizers []string `yaml:"finalizers,omitempty"`
 }
 
 type applicationSpec struct {

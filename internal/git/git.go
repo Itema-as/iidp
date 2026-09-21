@@ -72,6 +72,17 @@ func (r *Repository) Commit(ctx context.Context, message string) error {
 	return nil
 }
 
+// Remove deletes the given paths (files or directories) from the working
+// tree and stages the removal, the way "git rm -r" does. iidp app delete
+// uses it to remove an Environment's whole directory in one step.
+func (r *Repository) Remove(ctx context.Context, paths ...string) error {
+	args := append([]string{"rm", "--quiet", "-r", "--"}, paths...)
+	if _, err := r.run(ctx, r.Dir, args...); err != nil {
+		return fmt.Errorf("rm: %w", err)
+	}
+	return nil
+}
+
 // Push pushes HEAD to branch on origin. A push refused because the branch
 // moved returns an error wrapping ErrPushRejected; every other refusal
 // (permissions, network) is returned as is.

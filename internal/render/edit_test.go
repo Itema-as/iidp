@@ -80,6 +80,149 @@ func TestAddSecretNameIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestEnablePostgresSetsEnabledAndPlatformFields(t *testing.T) {
+	out, err := render.EnablePostgres([]byte(testValuesYAML), "npm run migrate", "itema-iidp-db-backups", "https://hel1.your-objectstorage.com")
+	if err != nil {
+		t.Fatalf("EnablePostgres: %v", err)
+	}
+	if !strings.HasPrefix(string(out), "# Values for the prod Environment of shop") {
+		t.Errorf("the header comment was lost:\n%s", out)
+	}
+	for _, want := range []string{
+		"postgres:\n    enabled: true\n",
+		"migrationCommand: npm run migrate\n",
+		"platform:\n    baseDomain: app.itma.no\n    backupsBucket: itema-iidp-db-backups\n    objectStorageEndpoint: https://hel1.your-objectstorage.com\n",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestEnablePostgresLeavesAnEmptyMigrationCommandAlone(t *testing.T) {
+	out, err := render.EnablePostgres([]byte(testValuesYAML), "", "bucket", "https://endpoint.example.com")
+	if err != nil {
+		t.Fatalf("EnablePostgres: %v", err)
+	}
+	// testValuesYAML has no postgres block at all yet; with an empty
+	// migrationCommand, EnablePostgres must not invent one.
+	if strings.Contains(string(out), "migrationCommand") {
+		t.Errorf("migrationCommand should not be set when the argument is empty:\n%s", out)
+	}
+}
+
+func TestEnablePostgresPreservesExistingSecretsList(t *testing.T) {
+	withSecret, _, err := render.AddSecretName([]byte(testValuesYAML), "shop-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := render.EnablePostgres(withSecret, "", "bucket", "https://endpoint.example.com")
+	if err != nil {
+		t.Fatalf("EnablePostgres: %v", err)
+	}
+	if !strings.Contains(string(out), "secrets:\n    - shop-api-key\n") {
+		t.Errorf("the secrets list was lost:\n%s", out)
+	}
+}
+
+func TestSetSizeChangesTheSizeKey(t *testing.T) {
+	out, changed, err := render.SetSize([]byte(testValuesYAML), "medium")
+	if err != nil {
+		t.Fatalf("SetSize: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if !strings.Contains(string(out), "size: medium\n") {
+		t.Errorf("size was not updated:\n%s", out)
+	}
+	if strings.Contains(string(out), "size: small") {
+		t.Errorf("the old size is still present:\n%s", out)
+	}
+}
+
+func TestSetSizeIsIdempotent(t *testing.T) {
+	out, changed, err := render.SetSize([]byte(testValuesYAML), "small")
+	if err != nil {
+		t.Fatalf("SetSize: %v", err)
+	}
+	if changed {
+		t.Error("changed = true, want false: the size was already small")
+	}
+	if string(out) != testValuesYAML {
+		t.Errorf("output changed even though changed=false:\nbefore:\n%s\nafter:\n%s", testValuesYAML, out)
+	}
+}
+
+func TestAddDomainAppendsAndIsIdempotent(t *testing.T) {
+	withOne, changed, err := render.AddDomain([]byte(testValuesYAML), "shop.example.com")
+	if err != nil {
+		t.Fatalf("AddDomain: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if !strings.Contains(string(withOne), "domains:\n    - shop.example.com\n") {
+		t.Errorf("domains list missing or misshapen:\n%s", withOne)
+	}
+
+	out, changed, err := render.AddDomain(withOne, "shop.example.com")
+	if err != nil {
+		t.Fatalf("AddDomain: %v", err)
+	}
+	if changed {
+		t.Error("changed = true, want false: the domain was already listed")
+	}
+	if string(out) != string(withOne) {
+		t.Errorf("output changed even though changed=false")
+	}
+}
+
+func TestCopyValuesForStagingSetsEnvironmentClearsDomainsTagAndSecrets(t *testing.T) {
+	withDomain, _, err := render.AddDomain([]byte(testValuesYAML), "shop.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withSecret, _, err := render.AddSecretName(withDomain, "shop-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, secretsDropped, err := render.CopyValuesForStaging(withSecret)
+	if err != nil {
+		t.Fatalf("CopyValuesForStaging: %v", err)
+	}
+	if !secretsDropped {
+		t.Error("secretsDropped = false, want true: prod had a secrets list")
+	}
+	if !strings.Contains(string(out), "environment: staging\n") {
+		t.Errorf("environment was not set to staging:\n%s", out)
+	}
+	if strings.Contains(string(out), "shop.example.com") {
+		t.Errorf("the custom domain was copied to staging:\n%s", out)
+	}
+	if strings.Contains(string(out), "shop-api-key") || strings.Contains(string(out), "secrets:") {
+		t.Errorf("prod's secrets were copied to staging:\n%s", out)
+	}
+	if !strings.Contains(string(out), `tag: ""`) {
+		t.Errorf("image.tag should be reset to empty for a fresh staging Environment:\n%s", out)
+	}
+	// Everything else must survive the copy.
+	if !strings.Contains(string(out), "repository: ghcr.io/itema-as/shop") {
+		t.Errorf("image.repository was lost:\n%s", out)
+	}
+}
+
+func TestCopyValuesForStagingReportsNoSecretsDropped(t *testing.T) {
+	_, secretsDropped, err := render.CopyValuesForStaging([]byte(testValuesYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secretsDropped {
+		t.Error("secretsDropped = true, want false: prod had no secrets")
+	}
+}
+
 const testApplicationYAML = `# The ArgoCD Application for the prod Environment of shop.
 # Written by iidp; do not edit by hand.
 apiVersion: argoproj.io/v1alpha1
