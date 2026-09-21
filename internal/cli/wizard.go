@@ -1,0 +1,293 @@
+package cli
+
+import (
+	"fmt"
+	"io"
+	"strconv"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
+	"github.com/Itema-as/iidp/internal/migrate"
+	"github.com/Itema-as/iidp/internal/platform"
+	"github.com/Itema-as/iidp/internal/platformrepo"
+	"github.com/Itema-as/iidp/internal/prompt"
+	"github.com/Itema-as/iidp/internal/templates"
+)
+
+// runWizard asks the nine questions docs/design.md's wizard describes, in
+// order, with the agreed defaults, reading from cmd.InOrStdin() and writing
+// to cmd.OutOrStdout() — the same seam the CLI's tests already inject
+// (docs/implementation-notes/14-cli-wizard.md). A question whose flag was
+// already given (cmd.Flags().Changed) is skipped entirely: it never prints
+// anything. Answers are applied with Flags().Set, which both assigns opts'
+// bound field and marks the flag Changed, so the rest of the command (plan,
+// detectMigrationCommand) cannot tell an answer typed at a prompt from one
+// given on the command line.
+func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) error {
+	f := cmd.Flags()
+	out := cmd.OutOrStdout()
+
+	// 1. Application name.
+	if !f.Changed("name") {
+		name, err := p.Text("Application name", "", func(s string) error {
+			return platformrepo.ValidateName(s)
+		})
+		if err != nil {
+			return err
+		}
+		if err := f.Set("name", name); err != nil {
+			return err
+		}
+	}
+
+	// 2. Create or Adopt?
+	if !f.Changed("path") {
+		choice, err := p.Choice("Create or Adopt?", []string{pathCreate, pathAdopt}, pathCreate)
+		if err != nil {
+			return err
+		}
+		if err := f.Set("path", choice); err != nil {
+			return err
+		}
+	}
+	if opts.path == pathAdopt {
+		// Adopt (#15) does not exist yet; opts.plan will refuse it with its
+		// own message. Nothing more to ask: every later question either
+		// does not apply to Adopt or (Kind/framework) would be answered by
+		// detecting the target repository's Dockerfile once #15 lands.
+		fmt.Fprintln(out, "Adopt is not available yet (see issue #15).")
+		return nil
+	}
+
+	// 3. Kind and framework. On the Create path the framework decides the
+	// Kind, except "other", which asks for it directly.
+	//
+	// TODO(#15): when Adopt exists, skip this block entirely when it finds
+	// an existing Dockerfile in the target repository (the Dockerfile is
+	// deployed as-is, and its Kind is whatever the developer already
+	// chose when the repository was created).
+	if opts.path == pathCreate {
+		if !f.Changed("framework") {
+			fw, err := p.Choice("Framework", []string{
+				string(templates.NextJS), string(templates.ViteReact), string(templates.Other),
+			}, string(templates.NextJS))
+			if err != nil {
+				return err
+			}
+			if err := f.Set("framework", fw); err != nil {
+				return err
+			}
+		}
+		if opts.framework == string(templates.Other) && !f.Changed("kind") {
+			if err := askKind(f, p); err != nil {
+				return err
+			}
+		}
+	} else if !f.Changed("kind") {
+		// The legacy bare path (no --path, kept for compatibility per
+		// docs/implementation-notes/11-cli-create-path.md): the wizard
+		// never chooses it itself (question 2 only offers Create or
+		// Adopt), but a flag combination can still reach here, so the
+		// question is asked all the same.
+		if err := askKind(f, p); err != nil {
+			return err
+		}
+	}
+
+	// 4. Postgres database, then, if enabled, the migration command.
+	if !f.Changed("postgres") {
+		yes, err := p.YesNo("Postgres database?", false)
+		if err != nil {
+			return err
+		}
+		if err := f.Set("postgres", strconv.FormatBool(yes)); err != nil {
+			return err
+		}
+	}
+	if opts.postgres && !f.Changed("migration-command") {
+		if err := askMigrationCommand(cmd, opts, p, out); err != nil {
+			return err
+		}
+	}
+
+	// 5. Staging Environment.
+	if !f.Changed("staging") {
+		yes, err := p.YesNo("Staging Environment?", false)
+		if err != nil {
+			return err
+		}
+		if err := f.Set("staging", strconv.FormatBool(yes)); err != nil {
+			return err
+		}
+	}
+
+	// 6. Custom domain.
+	if !f.Changed("domain") {
+		answer, err := p.Text("Custom domain (comma-separated for more than one)", "none", nil)
+		if err != nil {
+			return err
+		}
+		for _, host := range splitDomains(answer) {
+			if err := f.Set("domain", host); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 7. Itema login: docs/design.md's wizard offers this only when no
+	// custom domain was given. Not asked yet — see itemaLoginQuestion.
+	itemaLoginQuestion(opts)
+
+	// 8. Size.
+	if !f.Changed("size") {
+		size, err := p.Choice("Size", sizes, "small")
+		if err != nil {
+			return err
+		}
+		if err := f.Set("size", size); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// askKind asks the Kind question (used both for --framework other, which
+// does not derive one, and for the legacy bare path) and sets --kind with
+// the answer.
+func askKind(f *pflag.FlagSet, p *prompt.Prompter) error {
+	kind, err := p.Choice("Kind", []string{platformrepo.KindWebService, platformrepo.KindStaticSite}, platformrepo.KindWebService)
+	if err != nil {
+		return err
+	}
+	return f.Set("kind", kind)
+}
+
+// askMigrationCommand shows docs/design.md's migration help text, including
+// the detected suggestion (or "nothing" when none was found), and asks for
+// the command. The flag is set even on a blank answer, so
+// detectMigrationCommand does not run detection a second time and
+// potentially disagree with a developer who declined the suggestion.
+func askMigrationCommand(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, out io.Writer) error {
+	planSoFar, err := opts.plan(cmd)
+	if err != nil {
+		return err
+	}
+	det, ok, err := suggestMigrationCommand(planSoFar)
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(out, migrationHelpText(det, ok))
+	suggestion := ""
+	if ok {
+		suggestion = det.Command
+	}
+	answer, err := p.Text("Migration command", suggestion, nil)
+	if err != nil {
+		return err
+	}
+	return cmd.Flags().Set("migration-command", answer)
+}
+
+// migrationHelpText is docs/design.md's "The wizard" help text for the
+// migration command question, with det filled in.
+func migrationHelpText(det migrate.Detection, ok bool) string {
+	var b strings.Builder
+	b.WriteString("Migration command (optional)\n")
+	b.WriteString("Runs once before every rollout, in a one-off container built from your\n")
+	b.WriteString("image, with DATABASE_URL set. Leave empty if your app has no migrations.\n")
+	if ok {
+		fmt.Fprintf(&b, "Detected: %s → suggested %q\n", det.Tool, det.Command)
+	} else {
+		b.WriteString("Detected: nothing\n")
+	}
+	return b.String()
+}
+
+// splitDomains turns a wizard answer into the hosts --domain would have
+// received, one per repeated flag: comma-separated, trimmed, with blanks
+// and a literal "none" (the question's bracketed default) dropped.
+func splitDomains(answer string) []string {
+	var hosts []string
+	for _, part := range strings.Split(answer, ",") {
+		host := strings.TrimSpace(part)
+		if host == "" || strings.EqualFold(host, "none") {
+			continue
+		}
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+// itemaLoginQuestion is the wizard's hook for the Itema login Capability
+// (issue #18): docs/design.md's question 7, offered only when no custom
+// domain was given. Issue #18 has not landed, so there is no --login flag
+// to wire this question to yet, and it asks nothing.
+//
+// TODO(#18): once a --login flag exists, ask "Itema login? [no]" here
+// (skipped when len(opts.domains) > 0, refused outright the way --postgres
+// on a Static site is) and f.Set("login", ...) with the answer.
+func itemaLoginQuestion(_ *createOptions) {}
+
+// printSummary lists every choice the developer made — the wizard's
+// question 9 — before asking for confirmation. preview is what
+// platformrepo.Writer.PreviewApplication reports for app: real addresses
+// and domain classification read from platform.yaml, without writing
+// anything.
+func printSummary(out io.Writer, plan createPlan, ownerLogin string, app platformrepo.Application, preview platformrepo.Result) {
+	fmt.Fprintln(out, "\nSummary:")
+	fmt.Fprintf(out, "  Name:       %s\n", plan.name)
+	if plan.path == pathCreate {
+		visibility := "private"
+		if !plan.private {
+			visibility = "public"
+		}
+		fmt.Fprintf(out, "  Path:       Create\n")
+		fmt.Fprintf(out, "  Owner:      %s (%s)\n", ownerLogin, plan.ownerMode)
+		fmt.Fprintf(out, "  Framework:  %s\n", plan.framework)
+		fmt.Fprintf(out, "  Visibility: %s\n", visibility)
+	} else {
+		fmt.Fprintf(out, "  Path:       writes only %s\n", platform.Repository)
+	}
+	fmt.Fprintf(out, "  Kind:       %s\n", app.Kind)
+	fmt.Fprintf(out, "  Size:       %s\n", app.Size)
+	fmt.Fprintf(out, "  Port:       %d\n", app.Port)
+	fmt.Fprintf(out, "  Probe path: %s\n", app.ProbePath)
+	if app.Postgres {
+		fmt.Fprintf(out, "  Postgres:   enabled (migration command: %q)\n", app.MigrationCommand)
+	} else {
+		fmt.Fprintln(out, "  Postgres:   disabled")
+	}
+	if app.Staging {
+		fmt.Fprintln(out, "  Staging:    enabled, its own address and database")
+	} else {
+		fmt.Fprintln(out, "  Staging:    disabled")
+	}
+	fmt.Fprintf(out, "  Address:    %s\n", preview.Address)
+	if preview.StagingAddress != "" {
+		fmt.Fprintf(out, "  Staging address: %s\n", preview.StagingAddress)
+	}
+	if len(preview.Domains) == 0 {
+		fmt.Fprintln(out, "  Domains:    none")
+	} else {
+		fmt.Fprintln(out, "  Domains:")
+		for _, d := range preview.Domains {
+			switch {
+			case d.Wildcard:
+				fmt.Fprintf(out, "    %s (wildcard certificate, DNS automatic)\n", d.Host)
+			case d.Automated:
+				fmt.Fprintf(out, "    %s (DNS automatic)\n", d.Host)
+			default:
+				fmt.Fprintf(out, "    %s (needs a CNAME)\n", d.Host)
+			}
+		}
+	}
+	if preview.Config.ArgoCDURL != "" {
+		fmt.Fprintf(out, "  ArgoCD:     %s\n", preview.Config.ArgoCDURL)
+	}
+	if preview.Config.GrafanaURL != "" {
+		fmt.Fprintf(out, "  Grafana:    %s\n", preview.Config.GrafanaURL)
+	}
+}
