@@ -82,7 +82,7 @@ spec:
 - The resources finalizer makes deleting the ArgoCD Application delete the Environment's resources, which is what `iidp app delete` will rely on.
 - The labels carry the same Application and Environment identity the chart puts on every object.
 
-What the bootstrap must provide for this to reconcile: the `default` ArgoCD project (or a stricter one, if the bootstrap changes `project` here and in the CLI together) allowed to use both source repositories and to deploy to any namespace on the in-cluster server; ArgoCD credentials for the Platform repository and, if the chart package on GHCR is private, for the OCI registry; and the wildcard TLS secret the chart references (`platform.wildcardTLSSecret`, default `wildcard-tls`) present in each Environment's namespace.
+What the bootstrap must provide for this to reconcile: the `default` ArgoCD project (or a stricter one, if the bootstrap changes `project` here and in the CLI together) allowed to use both source repositories and to deploy to any namespace on the in-cluster server; and ArgoCD credentials for the Platform repository and, if the chart package on GHCR is private, for the OCI registry. Nothing has to be replicated into Environment namespaces: the Platform's wildcard certificate is Traefik's default certificate (a `TLSStore` named `default`, see the chart README), so a new namespace needs no secret of its own.
 
 ## `applications/<name>/<environment>/values.yaml`
 

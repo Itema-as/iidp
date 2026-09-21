@@ -32,7 +32,7 @@ Checked against the current Argo CD documentation ("Multiple Sources for an Appl
 
 Options: name the ArgoCD Application after the Application (`shop`) and let both Environments share a namespace, which the chart's object naming (`shop`, `shop-staging`) allows; or name it `<name>-<environment>` and give each Environment its own namespace.
 
-Chosen: `<name>-<environment>` for both, as the ticket instructions say. ArgoCD Application names must be unique in the `argocd` namespace across the whole Platform, and a namespace per Environment is what `iidp app delete` and a future per-Environment quota want. The chart's own object naming is unaffected. The consequence for the bootstrap: the wildcard TLS secret must exist in every Environment namespace, not just one per Application; `docs/platform-repository.md` says so.
+Chosen: `<name>-<environment>` for both, as the ticket instructions say. ArgoCD Application names must be unique in the `argocd` namespace across the whole Platform, and a namespace per Environment is what `iidp app delete` and a future per-Environment quota want. The chart's own object naming is unaffected. A namespace per Environment costs nothing on the TLS side: since #8 the wildcard certificate is Traefik's default certificate rather than a Secret in the Application's namespace, so a new namespace needs no secret replicated into it; `docs/platform-repository.md` says so.
 
 ## Finalizer and labels on the ArgoCD Application
 

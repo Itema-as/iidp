@@ -14,7 +14,7 @@ import (
 )
 
 // Kinds and sizes the chart accepts. The Static site Kind is a valid answer
-// that is refused until its chart support lands.
+// that is refused until the CLI's Static site ticket lands.
 const (
 	kindWebService = "web-service"
 	kindStaticSite = "static-site"
