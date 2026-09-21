@@ -74,6 +74,7 @@ jobs:
       - name: Write the image tag to the Platform repository
         env:
           IIDP_DEPLOY_APP_PRIVATE_KEY: ${{ secrets.IIDP_DEPLOY_APP_PRIVATE_KEY }}
+          IIDP_DEPLOY_APP_ID: ${{ vars.IIDP_DEPLOY_APP_ID }}
         run: iidp ci set-image __IIDP_APP_NAME__ auto ${{ github.sha }}
 
   promote:
@@ -122,6 +123,7 @@ jobs:
       - name: Write the version to the Platform repository
         env:
           IIDP_DEPLOY_APP_PRIVATE_KEY: ${{ secrets.IIDP_DEPLOY_APP_PRIVATE_KEY }}
+          IIDP_DEPLOY_APP_ID: ${{ vars.IIDP_DEPLOY_APP_ID }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"

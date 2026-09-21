@@ -118,6 +118,32 @@ func (c *Client) SetDefaultBranch(ctx context.Context, owner, name, branch strin
 	return nil
 }
 
+// Installation is one GitHub App installation, as returned by
+// GET /app/installations: only the fields iidp ci set-image needs to find
+// the org's installation.
+type Installation struct {
+	ID      int64 `json:"id"`
+	Account struct {
+		Login string `json:"login"`
+	} `json:"account"`
+}
+
+// ListInstallations lists the installations of the authenticated GitHub
+// App (GET /app/installations). Token must be a JWT signed with the App's
+// private key, the same App-level authentication CreateInstallationToken
+// uses. Confirmed against the current GitHub REST API documentation
+// ("List installations for the authenticated app"): the response is a
+// plain JSON array, unlike GET /user/installations' wrapped shape. Not
+// paginated: an org's own deploy App is expected to have a handful of
+// installations at most, well inside the default page size.
+func (c *Client) ListInstallations(ctx context.Context) ([]Installation, error) {
+	var installations []Installation
+	if err := c.do(ctx, http.MethodGet, "/app/installations", nil, &installations); err != nil {
+		return nil, fmt.Errorf("listing GitHub App installations: %w", err)
+	}
+	return installations, nil
+}
+
 // CreateInstallationToken creates an installation access token for
 // installationID (POST /app/installations/{installation_id}/access_tokens).
 // Token must be a JWT signed with the GitHub App's private key

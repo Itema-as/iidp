@@ -44,11 +44,11 @@ func newCISetImageCommand(deps Dependencies) *cobra.Command {
 			"v* tag. auto targets staging when the Application has one and prod\n" +
 			"otherwise; that decision is made from the Platform repository, never by\n" +
 			"the workflow.\n\n" +
-			"Authenticates as the org's GitHub App, not the developer: the app id and\n" +
-			"installation id come from platform.yaml (githubApp.id,\n" +
-			"githubApp.installationId), the private key from IIDP_DEPLOY_APP_PRIVATE_KEY\n" +
-			"(a PEM) or IIDP_DEPLOY_APP_PRIVATE_KEY_FILE (a path to one). gh auth login\n" +
-			"is not consulted; this command is not meant to be run by hand.",
+			"Authenticates as the org's GitHub App, not the developer: the app id from\n" +
+			"IIDP_DEPLOY_APP_ID (an org Actions variable), the private key from\n" +
+			"IIDP_DEPLOY_APP_PRIVATE_KEY (a PEM) or IIDP_DEPLOY_APP_PRIVATE_KEY_FILE (a\n" +
+			"path to one), and the installation id discovered from GitHub itself. gh\n" +
+			"auth login is not consulted; this command is not meant to be run by hand.",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.application = args[0]
@@ -74,7 +74,7 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 		return errors.New("the tag must not be empty")
 	}
 
-	auth, err := ciInstallationAuth(cmd.Context(), opts.platformRepo, deps)
+	auth, err := ciInstallationAuth(cmd.Context(), deps)
 	if err != nil {
 		return err
 	}
@@ -91,6 +91,9 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 	for _, f := range res.Files {
 		fmt.Fprintf(out, "  %s\n", f)
 	}
+	if res.DocumentedGitHubAppInstallationID != 0 {
+		fmt.Fprintf(out, "\n(%s documents githubApp.installationId %d; informational only.)\n", platformrepo.ConfigFile, res.DocumentedGitHubAppInstallationID)
+	}
 	return nil
 }
 
@@ -106,25 +109,24 @@ func validateCIEnvironment(environment string) error {
 }
 
 // ciInstallationAuth mints the GitHub App installation token ci set-image
-// authenticates the Platform repository with. The app id and installation
-// id come from platform.yaml, read with an anonymous clone
-// (platformrepo.LoadRemoteConfig): platform.yaml carries no secret
-// (agePublicKey is a public key), which is what makes reading it possible
-// before any credential exists at all. The private key comes from the
-// environment. See docs/implementation-notes/12-deploy-workflow.md.
-func ciInstallationAuth(ctx context.Context, platformRepoURL string, deps Dependencies) (git.Auth, error) {
-	cfg, err := platformrepo.LoadRemoteConfig(ctx, platformRepoURL)
+// authenticates the Platform repository with, entirely without reading the
+// Platform repository first: the app id comes from IIDP_DEPLOY_APP_ID (the
+// org Actions variable the deploy workflow passes through, see
+// docs/implementation-notes/05-bootstrap-wizard.md), the private key from
+// the environment, and the installation id is discovered from GitHub
+// itself (GET /app/installations) rather than from platform.yaml, so
+// minting a credential never depends on already having one to read the
+// Platform repository with (docs/implementation-notes/12-deploy-workflow.md).
+func ciInstallationAuth(ctx context.Context, deps Dependencies) (git.Auth, error) {
+	appID, err := githubapp.AppIDFromEnv()
 	if err != nil {
 		return git.Auth{}, err
-	}
-	if cfg.GitHubApp.ID == 0 || cfg.GitHubApp.InstallationID == 0 {
-		return git.Auth{}, fmt.Errorf("%s in %s sets no githubApp.id or githubApp.installationId; iidp ci set-image cannot authenticate without them", platformrepo.ConfigFile, platform.Repository)
 	}
 	key, err := githubapp.PrivateKeyFromEnv()
 	if err != nil {
 		return git.Auth{}, err
 	}
-	jwt, err := githubapp.SignJWT(cfg.GitHubApp.ID, key, time.Now())
+	jwt, err := githubapp.SignJWT(appID, key, time.Now())
 	if err != nil {
 		return git.Auth{}, err
 	}
@@ -132,7 +134,11 @@ func ciInstallationAuth(ctx context.Context, platformRepoURL string, deps Depend
 	if deps.GitHubAPI != "" {
 		ghClient.BaseURL = deps.GitHubAPI
 	}
-	token, err := ghClient.CreateInstallationToken(ctx, cfg.GitHubApp.InstallationID)
+	installationID, err := resolveInstallationID(ctx, ghClient, 0)
+	if err != nil {
+		return git.Auth{}, err
+	}
+	token, err := ghClient.CreateInstallationToken(ctx, installationID)
 	if err != nil {
 		return git.Auth{}, err
 	}
@@ -140,4 +146,34 @@ func ciInstallationAuth(ctx context.Context, platformRepoURL string, deps Depend
 		deps.CIAuthObserved(token)
 	}
 	return git.Auth{Token: token}, nil
+}
+
+// resolveInstallationID is the org's installation id of the GitHub App
+// ghClient is authenticated as (a JWT). When knownID is non-zero, it is
+// returned directly and GitHub is not consulted at all: a shortcut for a
+// caller that already learned the installation id some other way (for
+// example, platform.yaml's githubApp.installationId, once it has been read
+// from an authenticated clone — never before one exists). iidp ci set-image
+// itself always calls this with knownID 0, since it has no clone yet at
+// this point; the shortcut exists for callers that do.
+//
+// Without a known id, it lists the App's installations
+// (GET /app/installations, confirmed against the current GitHub REST API
+// documentation: "List installations for the authenticated app") and picks
+// the one whose account matches the compiled-in org (internal/platform)
+// case-insensitively.
+func resolveInstallationID(ctx context.Context, ghClient *github.Client, knownID int64) (int64, error) {
+	if knownID != 0 {
+		return knownID, nil
+	}
+	installations, err := ghClient.ListInstallations(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, inst := range installations {
+		if strings.EqualFold(inst.Account.Login, platform.Org) {
+			return inst.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("no GitHub App installation found for %s; install the org's deploy App on %s first", platform.Org, platform.Org)
 }

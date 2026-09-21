@@ -44,6 +44,11 @@ func (w *Writer) attemptSetImageTag(ctx context.Context, application, environmen
 	if err != nil {
 		return Result{}, fmt.Errorf("cloning %s: %w", platform.Repository, err)
 	}
+	// Purely informational: platform.yaml's githubApp.installationId, when
+	// the wizard recorded one, documents which installation this command
+	// is expected to run as. Nothing here depends on it (see
+	// docs/implementation-notes/12-deploy-workflow.md).
+	documentedInstallationID, hasDocumentedInstallationID := PeekGitHubAppInstallationID(dir)
 
 	// ErrApplicationMissing is the same error internal/platformrepo/capability.go
 	// wraps for add-capability's "unknown Application" refusal.
@@ -100,7 +105,11 @@ func (w *Writer) attemptSetImageTag(ctx context.Context, application, environmen
 		}
 		return Result{}, fmt.Errorf("pushing to %s: %w\nIf this is a permission error, the GitHub App needs contents: write on %s", platform.Repository, err, platform.Repository)
 	}
-	return Result{Files: []string{valuesRelPath}, Environment: resolved}, nil
+	res := Result{Files: []string{valuesRelPath}, Environment: resolved}
+	if hasDocumentedInstallationID {
+		res.DocumentedGitHubAppInstallationID = documentedInstallationID
+	}
+	return res, nil
 }
 
 // resolveEnvironment turns environment (prod, staging or EnvironmentAuto)

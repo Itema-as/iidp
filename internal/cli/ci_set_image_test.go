@@ -23,59 +23,100 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// fakeInstallationTokenServer is an in-process fake of the one GitHub App
-// endpoint iidp ci set-image needs: POST /app/installations/{id}/access_tokens.
-// It verifies the request is authenticated with a validly-signed RS256 JWT
-// for the expected app id (docs/implementation-notes/12-deploy-workflow.md)
-// and, if so, returns token.
-type fakeInstallationTokenServer struct {
-	srv       *httptest.Server
-	publicKey *rsa.PublicKey
-	appID     int64
-	token     string
+// fakeGitHubApp is an in-process fake of the two GitHub App endpoints iidp
+// ci set-image needs, in order: GET /app/installations (to discover the
+// org's installation id) and POST /app/installations/{id}/access_tokens
+// (to mint the token). Both are authenticated as the App itself with a
+// JWT; the fake verifies its RS256 signature against the test public key
+// and its iss claim against the expected app id
+// (docs/implementation-notes/12-deploy-workflow.md).
+type fakeGitHubApp struct {
+	srv            *httptest.Server
+	publicKey      *rsa.PublicKey
+	appID          int64
+	orgLogin       string
+	installationID int64
+	token          string
 
-	mu       sync.Mutex
-	requests int
+	mu                    sync.Mutex
+	installationsRequests int
+	tokenRequests         int
 }
 
-func newFakeInstallationTokenServer(t *testing.T, publicKey *rsa.PublicKey, appID int64, token string) *fakeInstallationTokenServer {
+// newFakeGitHubApp starts the fake with one installation, for orgLogin
+// with installationID, that hands back token.
+func newFakeGitHubApp(t *testing.T, publicKey *rsa.PublicKey, appID int64, orgLogin string, installationID int64, token string) *fakeGitHubApp {
 	t.Helper()
-	f := &fakeInstallationTokenServer{publicKey: publicKey, appID: appID, token: token}
+	f := &fakeGitHubApp{publicKey: publicKey, appID: appID, orgLogin: orgLogin, installationID: installationID, token: token}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/app/installations/", f.handle)
+	mux.HandleFunc("/app/installations", f.handleListInstallations)
+	mux.HandleFunc("/app/installations/", f.handleCreateToken)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	return f
 }
 
-func (f *fakeInstallationTokenServer) handle(w http.ResponseWriter, r *http.Request) {
+func (f *fakeGitHubApp) handleListInstallations(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
-	f.requests++
+	f.installationsRequests++
 	f.mu.Unlock()
 
-	auth := r.Header.Get("Authorization")
-	jwt, ok := strings.CutPrefix(auth, "Bearer ")
-	if !ok {
-		http.Error(w, "missing bearer JWT", http.StatusUnauthorized)
+	if _, err := f.verifyAppJWT(r); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	claims, err := verifyJWT(jwt, f.publicKey)
-	if err != nil {
-		http.Error(w, "invalid JWT: "+err.Error(), http.StatusUnauthorized)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode([]map[string]any{
+		{"id": f.installationID, "account": map[string]string{"login": f.orgLogin}},
+	})
+}
+
+func (f *fakeGitHubApp) handleCreateToken(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	f.tokenRequests++
+	f.mu.Unlock()
+
+	if _, err := f.verifyAppJWT(r); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	if claims.Iss != strconv.FormatInt(f.appID, 10) {
-		http.Error(w, fmt.Sprintf("iss = %q, want %d", claims.Iss, f.appID), http.StatusUnauthorized)
+	wantPath := fmt.Sprintf("/app/installations/%d/access_tokens", f.installationID)
+	if r.URL.Path != wantPath {
+		http.Error(w, fmt.Sprintf("path = %q, want %q (unknown installation id)", r.URL.Path, wantPath), http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"token": f.token})
 }
 
-func (f *fakeInstallationTokenServer) requestCount() int {
+// verifyAppJWT checks the request's Authorization: Bearer <jwt> against
+// f.publicKey and f.appID.
+func (f *fakeGitHubApp) verifyAppJWT(r *http.Request) (jwtClaims, error) {
+	auth := r.Header.Get("Authorization")
+	jwt, ok := strings.CutPrefix(auth, "Bearer ")
+	if !ok {
+		return jwtClaims{}, fmt.Errorf("missing bearer JWT")
+	}
+	claims, err := verifyJWT(jwt, f.publicKey)
+	if err != nil {
+		return jwtClaims{}, fmt.Errorf("invalid JWT: %w", err)
+	}
+	if claims.Iss != strconv.FormatInt(f.appID, 10) {
+		return jwtClaims{}, fmt.Errorf("iss = %q, want %d", claims.Iss, f.appID)
+	}
+	return claims, nil
+}
+
+func (f *fakeGitHubApp) installationsRequestCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.requests
+	return f.installationsRequests
+}
+
+func (f *fakeGitHubApp) tokenRequestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tokenRequests
 }
 
 type jwtClaims struct {
@@ -125,15 +166,17 @@ func generateTestKeyPair(t *testing.T) (*rsa.PrivateKey, []byte) {
 	return key, pem.EncodeToMemory(block)
 }
 
-// ciPlatformYAML is testPlatformYAML plus the githubApp fields ci
-// set-image needs.
-func ciPlatformYAML(appID, installationID int64) string {
-	return testPlatformYAML + fmt.Sprintf("githubApp:\n  id: %d\n  installationId: %d\n", appID, installationID)
+// setCIAppEnv sets the two environment variables iidp ci set-image
+// authenticates with: IIDP_DEPLOY_APP_ID (the org Actions variable) and
+// IIDP_DEPLOY_APP_PRIVATE_KEY (the org Actions secret PEM).
+func setCIAppEnv(t *testing.T, appID int64, keyPEM []byte) {
+	t.Helper()
+	t.Setenv("IIDP_DEPLOY_APP_ID", strconv.FormatInt(appID, 10))
+	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY", string(keyPEM))
 }
 
 // setImage runs iidp ci set-image in-process against the Platform
-// repository at url, with the GitHub App private key and API base URL
-// wired for a fake installation-token server.
+// repository at url.
 func setImage(t *testing.T, url string, deps cli.Dependencies, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	full := append([]string{"ci", "set-image", "--platform-repo", url}, args...)
@@ -147,14 +190,8 @@ func TestCISetImageWritesTheExplicitEnvironment(t *testing.T) {
 	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
 
 	key, keyPEM := generateTestKeyPair(t)
-	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY", string(keyPEM))
-	fake := newFakeInstallationTokenServer(t, &key.PublicKey, 4242, "inst-token-abc")
-
-	// Re-seed platform.yaml with the githubApp fields once shop exists,
-	// exactly the way a hand edit or a later commit would add them.
-	pushCommit(t, url, "Add githubApp to platform.yaml", map[string]string{
-		"platform.yaml": ciPlatformYAML(4242, 99),
-	})
+	setCIAppEnv(t, 4242, keyPEM)
+	fake := newFakeGitHubApp(t, &key.PublicKey, 4242, platform.Org, 99, "inst-token-abc")
 
 	var observedToken string
 	deps := cli.Dependencies{
@@ -167,8 +204,11 @@ func TestCISetImageWritesTheExplicitEnvironment(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	if fake.requestCount() != 1 {
-		t.Errorf("installation-token requests = %d, want 1", fake.requestCount())
+	if fake.installationsRequestCount() != 1 {
+		t.Errorf("GET /app/installations requests = %d, want 1", fake.installationsRequestCount())
+	}
+	if fake.tokenRequestCount() != 1 {
+		t.Errorf("installation-token requests = %d, want 1", fake.tokenRequestCount())
 	}
 	if observedToken != "inst-token-abc" {
 		t.Errorf("the git credential saw token %q, want the minted %q", observedToken, "inst-token-abc")
@@ -199,9 +239,8 @@ func TestCISetImageAutoPicksStagingWhenPresent(t *testing.T) {
 	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service", "--staging")
 
 	key, keyPEM := generateTestKeyPair(t)
-	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY", string(keyPEM))
-	fake := newFakeInstallationTokenServer(t, &key.PublicKey, 1, "tok")
-	pushCommit(t, url, "Add githubApp", map[string]string{"platform.yaml": ciPlatformYAML(1, 1)})
+	setCIAppEnv(t, 1, keyPEM)
+	fake := newFakeGitHubApp(t, &key.PublicKey, 1, platform.Org, 1, "tok")
 
 	deps := cli.Dependencies{GitHubAPI: fake.srv.URL}
 	stdout, stderr, code := setImage(t, url, deps, "shop", "auto", "sha1")
@@ -227,9 +266,8 @@ func TestCISetImageAutoPicksProdWhenNoStaging(t *testing.T) {
 	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
 
 	key, keyPEM := generateTestKeyPair(t)
-	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY", string(keyPEM))
-	fake := newFakeInstallationTokenServer(t, &key.PublicKey, 1, "tok")
-	pushCommit(t, url, "Add githubApp", map[string]string{"platform.yaml": ciPlatformYAML(1, 1)})
+	setCIAppEnv(t, 1, keyPEM)
+	fake := newFakeGitHubApp(t, &key.PublicKey, 1, platform.Org, 1, "tok")
 
 	deps := cli.Dependencies{GitHubAPI: fake.srv.URL}
 	stdout, stderr, code := setImage(t, url, deps, "shop", "auto", "sha1")
@@ -246,9 +284,8 @@ func TestCISetImageRetriesOnceWhenMainMoved(t *testing.T) {
 	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
 
 	key, keyPEM := generateTestKeyPair(t)
-	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY", string(keyPEM))
-	fake := newFakeInstallationTokenServer(t, &key.PublicKey, 1, "tok")
-	pushCommit(t, url, "Add githubApp", map[string]string{"platform.yaml": ciPlatformYAML(1, 1)})
+	setCIAppEnv(t, 1, keyPEM)
+	fake := newFakeGitHubApp(t, &key.PublicKey, 1, platform.Org, 1, "tok")
 
 	pushes := 0
 	deps := cli.Dependencies{
@@ -257,7 +294,7 @@ func TestCISetImageRetriesOnceWhenMainMoved(t *testing.T) {
 			pushes++
 			if pushes == 1 {
 				pushCommit(t, url, "Hand-edit platform.yaml", map[string]string{
-					"platform.yaml": ciPlatformYAML(1, 1) + "handEdited: true\n",
+					"platform.yaml": testPlatformYAML + "handEdited: true\n",
 				})
 			}
 			return nil
@@ -271,6 +308,11 @@ func TestCISetImageRetriesOnceWhenMainMoved(t *testing.T) {
 	if pushes != 2 {
 		t.Errorf("push attempts = %d, want 2", pushes)
 	}
+	// Minting the token happens once, before the Writer's retry loop; the
+	// same credential is reused for both attempts.
+	if fake.tokenRequestCount() != 1 {
+		t.Errorf("installation-token requests = %d, want 1 (minted once, reused across the retry)", fake.tokenRequestCount())
+	}
 	clone := cloneMain(t, url)
 	values := readYAML(t, filepath.Join(clone, "applications/shop/prod/values.yaml"))
 	if got := lookup(t, values, "image", "tag"); got != "sha2" {
@@ -281,9 +323,8 @@ func TestCISetImageRetriesOnceWhenMainMoved(t *testing.T) {
 func TestCISetImageRefusesAnUnknownApplication(t *testing.T) {
 	url := newPlatformRepository(t, testPlatformYAML)
 	key, keyPEM := generateTestKeyPair(t)
-	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY", string(keyPEM))
-	fake := newFakeInstallationTokenServer(t, &key.PublicKey, 1, "tok")
-	pushCommit(t, url, "Add githubApp", map[string]string{"platform.yaml": ciPlatformYAML(1, 1)})
+	setCIAppEnv(t, 1, keyPEM)
+	fake := newFakeGitHubApp(t, &key.PublicKey, 1, platform.Org, 1, "tok")
 
 	deps := cli.Dependencies{GitHubAPI: fake.srv.URL}
 	_, stderr, code := setImage(t, url, deps, "no-such-app", "prod", "sha1")
@@ -299,8 +340,8 @@ func TestCISetImageRefusesAnUnknownEnvironment(t *testing.T) {
 	url := newPlatformRepository(t, testPlatformYAML)
 	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
 
-	// No fake server or private key needed: an unknown Environment is
-	// refused before any authentication is attempted.
+	// No fake server, app id or private key needed: an unknown Environment
+	// is refused before any authentication is attempted.
 	_, stderr, code := setImage(t, url, cli.Dependencies{}, "shop", "canary", "sha1")
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero")
@@ -315,9 +356,8 @@ func TestCISetImageRefusesAnEnvironmentTheApplicationDoesNotHave(t *testing.T) {
 	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
 
 	key, keyPEM := generateTestKeyPair(t)
-	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY", string(keyPEM))
-	fake := newFakeInstallationTokenServer(t, &key.PublicKey, 1, "tok")
-	pushCommit(t, url, "Add githubApp", map[string]string{"platform.yaml": ciPlatformYAML(1, 1)})
+	setCIAppEnv(t, 1, keyPEM)
+	fake := newFakeGitHubApp(t, &key.PublicKey, 1, platform.Org, 1, "tok")
 
 	deps := cli.Dependencies{GitHubAPI: fake.srv.URL}
 	_, stderr, code := setImage(t, url, deps, "shop", "staging", "sha1")
@@ -332,8 +372,8 @@ func TestCISetImageRefusesAnEnvironmentTheApplicationDoesNotHave(t *testing.T) {
 func TestCISetImageFailsClearlyWithoutAPrivateKey(t *testing.T) {
 	url := newPlatformRepository(t, testPlatformYAML)
 	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
-	pushCommit(t, url, "Add githubApp", map[string]string{"platform.yaml": ciPlatformYAML(1, 1)})
 
+	t.Setenv("IIDP_DEPLOY_APP_ID", "1")
 	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY", "")
 	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY_FILE", "")
 
@@ -346,18 +386,68 @@ func TestCISetImageFailsClearlyWithoutAPrivateKey(t *testing.T) {
 	}
 }
 
-func TestCISetImageFailsClearlyWithoutGitHubAppConfig(t *testing.T) {
+func TestCISetImageFailsClearlyWithoutAppID(t *testing.T) {
 	url := newPlatformRepository(t, testPlatformYAML)
 	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
+
 	_, keyPEM := generateTestKeyPair(t)
+	t.Setenv("IIDP_DEPLOY_APP_ID", "")
 	t.Setenv("IIDP_DEPLOY_APP_PRIVATE_KEY", string(keyPEM))
 
-	// testPlatformYAML sets no githubApp block at all.
 	_, stderr, code := setImage(t, url, cli.Dependencies{}, "shop", "prod", "sha1")
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "githubApp") {
-		t.Errorf("stderr = %q, want it to name githubApp", stderr)
+	if !strings.Contains(stderr, "IIDP_DEPLOY_APP_ID") {
+		t.Errorf("stderr = %q, want it to name IIDP_DEPLOY_APP_ID", stderr)
+	}
+}
+
+func TestCISetImageFailsClearlyWhenNoInstallationMatchesTheOrg(t *testing.T) {
+	url := newPlatformRepository(t, testPlatformYAML)
+	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
+
+	key, keyPEM := generateTestKeyPair(t)
+	setCIAppEnv(t, 1, keyPEM)
+	// The fake's one installation is for a different account entirely.
+	fake := newFakeGitHubApp(t, &key.PublicKey, 1, "someone-else", 1, "tok")
+
+	deps := cli.Dependencies{GitHubAPI: fake.srv.URL}
+	_, stderr, code := setImage(t, url, deps, "shop", "prod", "sha1")
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr, platform.Org) {
+		t.Errorf("stderr = %q, want it to name %s", stderr, platform.Org)
+	}
+}
+
+// TestCISetImageNeverReadsThePlatformRepositoryAnonymously locks in the
+// fix for the production bug this test guards against: the Platform
+// repository is private, and iidp ci set-image must authenticate before
+// its first (and only) clone, never attempting an anonymous read first. A
+// pre-receive-style guard cannot observe an anonymous git clone directly
+// (file:// remotes never consult a credential helper either way), so this
+// is asserted the way the rest of this file already does: the whole flow
+// succeeds using only the fake GitHub App's discovery-then-mint sequence,
+// with no other credential source (no gh token: deps.TokenSource is left
+// nil and unused by ci set-image) and no platform.yaml githubApp block at
+// all (testPlatformYAML sets none), proving the app id and installation id
+// came entirely from the environment and GitHub's API.
+func TestCISetImageNeverReadsThePlatformRepositoryAnonymously(t *testing.T) {
+	url := newPlatformRepository(t, testPlatformYAML)
+	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
+
+	key, keyPEM := generateTestKeyPair(t)
+	setCIAppEnv(t, 7, keyPEM)
+	fake := newFakeGitHubApp(t, &key.PublicKey, 7, platform.Org, 77, "tok")
+
+	deps := cli.Dependencies{GitHubAPI: fake.srv.URL}
+	_, stderr, code := setImage(t, url, deps, "shop", "prod", "sha1")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	if fake.installationsRequestCount() != 1 || fake.tokenRequestCount() != 1 {
+		t.Errorf("installations requests = %d, token requests = %d, want 1 and 1", fake.installationsRequestCount(), fake.tokenRequestCount())
 	}
 }

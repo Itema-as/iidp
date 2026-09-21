@@ -35,6 +35,28 @@ const (
 	PrivateKeyFileEnvVar = "IIDP_DEPLOY_APP_PRIVATE_KEY_FILE"
 )
 
+// AppIDEnvVar is the environment variable iidp ci set-image reads the
+// GitHub App's id from: the org Actions variable the bootstrap wizard
+// creates (docs/implementation-notes/05-bootstrap-wizard.md), passed to
+// the deploy workflow as IIDP_DEPLOY_APP_ID: ${{ vars.IIDP_DEPLOY_APP_ID }}.
+// Read from the environment rather than platform.yaml so minting a
+// credential never depends on already having one to read the Platform
+// repository with (docs/implementation-notes/12-deploy-workflow.md).
+const AppIDEnvVar = "IIDP_DEPLOY_APP_ID"
+
+// AppIDFromEnv reads and parses AppIDEnvVar.
+func AppIDFromEnv() (int64, error) {
+	v := os.Getenv(AppIDEnvVar)
+	if v == "" {
+		return 0, fmt.Errorf("%s is not set; iidp ci set-image cannot authenticate as the GitHub App without it", AppIDEnvVar)
+	}
+	id, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q is not a valid integer: %w", AppIDEnvVar, v, err)
+	}
+	return id, nil
+}
+
 // PrivateKeyFromEnv reads the GitHub App's private key PEM from
 // PrivateKeyEnvVar, or from the file named by PrivateKeyFileEnvVar when
 // the former is not set. It is an error for neither to be set.

@@ -18,12 +18,15 @@ retags the SHA image with the version, with no rebuild, and runs
 `iidp ci set-image` for prod. Until `Dockerfile` is completed, the build
 step fails and nothing deploys.
 
-The write-back authenticates as the org's GitHub App, using the
-`IIDP_DEPLOY_APP_PRIVATE_KEY` org Actions secret the Platform admin's
-bootstrap wizard creates. That secret has org visibility, so an org-owned
-repository receives it automatically; a repository under a personal
-account does not and needs it added by hand (Settings → Secrets and
-variables → Actions → New repository secret).
+The write-back authenticates as the org's GitHub App without ever reading
+the (private) Platform repository first: the `IIDP_DEPLOY_APP_PRIVATE_KEY`
+org Actions secret and the `IIDP_DEPLOY_APP_ID` org Actions variable the
+Platform admin's bootstrap wizard creates, plus an installation id
+discovered from GitHub itself. Both the secret and the variable have org
+visibility, so an org-owned repository receives them automatically; a
+repository under a personal account receives neither and needs both added
+by hand (Settings → Secrets and variables → Actions → New repository
+secret, and → New repository variable).
 
 The image GHCR receives on the first push is private by default: make the
 package public before the first deploy (its GitHub page, Package settings

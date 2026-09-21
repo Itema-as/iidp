@@ -112,6 +112,12 @@ type Result struct {
 	// written: the literal prod or staging it was given, or, given auto,
 	// whichever of the two it resolved to.
 	Environment string
+	// DocumentedGitHubAppInstallationID is set by SetImageTag to
+	// platform.yaml's githubApp.installationId when present, purely for
+	// logging: it plays no part in authenticating the command that
+	// produced this Result (docs/implementation-notes/12-deploy-workflow.md).
+	// Zero means platform.yaml documented none.
+	DocumentedGitHubAppInstallationID int64
 }
 
 // Writer commits Applications to the Platform repository.
@@ -191,26 +197,6 @@ func (w *Writer) CheckAvailable(ctx context.Context, name string) error {
 		return fmt.Errorf("cloning %s: %w", platform.Repository, err)
 	}
 	return checkApplicationAbsent(dir, name, false)
-}
-
-// LoadRemoteConfig clones url anonymously (no credential at all) and reads
-// platform.yaml. iidp ci set-image uses it to discover githubApp.id and
-// githubApp.installationId before it has any credential to authenticate
-// with: platform.yaml carries no secret (agePublicKey is a public key), so
-// reading it needs none (docs/implementation-notes/12-deploy-workflow.md).
-// This requires the Platform repository to allow anonymous read access
-// (public, or a public deploy key/mirror): a private repository refuses
-// the anonymous clone, and the error below says so.
-func LoadRemoteConfig(ctx context.Context, url string) (Config, error) {
-	dir, err := os.MkdirTemp("", "iidp-platform-config-")
-	if err != nil {
-		return Config{}, err
-	}
-	defer os.RemoveAll(dir)
-	if _, err := git.Clone(ctx, url, Branch, dir, git.Auth{}); err != nil {
-		return Config{}, fmt.Errorf("cloning %s anonymously to read %s: %w\niidp ci set-image reads githubApp.id and githubApp.installationId from %s before it has any credential to authenticate with, which requires %s to allow anonymous read access (see docs/implementation-notes/12-deploy-workflow.md); if it is private, this is expected to fail", platform.Repository, ConfigFile, err, ConfigFile, platform.Repository)
-	}
-	return LoadConfig(dir)
 }
 
 // checkApplicationAbsent errors if name already has a directory under
