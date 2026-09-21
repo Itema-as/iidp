@@ -791,7 +791,7 @@ GITHUB_APP_ID="" GITHUB_APP_INSTALLATION_ID="" GITHUB_ORG="" PEM_PATH=""
 
 html_escape() {
   local s="$1"
-  s="${s//&/&amp;}"; s="${s//\'/\&#39;}"; s="${s//</\&lt;}"; s="${s//>/\&gt;}"
+  s="${s//&/&amp;}"; s="${s//\'/\&#39;}"; s="${s//\"/\&quot;}"; s="${s//</\&lt;}"; s="${s//>/\&gt;}"
   printf '%s' "$s"
 }
 
@@ -864,6 +864,35 @@ ENTRA_OAUTH2_PROXY_TENANT="" ENTRA_OAUTH2_PROXY_CLIENT_ID="" ENTRA_OAUTH2_PROXY_
 ARGOCD_URL="" ARGOCD_ADMIN_GROUP=""
 OAUTH2_PROXY_HOST=""
 
+# entra_register_app NAME REDIRECT_URI DEFAULT_TENANT OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET OPEN_URL
+# Creates the app registration via az_create_entra_app when az is available
+# and logged in, otherwise prints what to create by hand and asks for the
+# three resulting values. OUT_* are namerefs (bash >= 4.3), same convention
+# as az_create_entra_app itself, which this wraps.
+entra_register_app() {
+  local name="$1" redirect_uri="$2" default_tenant="$3"
+  # shellcheck disable=SC2034  # namerefs: written here, read through the caller's own variable names
+  local -n reg_tenant="$4" reg_client_id="$5" reg_client_secret="$6"
+  local do_open_url="$7"
+
+  if az_available; then
+    say "az is logged in: creating the $name app registration automatically."
+    az_create_entra_app "$name" "$redirect_uri" reg_tenant reg_client_id reg_client_secret
+    ok "created Entra app '$name' (client id $reg_client_id)"
+  else
+    say "az is not available or not logged in with rights to register apps."
+    say "In Entra ID > App registrations > New registration, create:"
+    note "  name: $name"
+    note "  redirect URI (Web): ${redirect_uri}"
+    note "  API permissions (delegated, admin consent): User.Read, GroupMember.Read.All"
+    note "  Certificates & secrets: new client secret"
+    [[ "$do_open_url" == "1" ]] && open_url "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    ask reg_tenant "Tenant id:" "$default_tenant"
+    ask reg_client_id "Client id:"
+    ask_secret reg_client_secret "Client secret:"
+  fi
+}
+
 stage_entra() {
   stage "Entra ID"
   local platform_yaml="$PLATFORM_REPO/platform.yaml"
@@ -883,39 +912,14 @@ stage_entra() {
   fi
 
   if [[ "$skip_argocd_app" != "1" ]]; then
-    if az_available; then
-      say "az is logged in: creating the ArgoCD (Dex) app registration automatically."
-      az_create_entra_app "iidp-argocd" "$argocd_redirect" ENTRA_ARGOCD_TENANT ENTRA_ARGOCD_CLIENT_ID ENTRA_ARGOCD_CLIENT_SECRET
-      ok "created Entra app 'iidp-argocd' (client id $ENTRA_ARGOCD_CLIENT_ID)"
-    else
-      say "az is not available or not logged in with rights to register apps."
-      say "In Entra ID > App registrations > New registration, create:"
-      note "  name: iidp-argocd"
-      note "  redirect URI (Web): ${argocd_redirect}"
-      note "  API permissions (delegated, admin consent): User.Read, GroupMember.Read.All"
-      note "  Certificates & secrets: new client secret"
-      open_url "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
-      ask ENTRA_ARGOCD_TENANT "Tenant id:"
-      ask ENTRA_ARGOCD_CLIENT_ID "Client id:"
-      ask_secret ENTRA_ARGOCD_CLIENT_SECRET "Client secret:"
-    fi
+    entra_register_app "iidp-argocd" "$argocd_redirect" "" \
+      ENTRA_ARGOCD_TENANT ENTRA_ARGOCD_CLIENT_ID ENTRA_ARGOCD_CLIENT_SECRET 1
   fi
 
   say "oauth2-proxy (ticket #18, Itema login) needs its own registration now, so it"
   say "is ready when that ticket lands."
-  if az_available; then
-    az_create_entra_app "iidp-oauth2-proxy" "$oauth2_proxy_redirect" ENTRA_OAUTH2_PROXY_TENANT ENTRA_OAUTH2_PROXY_CLIENT_ID ENTRA_OAUTH2_PROXY_CLIENT_SECRET
-    ok "created Entra app 'iidp-oauth2-proxy' (client id $ENTRA_OAUTH2_PROXY_CLIENT_ID)"
-  else
-    say "In Entra ID > App registrations > New registration, create:"
-    note "  name: iidp-oauth2-proxy"
-    note "  redirect URI (Web): ${oauth2_proxy_redirect}"
-    note "  API permissions (delegated, admin consent): User.Read, GroupMember.Read.All"
-    note "  Certificates & secrets: new client secret"
-    ask ENTRA_OAUTH2_PROXY_TENANT "Tenant id:" "$ENTRA_ARGOCD_TENANT"
-    ask ENTRA_OAUTH2_PROXY_CLIENT_ID "Client id:"
-    ask_secret ENTRA_OAUTH2_PROXY_CLIENT_SECRET "Client secret:"
-  fi
+  entra_register_app "iidp-oauth2-proxy" "$oauth2_proxy_redirect" "$ENTRA_ARGOCD_TENANT" \
+    ENTRA_OAUTH2_PROXY_TENANT ENTRA_OAUTH2_PROXY_CLIENT_ID ENTRA_OAUTH2_PROXY_CLIENT_SECRET 0
 
   # No Platform component consumes this yet (ticket #18 adds it); keep it out
   # of git, in a local file next to the other tfvars, until then.

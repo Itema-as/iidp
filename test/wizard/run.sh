@@ -173,6 +173,13 @@ t_start "github_owner_of extracts owner/repo"
 out=$(in_wizard "github_owner_of 'https://github.com/Itema-as/iidp-platform.git'")
 assert_eq "$out" "Itema-as/iidp-platform"
 
+t_start "html_escape escapes everything that would break a single-quoted HTML attribute"
+export IIDP_TEST_HTML_INPUT="a & b 'quoted' \"double\" <tag>"
+# shellcheck disable=SC2016  # deliberately unexpanded here: eval'd inside in_wizard's subshell
+out=$(in_wizard 'html_escape "$IIDP_TEST_HTML_INPUT"')
+unset IIDP_TEST_HTML_INPUT
+assert_eq "$out" "a &amp; b &#39;quoted&#39; &quot;double&quot; &lt;tag&gt;"
+
 # ── network wrapper functions under IIDP_WIZARD_FAKE=1 ──────────────────
 
 t_start "validate_hetzner_token succeeds for the fake token"
