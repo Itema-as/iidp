@@ -47,7 +47,22 @@ iidp app create --name shop --kind web-service --size medium --port 8080 --probe
 
 The command writes the Application's `prod` Environment to the Platform repository, an ArgoCD Application pinned to the chart version in `platform.yaml` and the values file that defines the Environment, commits as you and pushes to `main`. It then prints the Environment's address and where to look in ArgoCD and Grafana Cloud. Nothing talks to Kubernetes; the files and how they are written are described in [`docs/platform-repository.md`](docs/platform-repository.md).
 
-Today that is all it does: the Application repository, Dockerfile and deploy workflow that Create generates, Adopt, the Capabilities and the interactive wizard come with later tickets. The Environment deploys once a deploy workflow writes the first image tag.
+Set a secret for an Environment. The value is encrypted with the Platform's age public key (`agePublicKey` in `platform.yaml`) and committed as a SOPS-encrypted Kubernetes Secret next to the Environment's values file, which the chart mounts by name; the private key never leaves the cluster and `iidp` never sees it:
+
+```sh
+iidp secret set shop prod API_KEY=hunter2
+```
+
+`API_KEY=hunter2` on the command line is the simplest form, but it lands in your shell history. `--from-file KEY=path` reads the value from a file and `--stdin KEY` reads it from stdin instead:
+
+```sh
+iidp secret set shop prod --from-file DATABASE_PASSWORD=./password.txt
+printf '%s' "$SOME_TOKEN" | iidp secret set shop staging --stdin API_TOKEN
+```
+
+At least one `KEY` is required, from any mix of a `KEY=value` argument, `--from-file` and `--stdin`; `<env>` must be `prod` or `staging` and must already exist (`iidp app create` first). Setting a `KEY` that is already set replaces it. `iidp secret set` needs `sops` on `PATH`, in addition to `git` and `gh`. The layout is described in [`docs/platform-repository.md`](docs/platform-repository.md).
+
+Today that is all it does: the Application repository, Dockerfile and deploy workflow that Create generates, Adopt, the remaining Capabilities and the interactive wizard come with later tickets. The Environment deploys once a deploy workflow writes the first image tag.
 
 ## Repository layout
 
