@@ -1,0 +1,31 @@
+{{- include "application.validate" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "application.fullname" . }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    # Only the TLS entrypoint. Redirecting plain HTTP to HTTPS is an
+    # entrypoint setting on the Platform's Traefik, not a per-Application one.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ include "application.host" . }}
+      # The Platform's wildcard certificate, written by the bootstrap's
+      # cert-manager Certificate. Traefik reads it from this namespace.
+      secretName: {{ .Values.platform.wildcardTLSSecret }}
+  rules:
+    - host: {{ include "application.host" . }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "application.fullname" . }}
+                port:
+                  number: {{ include "application.port" . }}

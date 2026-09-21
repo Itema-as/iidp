@@ -1,0 +1,16 @@
+{{- include "application.validate" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "application.fullname" . }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "application.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ include "application.port" . }}
+      targetPort: http
+      protocol: TCP
