@@ -1,0 +1,16 @@
+application:
+  name: shop
+environment: staging
+platform:
+  baseDomain: app.itma.no
+  backupsBucket: itema-iidp-db-backups
+  objectStorageEndpoint: https://hel1.your-objectstorage.com
+  backupsCredentialsSecret: object-storage-keys
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e
+size: medium
+postgres:
+  enabled: true
+  backupRetention: 7d

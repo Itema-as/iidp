@@ -1,0 +1,25 @@
+{{- include "application.validate" . -}}
+{{- if include "application.postgres.enabled" . }}
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ include "application.postgres.cluster" . }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    # After the Cluster is healthy, so the immediate first backup has a
+    # running database to take.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  cluster:
+    name: {{ include "application.postgres.cluster" . }}
+  # A base backup every day at 03:00 UTC. CloudNativePG's schedule has six
+  # fields, seconds first. The first backup is taken as soon as the
+  # ScheduledBackup exists, so the archived WAL has a base to apply to.
+  schedule: "0 0 3 * * *"
+  immediate: true
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: {{ include "application.postgres.backupPlugin" . }}
+{{- end }}

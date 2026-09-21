@@ -367,11 +367,11 @@ func TestRenderingRefusesInvalidValues(t *testing.T) {
 	cases := []struct {
 		fixture, message string
 	}{
-		{"unknown-size.yaml", `size must be one of large, medium, small, got "xlarge"`},
-		{"unknown-kind.yaml", `kind must be web-service or static-site, got "cron-job"`},
-		{"missing-name.yaml", `application.name is required`},
-		{"bad-name.yaml", `application.name must be lowercase letters, digits and dashes, start with a letter and be at most 55 characters, got "1shop"`},
-		{"env-sets-port.yaml", `env must not set PORT; it is injected from port`},
+		{"refuse-unknown-size.yaml", `size must be one of large, medium, small, got "xlarge"`},
+		{"refuse-unknown-kind.yaml", `kind must be web-service or static-site, got "cron-job"`},
+		{"refuse-missing-name.yaml", `application.name is required`},
+		{"refuse-bad-name.yaml", `application.name must be lowercase letters, digits and dashes, start with a letter and be at most 55 characters, got "1shop"`},
+		{"refuse-env-sets-port.yaml", `env must not set PORT; it is injected from port`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {

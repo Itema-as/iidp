@@ -1,0 +1,14 @@
+application:
+  name: brochure
+environment: prod
+platform:
+  baseDomain: app.itma.no
+  backupsBucket: itema-iidp-db-backups
+  objectStorageEndpoint: https://hel1.your-objectstorage.com
+kind: static-site
+image:
+  repository: ghcr.io/itema-as/brochure
+  tag: 1.0.0
+size: small
+postgres:
+  enabled: true

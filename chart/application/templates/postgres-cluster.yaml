@@ -1,0 +1,50 @@
+{{- include "application.validate" . -}}
+{{- if include "application.postgres.enabled" . }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "application.postgres.cluster" . }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    # Applied, and healthy, before the migration Job (wave -1) and the
+    # Application's objects (wave 0).
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  # One instance: the Platform is a single node, and durability comes from
+  # the continuous backup, not from replicas.
+  instances: 1
+  # Stamped on the database Pods so Grafana Alloy attributes their logs to
+  # the Environment. Not the selector labels: the Service must never route
+  # to the database.
+  inheritedMetadata:
+    labels:
+      iidp.itema.no/application: {{ include "application.name" . }}
+      iidp.itema.no/environment: {{ include "application.environment" . }}
+  # A database and an owner named after the Application. The operator
+  # generates the owner's password and the <cluster>-app Secret the
+  # Deployment reads DATABASE_URL from.
+  bootstrap:
+    initdb:
+      database: {{ include "application.name" . }}
+      owner: {{ include "application.name" . }}
+  storage:
+    size: 5Gi
+  # Postgres is a fixed size whatever the Application's size is
+  # (docs/design.md, "Conventions the chart encodes").
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
+  # Continuous backup: every WAL segment is archived to the ObjectStore of
+  # the same name as soon as Postgres closes it, and the ScheduledBackup
+  # takes the daily base backup through the same plugin.
+  plugins:
+    - name: {{ include "application.postgres.backupPlugin" . }}
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ include "application.postgres.cluster" . }}
+{{- end }}
