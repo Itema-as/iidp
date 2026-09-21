@@ -1,0 +1,35 @@
+# Discovers every Environment's ArgoCD Application under applications/: the
+# CLI writes applications/<name>/<environment>/application.yaml (see
+# docs/platform-repository.md in the iidp repository), and nothing else made
+# ArgoCD pick those up. Not part of the iidp bootstrap chart, like
+# platform-components.yaml and platform-secrets.yaml above: every Platform
+# repository carries this file once, hand-written, next to them.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: applications
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+    targetRevision: HEAD
+    path: applications
+    directory:
+      recurse: true
+      include: '*/*/application.yaml'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

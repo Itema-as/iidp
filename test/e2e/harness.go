@@ -16,6 +16,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -23,10 +24,12 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -319,6 +322,113 @@ func (c *Cluster) CreateAgeKeySecret(ctx context.Context, keyFile string) error 
 		return fmt.Errorf("create sops-age secret: %w\n%s", err, out)
 	}
 	return nil
+}
+
+// CreateNamespace creates a namespace, doing nothing if it already exists
+// (kubectl apply is idempotent): the fixture Application's Environments need
+// theirs to exist before their ObjectStore and Cluster reconcile, ahead of
+// ArgoCD's own CreateNamespace=true, which would otherwise create it later.
+func (c *Cluster) CreateNamespace(ctx context.Context, name string) error {
+	return c.Apply(ctx, fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n", name))
+}
+
+// CreateBackupsCredentialsSecret creates the Secret named
+// platform.backupsCredentialsSecret (chart/application's default
+// backups-credentials) with dummy Object Storage keys, in the given
+// namespace. kind has no Object Storage: this is enough for the chart's
+// ObjectStore and CloudNativePG Cluster to render and reach Healthy; the
+// scheduled backup itself fails against the unreachable endpoint, which is
+// expected (docs/implementation-notes/09-e2e-fixture-application.md).
+func (c *Cluster) CreateBackupsCredentialsSecret(ctx context.Context, namespace string) error {
+	out, err := c.Kubectl(ctx, "-n", namespace, "create", "secret", "generic", "backups-credentials",
+		"--from-literal=ACCESS_KEY_ID=dummy", "--from-literal=ACCESS_SECRET_KEY=dummy")
+	if err != nil {
+		return fmt.Errorf("create backups-credentials secret in %s: %w\n%s", namespace, err, out)
+	}
+	return nil
+}
+
+// JobSucceeded reports whether the named Job's status.succeeded is at least
+// one. A Job that does not exist yet, or has not completed, reports false
+// with no error, so a caller can poll it.
+func (c *Cluster) JobSucceeded(ctx context.Context, namespace, name string) (bool, error) {
+	out, err := c.Kubectl(ctx, "-n", namespace, "get", "job", name, "-o", "jsonpath={.status.succeeded}")
+	if err != nil {
+		return false, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return false, nil
+	}
+	return n >= 1, nil
+}
+
+// WaitForJobSucceeded polls JobSucceeded until it reports true or timeout
+// elapses.
+func (c *Cluster) WaitForJobSucceeded(ctx context.Context, namespace, name string, timeout time.Duration) error {
+	return pollUntil(ctx, timeout, 5*time.Second,
+		func() (bool, error) { return c.JobSucceeded(ctx, namespace, name) },
+		func() error {
+			out, _ := c.Kubectl(ctx, "-n", namespace, "get", "job", name, "-o", "yaml")
+			return fmt.Errorf("job %s/%s did not succeed within %s:\n%s", namespace, name, timeout, out)
+		})
+}
+
+// CheckHTTP200 requests "/" on host through Traefik's websecure entrypoint,
+// mapped to HTTPSPort on the host, with the Host header set to host and
+// certificate verification disabled: kind's Traefik falls back to its own
+// default certificate because no cloud DNS-01 issuer can complete inside
+// kind, so there is no certificate to validate against. It retries until
+// timeout.
+func (c *Cluster) CheckHTTP200(ctx context.Context, host string, timeout time.Duration) error {
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // kind has no real certificate to check
+	}
+	url := fmt.Sprintf("https://127.0.0.1:%d/", c.HTTPSPort)
+	var lastErr error
+	return pollUntil(ctx, timeout, 3*time.Second,
+		func() (bool, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				return false, err
+			}
+			req.Host = host
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = fmt.Errorf("GET %s (Host: %s): %w", url, host, err)
+				return false, nil
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				lastErr = fmt.Errorf("GET %s (Host: %s): %s", url, host, resp.Status)
+				return false, nil
+			}
+			c.Log("GET %s (Host: %s): %s", url, host, resp.Status)
+			return true, nil
+		},
+		func() error { return lastErr })
+}
+
+// pollUntil calls attempt every interval until it reports done, an error, or
+// timeout elapses, in which case onTimeout builds the error returned.
+func pollUntil(ctx context.Context, timeout, interval time.Duration, attempt func() (done bool, err error), onTimeout func() error) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		done, err := attempt()
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return onTimeout()
+		}
+		if err := sleep(ctx, interval); err != nil {
+			return err
+		}
+	}
 }
 
 // Repository is a git repository the in-cluster server serves as

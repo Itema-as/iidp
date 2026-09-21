@@ -53,9 +53,10 @@ jobs:
   kind:
     name: kind bootstrap
     runs-on: ubuntu-latest
-    # A run takes well under fifteen minutes; the cap leaves room for the
-    # test's own ten-minute wait to expire and print its diagnostics.
-    timeout-minutes: 20
+    # A run (platform components, then the fixture Application shop with
+    # Postgres on staging and prod) takes well under fifteen minutes; the cap
+    # leaves room for the test's own waits to expire and print diagnostics.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -71,4 +72,4 @@ jobs:
           version: v0.33.0
           install_only: true
       - name: go test -tags e2e
-        run: go test -tags e2e ./test/e2e/... -run TestBootstrap -v -timeout 18m
+        run: go test -tags e2e ./test/e2e/... -run TestBootstrap -v -timeout 23m

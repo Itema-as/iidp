@@ -26,6 +26,7 @@ platform.yaml                          Platform-wide settings (below)
 bootstrap/
   platform-components.yaml             Application pinning this directory, values from platform.yaml
   platform-secrets.yaml                Application for bootstrap/sops, decrypted by KSOPS
+  applications.yaml                    Application discovering every Environment's own Application, below
   sops/
     kustomization.yaml                 generators: [ksops.yaml]
     ksops.yaml                         the KSOPS generator listing the files below
@@ -37,7 +38,7 @@ bootstrap/
 <application>/                         one directory per Application (CONTEXT.md sense), written by the CLI (later tickets)
 ```
 
-[`test/e2e/fixtures/platform-repo`](../test/e2e/fixtures/platform-repo) is a complete example, with dummy values encrypted for a throwaway key. Only the two files directly under `bootstrap/` are read by the root Application (it does not recurse), and neither of them is touched by the CLI.
+[`test/e2e/fixtures/platform-repo`](../test/e2e/fixtures/platform-repo) is a complete example, with dummy values encrypted for a throwaway key. Only the files directly under `bootstrap/` are read by the root Application (it does not recurse), and none of them is touched by the CLI.
 
 ### `platform-components.yaml`
 
@@ -50,6 +51,10 @@ An Application for `bootstrap/sops` in the Platform repository. ArgoCD detects t
 To add or change one: write the Secret in the clear, run `sops --encrypt --in-place bootstrap/sops/<name>.enc.yaml` in the Platform repository (`.sops.yaml` there names the key and encrypts only `data` and `stringData`), commit. Until the CLI's `iidp secret set` exists, that is the procedure for the Platform secrets too.
 
 Until the `argocd` Application has completed its first sync, `platform-secrets` cannot render (no ksops yet) and the ArgoCD UI shows a comparison error on it. It clears by itself on the next refresh.
+
+### `applications.yaml`
+
+An Application with a plain directory source on the Platform repository itself, path `applications`, `directory.recurse: true` and `directory.include: '*/*/application.yaml'`: it picks up exactly the files `docs/platform-repository.md` says the CLI writes, `applications/<name>/<environment>/application.yaml`, and applies each as a plain ArgoCD Application manifest. Every Environment's Application is a child of it, the same app-of-apps shape as `platform-components.yaml` one level up; nothing else made ArgoCD notice a new Application directory, because the root `platform` Application only reads `bootstrap/`, not `applications/`. The `default` AppProject (created by ArgoCD's own install manifest, not overridden by anything the bootstrap adds) is fully permissive out of the box, so it already allows every Environment's two sources (the chart repository and the Platform repository) and any destination namespace; there is nothing to widen. See [`docs/implementation-notes/09-e2e-fixture-application.md`](../docs/implementation-notes/09-e2e-fixture-application.md) for the alternatives considered (an ApplicationSet git directory generator, in particular) and why this was simpler.
 
 ### `platform.yaml`
 
