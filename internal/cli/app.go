@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 	"github.com/Itema-as/iidp/internal/apprepo"
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/github"
+	"github.com/Itema-as/iidp/internal/migrate"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/templates"
@@ -42,19 +45,24 @@ func newAppCommand(deps Dependencies) *cobra.Command {
 // createOptions are the answers to the wizard's questions, each with a
 // flag so the command runs non-interactively.
 type createOptions struct {
-	name         string
-	kind         string
-	framework    string
-	owner        string
-	private      bool
-	public       bool
-	size         string
-	image        string
-	port         int
-	probePath    string
-	path         string
-	platformRepo string
-	yes          bool
+	name             string
+	kind             string
+	framework        string
+	owner            string
+	private          bool
+	public           bool
+	size             string
+	image            string
+	port             int
+	probePath        string
+	path             string
+	platformRepo     string
+	yes              bool
+	postgres         bool
+	migrationCommand string
+	appDir           string
+	staging          bool
+	domains          []string
 }
 
 func newAppCreateCommand(deps Dependencies) *cobra.Command {
@@ -93,6 +101,12 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f.IntVar(&opts.port, "port", 3000, "Port the container listens on")
 	f.StringVar(&opts.probePath, "probe-path", "/", "Path the readiness and liveness probes request")
 	f.BoolVar(&opts.yes, "yes", false, "Skip the confirmation (nothing is asked yet; accepted so scripts keep working once the wizard asks)")
+	f.BoolVar(&opts.postgres, "postgres", false, "Add a Postgres database Capability: DATABASE_URL injected into every Environment, continuous backups")
+	f.StringVar(&opts.migrationCommand, "migration-command", "", "Shell command run before every rollout with DATABASE_URL set (requires --postgres); detected from Prisma, Drizzle or an npm migrate script when omitted")
+	f.StringVar(&opts.appDir, "app-dir", "", "Directory to detect the migration command in (default: the generated template with --path create, or the current directory when it has a package.json)")
+	_ = f.MarkHidden("app-dir")
+	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod: its own address, its own database, the same Capabilities")
+	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to serve besides the Platform address, for prod only (repeatable)")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
 	return cmd
@@ -103,6 +117,10 @@ func runAppCreate(cmd *cobra.Command, opts createOptions, deps Dependencies) err
 		return err
 	}
 	plan, err := opts.plan(cmd)
+	if err != nil {
+		return err
+	}
+	migrationCommand, err := detectMigrationCommand(plan, cmd.OutOrStdout())
 	if err != nil {
 		return err
 	}
@@ -167,12 +185,16 @@ func runAppCreate(cmd *cobra.Command, opts createOptions, deps Dependencies) err
 		image = "ghcr.io/" + strings.ToLower(ownerLogin) + "/" + plan.name
 	}
 	app := platformrepo.Application{
-		Name:            plan.name,
-		Kind:            plan.kind,
-		Size:            plan.size,
-		ImageRepository: image,
-		Port:            plan.port,
-		ProbePath:       plan.probePath,
+		Name:             plan.name,
+		Kind:             plan.kind,
+		Size:             plan.size,
+		ImageRepository:  image,
+		Port:             plan.port,
+		ProbePath:        plan.probePath,
+		Postgres:         plan.postgres,
+		MigrationCommand: migrationCommand,
+		Staging:          plan.staging,
+		Domains:          plan.domains,
 	}
 
 	fmt.Fprintf(out, "\nWriting the prod Environment to %s...\n", platform.Repository)
@@ -181,6 +203,12 @@ func runAppCreate(cmd *cobra.Command, opts createOptions, deps Dependencies) err
 	fmt.Fprintf(out, "  Image:  %s\n", app.ImageRepository)
 	fmt.Fprintf(out, "  Port:   %d\n", app.Port)
 	fmt.Fprintf(out, "  Probe:  %s\n", app.ProbePath)
+	if app.Postgres {
+		fmt.Fprintf(out, "  Postgres: enabled (migration command: %q)\n", app.MigrationCommand)
+	}
+	if app.Staging {
+		fmt.Fprintln(out, "  Staging:  a second Environment, its own address and database")
+	}
 
 	res, err := platformWriter.CreateApplication(cmd.Context(), app)
 	if err != nil {
@@ -235,16 +263,21 @@ func (o createOptions) checkRequiredFlags(cmd *cobra.Command) error {
 // build both the Application repository (when path is pathCreate) and the
 // Platform repository's Environment.
 type createPlan struct {
-	name          string
-	kind          string
-	framework     templates.Framework
-	size          string
-	imageOverride string
-	port          int
-	probePath     string
-	path          string
-	ownerMode     string
-	private       bool
+	name             string
+	kind             string
+	framework        templates.Framework
+	size             string
+	imageOverride    string
+	port             int
+	probePath        string
+	path             string
+	ownerMode        string
+	private          bool
+	postgres         bool
+	migrationCommand string
+	appDir           string
+	staging          bool
+	domains          []string
 }
 
 // plan validates every flag before anything is cloned or written, and
@@ -301,6 +334,12 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if !strings.HasPrefix(o.probePath, "/") {
 		return createPlan{}, fmt.Errorf("--probe-path %q must start with /", o.probePath)
 	}
+	if o.migrationCommand != "" && !o.postgres {
+		return createPlan{}, errors.New("--migration-command requires --postgres: there is no database to migrate")
+	}
+	if o.postgres && kind == platformrepo.KindStaticSite {
+		return createPlan{}, errors.New("--postgres needs --kind web-service (or a framework that derives it); a Static site has no server to use a database")
+	}
 
 	ownerMode := "org"
 	private := true
@@ -323,17 +362,75 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	}
 
 	return createPlan{
-		name:          o.name,
-		kind:          kind,
-		framework:     framework,
-		size:          o.size,
-		imageOverride: o.image,
-		port:          o.port,
-		probePath:     o.probePath,
-		path:          o.path,
-		ownerMode:     ownerMode,
-		private:       private,
+		name:             o.name,
+		kind:             kind,
+		framework:        framework,
+		size:             o.size,
+		imageOverride:    o.image,
+		port:             o.port,
+		probePath:        o.probePath,
+		path:             o.path,
+		ownerMode:        ownerMode,
+		private:          private,
+		postgres:         o.postgres,
+		migrationCommand: o.migrationCommand,
+		appDir:           o.appDir,
+		staging:          o.staging,
+		domains:          o.domains,
 	}, nil
+}
+
+// detectMigrationCommand resolves plan's migration command: the explicit
+// --migration-command flag if given, otherwise, with --postgres, a
+// detection in --app-dir, the Create path's generated template, or the
+// current directory when it has a package.json, in that order. It prints
+// what it looked in and what it found (or didn't) to out, the way
+// docs/design.md's wizard help text does.
+func detectMigrationCommand(plan createPlan, out io.Writer) (string, error) {
+	if plan.migrationCommand != "" {
+		return plan.migrationCommand, nil
+	}
+	if !plan.postgres {
+		return "", nil
+	}
+
+	dir := plan.appDir
+	switch {
+	case dir != "":
+		fmt.Fprintf(out, "Looking for a migration command in %s...\n", dir)
+	case plan.path == pathCreate:
+		tmp, err := os.MkdirTemp("", "iidp-detect-")
+		if err != nil {
+			return "", err
+		}
+		defer os.RemoveAll(tmp)
+		if _, err := templates.Render(plan.framework, templates.Data{Name: plan.name}, tmp); err != nil {
+			return "", err
+		}
+		dir = tmp
+		fmt.Fprintf(out, "Looking for a migration command in the generated %s template...\n", plan.framework)
+	default:
+		if cwd, err := os.Getwd(); err == nil {
+			if info, err := os.Stat(filepath.Join(cwd, "package.json")); err == nil && !info.IsDir() {
+				dir = cwd
+				fmt.Fprintf(out, "Looking for a migration command in %s (the current directory)...\n", dir)
+			}
+		}
+	}
+	if dir == "" {
+		return "", nil
+	}
+
+	det, ok, err := migrate.Detect(dir)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		fmt.Fprintln(out, "No migration tooling detected; postgres.migrationCommand is left empty. Set --migration-command if the Application has migrations.")
+		return "", nil
+	}
+	fmt.Fprintf(out, "Detected %s; migration command: %s\n", det.Tool, det.Command)
+	return det.Command, nil
 }
 
 func printCreated(out io.Writer, name string, res platformrepo.Result) {
@@ -342,11 +439,46 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 		fmt.Fprintf(out, "  %s\n", f)
 	}
 	fmt.Fprintf(out, "\n  prod:     %s\n", res.Address)
+	if res.StagingAddress != "" {
+		fmt.Fprintf(out, "  staging:  %s\n", res.StagingAddress)
+	}
 	if res.Config.ArgoCDURL != "" {
 		fmt.Fprintf(out, "  ArgoCD:   %s\n", res.Config.ArgoCDURL)
 	}
 	if res.Config.GrafanaURL != "" {
 		fmt.Fprintf(out, "  Grafana:  %s\n", res.Config.GrafanaURL)
 	}
+	printDomains(out, res)
 	fmt.Fprintf(out, "\nThe Environment deploys once the deploy workflow writes the first image tag.\n")
+}
+
+// printDomains reports, for each custom domain, which branch the chart
+// takes (the wildcard certificate or a per-host one from
+// platform.httpIssuer) and whether DNS is automatic, then lists the CNAME
+// records left to create by hand for the domains that are not.
+func printDomains(out io.Writer, res platformrepo.Result) {
+	if len(res.Domains) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "\nCustom domains:")
+	var cnames []platformrepo.DomainPlan
+	for _, d := range res.Domains {
+		switch {
+		case d.Wildcard:
+			fmt.Fprintf(out, "  %s: covered by the Platform's wildcard certificate, DNS automatic\n", d.Host)
+		case d.Automated:
+			fmt.Fprintf(out, "  %s: certificate from platform.httpIssuer, DNS automatic (inside the Cloudflare zone)\n", d.Host)
+		default:
+			fmt.Fprintf(out, "  %s: certificate from platform.httpIssuer, DNS not automatic\n", d.Host)
+			cnames = append(cnames, d)
+		}
+	}
+	if len(cnames) == 0 {
+		return
+	}
+	target := strings.TrimPrefix(res.Address, "https://")
+	fmt.Fprintln(out, "\nAdd these DNS records:")
+	for _, d := range cnames {
+		fmt.Fprintf(out, "  CNAME %s -> %s\n", d.Host, target)
+	}
 }
