@@ -1,0 +1,20 @@
+# Redirect plain HTTP to HTTPS on Traefik's web entrypoint, cluster-wide, so
+# no Ingress has to. k3s installs Traefik through its helm-controller, and a
+# HelmChartConfig named after the chart is how its values are overridden
+# (docs.k3s.io, "Networking Services", "Customizing packaged components").
+# The kind harness installs the same chart with the same values by hand.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: {{ .Values.traefikNamespace }}
+spec:
+  valuesContent: |-
+    ports:
+      web:
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true

@@ -1,0 +1,29 @@
+# TLS for the Platform: the Let's Encrypt ClusterIssuer (Cloudflare DNS-01),
+# the one wildcard Certificate, Traefik's default TLS store pointing at it,
+# and the HTTP to HTTPS redirect on Traefik's web entrypoint. Rendered from
+# bootstrap/components/tls in this repository at the same revision as this
+# chart. The resources need the cert-manager and Traefik CRDs, so the dry
+# run is skipped and the sync retries until they are there.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-tls
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.bootstrap.repoURL }}
+    targetRevision: {{ .Values.bootstrap.targetRevision | quote }}
+    path: bootstrap/components/tls
+    helm:
+      releaseName: platform-tls
+      valuesObject:
+        baseDomain: {{ .Values.baseDomain }}
+        acme:
+          email: {{ .Values.acme.email | quote }}
+          server: {{ .Values.acme.server }}
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: cert-manager
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list "SkipDryRunOnMissingResource=true") | nindent 4 }}

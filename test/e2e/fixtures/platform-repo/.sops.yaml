@@ -1,0 +1,11 @@
+# SOPS creation rules for this Platform repository. Every file under
+# bootstrap/sops is encrypted for the Platform's age public key (the one
+# in platform.yaml); only data and stringData are encrypted so names,
+# namespaces and labels stay readable and diffable.
+#
+# This is the fixture for the kind harness: the matching private key is
+# checked in as test/e2e/fixtures/age-keys.txt and protects nothing.
+creation_rules:
+  - path_regex: bootstrap/sops/.*\.enc\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v

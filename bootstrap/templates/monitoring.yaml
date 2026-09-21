@@ -1,0 +1,75 @@
+{{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
+# Grafana Alloy shipping pod logs, node metrics and kube-state metrics to
+# Grafana Cloud, through Grafana's k8s-monitoring chart. Endpoints and
+# credentials come from the Secret grafana-cloud in this namespace
+# (SOPS-encrypted in the Platform repository, see README.md); nothing about
+# the Grafana Cloud stack is in git in the clear.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ $v.k8sMonitoring.repository }}
+    chart: k8s-monitoring
+    targetRevision: {{ $v.k8sMonitoring.chart | quote }}
+    helm:
+      releaseName: monitoring
+      valuesObject:
+        cluster:
+          name: {{ .Values.clusterName }}
+        destinations:
+          grafana-cloud-metrics:
+            type: prometheus
+            urlFrom: convert.nonsensitive(remote.kubernetes.secret.grafana_cloud_metrics.data["prometheus-url"])
+            auth:
+              type: basic
+              usernameKey: prometheus-username
+              passwordKey: access-token
+            secret:
+              create: false
+              name: grafana-cloud
+              namespace: monitoring
+          grafana-cloud-logs:
+            type: loki
+            urlFrom: convert.nonsensitive(remote.kubernetes.secret.grafana_cloud_logs.data["loki-url"])
+            auth:
+              type: basic
+              usernameKey: loki-username
+              passwordKey: access-token
+            secret:
+              create: false
+              name: grafana-cloud
+              namespace: monitoring
+        clusterMetrics:
+          enabled: true
+          collector: alloy-metrics
+        podLogsViaLoki:
+          enabled: true
+          collector: alloy-logs
+        collectors:
+          alloy-metrics:
+            # One node: no clustering of the metrics collector.
+            presets: [small, statefulset]
+          alloy-logs:
+            presets: [filesystem-log-reader, daemonset]
+        telemetryServices:
+          kube-state-metrics:
+            deploy: true
+          node-exporter:
+            deploy: true
+        alloy-operator:
+          # The chart's Helm hooks (a conflict check and a finalizer on
+          # uninstall) become ArgoCD sync hooks that run a kubectl Job on
+          # every sync; neither guards against anything on a Platform where
+          # ArgoCD is the only installer.
+          conflictCheck: false
+          waitForAlloyRemoval:
+            enabled: false
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: monitoring
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list) | nindent 4 }}

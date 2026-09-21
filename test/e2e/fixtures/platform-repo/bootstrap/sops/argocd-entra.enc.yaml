@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: argocd-entra
+    namespace: argocd
+    labels:
+        # Lets ArgoCD substitute $argocd-entra:<key> in dex.config.
+        app.kubernetes.io/part-of: argocd
+    annotations:
+        kustomize.config.k8s.io/needs-hash: "false"
+type: Opaque
+stringData:
+    clientID: ENC[AES256_GCM,data:VKqC2bgnB3XVVDb8XSgiM9gNvQlC8fuQR8PboE8qocaEZItH,iv:O5tbzBFT0knAy5BTuUj1orA9H6p36dvtZJEFvr40IkQ=,tag:u2Wj0aGkgali8HGyj3/DXA==,type:str]
+    clientSecret: ENC[AES256_GCM,data:jKkabG7204aTXbXFblbBl9/+IbLGfT+U/J6OJQp0RctzxIkP,iv:aOHjZaAAbTMpYlhklz+YCd9nh8yCe76qvAnW/voepCw=,tag:Iv6EFEoerhM3UG1FZM+p1w==,type:str]
+    tenant: ENC[AES256_GCM,data:hrxnmXel8sXBlY3xMweZD9C1OLv5svfg+x0sL/sywrvkBj4c,iv:aiZ4OmgT4tYUHNoM01j6zxgVySG95wlPhERekZ30ne0=,tag:v7+etKAzIzrH9rnyDjePCw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBvU1ZDTGdrdzh3YlAxS1hJ
+            b2RnNHVRQ3l1SG5vSDN2VUFBUlpVSlRUQlVJCkR3QmZranZTMlc5NlNXenlQTEZC
+            Z0kxa0ExT21XS25YQjFnd1cxNUZKdncKLS0tIE8yQ1NuaExOVk9tU3JSeE5kSFdK
+            WDVYVkR5a0FNQkRUNE9Eem5MVFhFQUEKBk8NyaISoGp0i3/Q1rsEgst/w5ZMiF6Y
+            IpR66NKY3lV/wEX+gZumgxqOVLcp231j2EmhrDYiyJYr7/dD46h8gw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-21T10:06:27Z"
+    mac: ENC[AES256_GCM,data:ROlCWh3GAg9f5ilqrkZQd6AFBPNfHijgNtFz0xFwPQs1BkFdy0Zufpfn4wnvNgUsRVxwNgk3sHFAzoX2ib5kz30BYhNV6aJ8bOZlzwY3pnbV0vw1n/NXXl/zuPeQ+rOHAsLRsVkS9H0/MwtmazgvXMewuNWvO1jxNu1dmhoIvXw=,iv:6BI/nOYkB7/C9sphAQ5Sd+yfq9/tepNdE+A1xMYiSDU=,tag:iC6EuhYH9AwV0PXU9j17BQ==,type:str]
+    version: 3.13.3

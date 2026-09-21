@@ -1,0 +1,11 @@
+# Traefik's default certificate. An Ingress with TLS on and no secretName of
+# its own (every Application Ingress, and ArgoCD's) is served with the
+# wildcard, so no Secret is copied into Application namespaces.
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: {{ .Values.traefikNamespace }}
+spec:
+  defaultCertificate:
+    secretName: {{ .Values.wildcardSecretName }}

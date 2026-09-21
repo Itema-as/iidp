@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: grafana-cloud
+    namespace: monitoring
+    annotations:
+        kustomize.config.k8s.io/needs-hash: "false"
+type: Opaque
+stringData:
+    prometheus-url: ENC[AES256_GCM,data:tXyEol377cu5S4ObDA3SVDynCPQkqG4owrhHMALcKb47Kw93FiTGxs79jDQL,iv:gpEgIz1qybqfuhmYK2Zv15wYF1sjzNqikCsx7g68wxs=,tag:R2ZnSJvlMrCtVwuFZpcnsA==,type:str]
+    prometheus-username: ENC[AES256_GCM,data:xG2MV638,iv:8Enp+pJrlrNnMchFh3WVATwWL3W7T4vV3tvMLmgrY7k=,tag:dIRF6lh7WO/dNXIw3c+mYA==,type:str]
+    loki-url: ENC[AES256_GCM,data:JKieoJ9EgsayO1Zpbza84QOHSxB/8TsMGJu9vyuxGsvHixLQ0T5utBpW,iv:u3HFXsIOESntKuXFZ9yQ1/mXfJhnmoRGMujHblpT0mw=,tag:oHIMdIjkUcMBPNxSgHf4bQ==,type:str]
+    loki-username: ENC[AES256_GCM,data:3H2l9A5j,iv:yJGjQo7XbXCk3TCkNnWaGVkTQHgDjdQuu15KcaTMdx8=,tag:i3RD7LO8Uhjc61v7GpJ24Q==,type:str]
+    access-token: ENC[AES256_GCM,data:fD9p/eMOOGaX4u/JrIiJkr5CdNO7uBD+wFNAJh3DU5yBrXG8,iv:vnQkrF4X3y67yudwX8woL3S+yGl1SMbabWLrhX1eHGk=,tag:9nnr4oq173MuwcZpTyYczQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBiVHNDeE9TajFBejN5OVpz
+            MWIwcmpkd3cyelJPOThIbWw3NzRMZ244azJrCk5NYmpWeG91TzFmdjlZQ3lENGMr
+            WHJhUS9GMlNVZ3lnUEc1ZGUyZ2FuMDAKLS0tIDl5Vnhha3ZIajV6RGg2ZS94cDV0
+            YlYwQ2t0TXVsbUM1SlFGRFpjWlVPMVkKpuVROSqlfvJnXZPwVFqHioEMVLlQ3kGJ
+            D//DfIEuX08QRR1M9KZ7J05E/7XSpqIx+q7CJW+9wiQzloptV+BOvw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-21T10:06:27Z"
+    mac: ENC[AES256_GCM,data:AJ0gwEn85xDLiBHM+XWmz/OornoHWP6vkeje8QOznRvEl7tFc/F46Lk2s7qDAGlirNaysoNC+b6eWL55KXQkFUVXITqUD+KmGwWSByB9CxQjyzbbev9d2DflxC22tSotVojx95TboUo/6ggy0thjArNS7jbroobQebtGHGdYNKg=,iv:uudcbW+n7BJhj3Kue6IIqHV08GXb2J60KXXD4CZ6pgI=,tag:zynxL1Zecp8hftF3Gjjh+g==,type:str]
+    version: 3.13.3

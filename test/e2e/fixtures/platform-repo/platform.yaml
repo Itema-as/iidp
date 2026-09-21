@@ -1,0 +1,39 @@
+# Platform-wide settings. The bootstrap reads it as Helm values (see
+# bootstrap/README.md in the iidp repository for every field); the CLI reads
+# the fields marked so. This is the fixture for the kind harness: a Platform
+# under example.test that no cloud account knows about.
+
+# Applications are served under <application>.<baseDomain>; the wildcard
+# certificate covers it. Read by the CLI.
+baseDomain: app.example.test
+
+# The Cloudflare zone containing baseDomain, the only zone external-dns
+# manages and where the CLI can automate custom domains. Read by the CLI.
+cloudflareZone: example.test
+
+# Where ArgoCD and Grafana Cloud are, for the CLI's closing summary.
+argocdURL: https://argocd.app.example.test
+grafanaURL: https://example.grafana.net
+
+# The application chart version the CLI writes into new Environments.
+chartVersion: 0.1.0
+
+# The org GitHub App the deploy workflow uses to write image tags back.
+githubApp:
+  id: 1
+  installationId: 1
+
+# The age public key the CLI encrypts secrets with. The private key exists
+# only in the cluster (Secret argocd/sops-age).
+agePublicKey: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
+
+# The Object Storage bucket CloudNativePG backups go to.
+backupsBucket: iidp-backups
+
+# Bootstrap-only settings.
+acme:
+  email: platform@example.test
+  # Staging, so a test Platform never spends production rate limits.
+  server: https://acme-staging-v02.api.letsencrypt.org/directory
+argocdAdminGroup: 00000000-0000-0000-0000-000000000003
+clusterName: iidp-e2e

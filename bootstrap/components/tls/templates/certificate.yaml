@@ -1,0 +1,15 @@
+# The one wildcard certificate every Platform address is served with. It
+# lives in Traefik's namespace so the default TLS store can reference it.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard
+  namespace: {{ .Values.traefikNamespace }}
+spec:
+  secretName: {{ .Values.wildcardSecretName }}
+  dnsNames:
+    - "*.{{ .Values.baseDomain }}"
+    - {{ .Values.baseDomain | quote }}
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt
