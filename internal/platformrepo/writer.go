@@ -130,6 +130,38 @@ func (w *Writer) runWithRetry(ctx context.Context, attempt func(ctx context.Cont
 	return res, err
 }
 
+// CheckAvailable reports an error if name already has a directory in the
+// Platform repository, without writing anything. Create uses it to
+// validate before the Application repository is created; CreateApplication
+// checks again on its own clone, so a race is still caught.
+func (w *Writer) CheckAvailable(ctx context.Context, name string) error {
+	dir, err := os.MkdirTemp("", "iidp-platform-check-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	if _, err := git.Clone(ctx, w.URL, Branch, dir, w.Auth); err != nil {
+		return fmt.Errorf("cloning %s: %w", platform.Repository, err)
+	}
+	return checkApplicationAbsent(dir, name, false)
+}
+
+// checkApplicationAbsent errors if name already has a directory under
+// ApplicationsDir in the clone at dir. retry names the error for the case
+// where the check runs again after a push was rejected because main moved.
+func checkApplicationAbsent(dir, name string, retry bool) error {
+	switch _, err := os.Stat(filepath.Join(dir, ApplicationsDir, name)); {
+	case err == nil && retry:
+		return fmt.Errorf("%w: %q was added to %s while this command ran; nothing was written", ErrApplicationExists, name, platform.Repository)
+	case err == nil:
+		return fmt.Errorf("%w: %q already has a directory under %s/ in %s", ErrApplicationExists, name, ApplicationsDir, platform.Repository)
+	case !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("checking for an existing Application: %w", err)
+	default:
+		return nil
+	}
+}
+
 func (w *Writer) attemptCreate(ctx context.Context, app Application, retry bool) (Result, error) {
 	dir, err := os.MkdirTemp("", "iidp-platform-")
 	if err != nil {
@@ -145,13 +177,8 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry bool)
 	if err != nil {
 		return Result{}, err
 	}
-	switch _, err := os.Stat(filepath.Join(dir, ApplicationsDir, app.Name)); {
-	case err == nil && retry:
-		return Result{}, fmt.Errorf("%w: %q was added to %s while this command ran; nothing was written", ErrApplicationExists, app.Name, platform.Repository)
-	case err == nil:
-		return Result{}, fmt.Errorf("%w: %q already has a directory under %s/ in %s", ErrApplicationExists, app.Name, ApplicationsDir, platform.Repository)
-	case !errors.Is(err, fs.ErrNotExist):
-		return Result{}, fmt.Errorf("checking for an existing Application: %w", err)
+	if err := checkApplicationAbsent(dir, app.Name, retry); err != nil {
+		return Result{}, err
 	}
 
 	files, err := w.writeEnvironment(dir, cfg, app, "prod")
