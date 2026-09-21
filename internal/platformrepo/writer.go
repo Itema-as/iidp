@@ -138,7 +138,7 @@ func (w *Writer) encryptor() sops.Encryptor {
 // because main moved is retried once from a fresh clone; if the Application
 // appeared in the meantime, the retry fails with ErrApplicationExists.
 func (w *Writer) CreateApplication(ctx context.Context, app Application) (Result, error) {
-	return w.runWithRetry(ctx, func(ctx context.Context, retry bool) (Result, error) {
+	return runWithRetry(ctx, func(ctx context.Context, retry bool) (Result, error) {
 		return w.attemptCreate(ctx, app, retry)
 	})
 }
@@ -146,14 +146,18 @@ func (w *Writer) CreateApplication(ctx context.Context, app Application) (Result
 // runWithRetry runs attempt once, retrying it once after a fresh clone if
 // the push is rejected because main moved in the meantime. attempt does
 // everything from clone to push for one try; retry is true on the second
-// call, so it can tell a genuine conflict from a first attempt.
-func (w *Writer) runWithRetry(ctx context.Context, attempt func(ctx context.Context, retry bool) (Result, error)) (Result, error) {
+// call, so it can tell a genuine conflict from a first attempt. It is a
+// free function, not a method, so every Writer operation (CreateApplication,
+// SetSecrets, AddCapabilities, DeleteApplication) can share it whatever
+// result type it produces: Go methods cannot themselves be generic.
+func runWithRetry[T any](ctx context.Context, attempt func(ctx context.Context, retry bool) (T, error)) (T, error) {
 	res, err := attempt(ctx, false)
 	if errors.Is(err, git.ErrPushRejected) {
 		res, err = attempt(ctx, true)
 	}
 	if errors.Is(err, git.ErrPushRejected) {
-		return Result{}, fmt.Errorf("main of %s moved twice while this command ran; nothing was written, run it again", platform.Repository)
+		var zero T
+		return zero, fmt.Errorf("main of %s moved twice while this command ran; nothing was written, run it again", platform.Repository)
 	}
 	return res, err
 }

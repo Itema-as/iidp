@@ -39,6 +39,8 @@ func newAppCommand(deps Dependencies) *cobra.Command {
 		Short: "Create and change Applications",
 	}
 	app.AddCommand(newAppCreateCommand(deps))
+	app.AddCommand(newAppAddCapabilityCommand(deps))
+	app.AddCommand(newAppDeleteCommand(deps))
 	return app
 }
 

@@ -95,7 +95,7 @@ type Secret struct {
 // because main moved is retried once from a fresh clone, exactly as
 // CreateApplication does.
 func (w *Writer) SetSecrets(ctx context.Context, application, environment string, secrets []Secret) (Result, error) {
-	return w.runWithRetry(ctx, func(ctx context.Context, _ bool) (Result, error) {
+	return runWithRetry(ctx, func(ctx context.Context, _ bool) (Result, error) {
 		return w.attemptSetSecrets(ctx, application, environment, secrets)
 	})
 }

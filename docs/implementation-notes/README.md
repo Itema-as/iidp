@@ -15,3 +15,4 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #11 | [11-cli-create-path.md](11-cli-create-path.md) |
 | #13 | [13-cli-capabilities.md](13-cli-capabilities.md) |
 | #16 | [16-cli-secret-set.md](16-cli-secret-set.md) |
+| #17 | [17-cli-add-capability-delete.md](17-cli-add-capability-delete.md) |
