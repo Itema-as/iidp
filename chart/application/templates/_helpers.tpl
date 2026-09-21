@@ -48,12 +48,23 @@ Helm renders first. It produces no output.
 {{- if hasKey (.Values.env | default dict) "PORT" -}}
 {{- fail "env must not set PORT; it is injected from port" -}}
 {{- end -}}
+{{- if and .Values.postgres.enabled (ne (include "application.kind" .) "web-service") -}}
+{{- fail "postgres.enabled needs kind: web-service; a Static site has no server to use a database" -}}
+{{- end -}}
 {{- if and .Values.postgres.migrationCommand (not .Values.postgres.enabled) -}}
 {{- fail "postgres.migrationCommand needs postgres.enabled: true; there is no database to migrate" -}}
 {{- end -}}
 {{- if and .Values.postgres.enabled (hasKey (.Values.env | default dict) "DATABASE_URL") -}}
 {{- fail "env must not set DATABASE_URL; the Postgres Capability injects it" -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+The Application image, <repository>:<tag>, run by the Deployment and by the
+migration Job.
+*/}}
+{{- define "application.image" -}}
+{{- printf "%s:%s" (required "image.repository is required" .Values.image.repository | toString) (required "image.tag is required" .Values.image.tag | toString) -}}
 {{- end -}}
 
 {{/*

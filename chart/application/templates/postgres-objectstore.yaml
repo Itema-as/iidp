@@ -17,10 +17,10 @@ spec:
     # Environment's namespace. The chart never sees the values.
     s3Credentials:
       accessKeyId:
-        name: {{ .Values.platform.backupsCredentialsSecret }}
+        name: {{ .Values.platform.backupsCredentialsSecret | toString | quote }}
         key: ACCESS_KEY_ID
       secretAccessKey:
-        name: {{ .Values.platform.backupsCredentialsSecret }}
+        name: {{ .Values.platform.backupsCredentialsSecret | toString | quote }}
         key: ACCESS_SECRET_KEY
     wal:
       compression: gzip

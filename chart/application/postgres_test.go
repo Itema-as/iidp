@@ -7,26 +7,49 @@ import (
 	"testing"
 )
 
-// kindsOf lists the Kinds among the rendered "Kind/name" keys.
-func kindsOf(objects map[string]object) []string {
-	var kinds []string
+// objectsOfKind lists the rendered "Kind/name" keys of the given Kind.
+func objectsOfKind(objects map[string]object, kind string) []string {
+	var found []string
 	for _, key := range keys(objects) {
-		kind, _, _ := strings.Cut(key, "/")
-		kinds = append(kinds, kind)
+		if k, _, _ := strings.Cut(key, "/"); k == kind {
+			found = append(found, key)
+		}
 	}
-	return kinds
+	return found
 }
 
-func TestPostgresClusterRendersOnlyWhenEnabled(t *testing.T) {
-	t.Run("off", func(t *testing.T) {
-		objects := render(t, "prod-small.yaml")
-		for _, kind := range kindsOf(objects) {
-			if kind == "Cluster" {
-				t.Errorf("rendered a Cluster with Postgres off; got %v", keys(objects))
-			}
+// envItem returns the container's env entry with the given name as rendered
+// (value or valueFrom), or nil when there is none.
+func envItem(t *testing.T, c map[string]any, name string) map[string]any {
+	t.Helper()
+	for _, item := range get[[]any](t, c, "env") {
+		if get[string](t, item, "name") == name {
+			return get[map[string]any](t, map[string]any{"item": item}, "item")
 		}
-	})
+	}
+	return nil
+}
 
+// annotationsOf returns an object's annotations, nil when it has none.
+func annotationsOf(t *testing.T, obj object) map[string]any {
+	t.Helper()
+	annotations, _ := get[map[string]any](t, obj, "metadata")["annotations"].(map[string]any)
+	return annotations
+}
+
+func TestNothingDatabaseRelatedRendersWithPostgresOff(t *testing.T) {
+	objects := render(t, "prod-small.yaml")
+	for _, kind := range []string{"Cluster", "ObjectStore", "ScheduledBackup", "Job"} {
+		if found := objectsOfKind(objects, kind); len(found) != 0 {
+			t.Errorf("rendered %v with Postgres off", found)
+		}
+	}
+	if item := envItem(t, container(t, objects, "shop"), "DATABASE_URL"); item != nil {
+		t.Errorf("DATABASE_URL = %v with Postgres off, want none", item)
+	}
+}
+
+func TestPostgresClusterIsOneInstanceNamedAfterTheEnvironment(t *testing.T) {
 	cases := []struct {
 		fixture, cluster string
 	}{
@@ -35,22 +58,17 @@ func TestPostgresClusterRendersOnlyWhenEnabled(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
-			cluster := mustObject(t, render(t, tc.fixture), "Cluster/"+tc.cluster)
+			objects := render(t, tc.fixture)
+			if found := objectsOfKind(objects, "Cluster"); !slices.Equal(found, []string{"Cluster/" + tc.cluster}) {
+				t.Fatalf("rendered Clusters %v, want exactly Cluster/%s", found, tc.cluster)
+			}
+			cluster := objects["Cluster/"+tc.cluster]
 			if api := get[string](t, cluster, "apiVersion"); api != "postgresql.cnpg.io/v1" {
 				t.Errorf("apiVersion = %q, want postgresql.cnpg.io/v1", api)
 			}
 			if instances := get[int](t, cluster, "spec", "instances"); instances != 1 {
 				t.Errorf("instances = %d, want 1", instances)
 			}
-		})
-	}
-}
-
-func TestPostgresClusterHasFixedResourcesAndADatabaseNamedAfterTheApplication(t *testing.T) {
-	for _, fixture := range []string{"postgres-prod.yaml", "postgres-staging.yaml"} {
-		t.Run(fixture, func(t *testing.T) {
-			objects := render(t, fixture)
-			cluster := mustObject(t, objects, keyOfKind(t, objects, "Cluster"))
 
 			// Postgres is a fixed size whatever the Application's size is.
 			for _, field := range []string{"requests", "limits"} {
@@ -77,26 +95,7 @@ func TestPostgresClusterHasFixedResourcesAndADatabaseNamedAfterTheApplication(t 
 	}
 }
 
-// envItem returns the container's env entry with the given name as rendered
-// (value or valueFrom), or nil when there is none.
-func envItem(t *testing.T, c map[string]any, name string) map[string]any {
-	t.Helper()
-	for _, item := range get[[]any](t, c, "env") {
-		if get[string](t, item, "name") == name {
-			return get[map[string]any](t, map[string]any{"item": item}, "item")
-		}
-	}
-	return nil
-}
-
 func TestDatabaseURLComesFromTheClusterAppSecret(t *testing.T) {
-	t.Run("off", func(t *testing.T) {
-		c := container(t, render(t, "prod-small.yaml"), "shop")
-		if item := envItem(t, c, "DATABASE_URL"); item != nil {
-			t.Errorf("DATABASE_URL = %v with Postgres off, want none", item)
-		}
-	})
-
 	cases := []struct {
 		fixture, deployment, secret string
 	}{
@@ -203,17 +202,12 @@ func TestBackupsGoToTheBucketThroughTheBarmanCloudPlugin(t *testing.T) {
 	}
 }
 
-func TestMigrationJobRunsTheCommandBeforeTheSyncOnlyWhenSet(t *testing.T) {
-	for _, fixture := range []string{"prod-small.yaml", "postgres-staging.yaml"} {
-		t.Run("absent with "+fixture, func(t *testing.T) {
-			objects := render(t, fixture)
-			for _, kind := range kindsOf(objects) {
-				if kind == "Job" {
-					t.Errorf("rendered a Job without a migration command; got %v", keys(objects))
-				}
-			}
-		})
-	}
+func TestMigrationJobRunsTheCommandBeforeTheRolloutOnlyWhenSet(t *testing.T) {
+	t.Run("absent without a command", func(t *testing.T) {
+		if found := objectsOfKind(render(t, "postgres-staging.yaml"), "Job"); len(found) != 0 {
+			t.Errorf("rendered %v without a migration command", found)
+		}
+	})
 
 	objects := render(t, "postgres-prod.yaml")
 	job := mustObject(t, objects, "Job/shop-migrate")
@@ -221,7 +215,7 @@ func TestMigrationJobRunsTheCommandBeforeTheSyncOnlyWhenSet(t *testing.T) {
 	// ArgoCD runs it as a hook in a wave after the database and before the
 	// Application's objects, and does not apply those if it fails: the
 	// hook's failure is what stops the rollout.
-	annotations := get[map[string]any](t, job, "metadata", "annotations")
+	annotations := annotationsOf(t, job)
 	if hook := annotations["argocd.argoproj.io/hook"]; hook != "Sync" {
 		t.Errorf("hook = %v, want Sync", hook)
 	}
@@ -235,16 +229,14 @@ func TestMigrationJobRunsTheCommandBeforeTheSyncOnlyWhenSet(t *testing.T) {
 		"ScheduledBackup/shop-db": "-1",
 	}
 	for key, want := range waves {
-		got := get[map[string]any](t, mustObject(t, objects, key), "metadata", "annotations")["argocd.argoproj.io/sync-wave"]
-		if got != want {
+		if got := annotationsOf(t, mustObject(t, objects, key))["argocd.argoproj.io/sync-wave"]; got != want {
 			t.Errorf("%s sync-wave = %v, want %q", key, got, want)
 		}
 	}
 	// The Application's own objects stay in the default wave, after the
 	// migration.
 	for _, key := range []string{"Deployment/shop", "Service/shop", "Ingress/shop"} {
-		annotations, _ := mustObject(t, objects, key)["metadata"].(map[string]any)["annotations"].(map[string]any)
-		if wave, set := annotations["argocd.argoproj.io/sync-wave"]; set {
+		if wave, set := annotationsOf(t, mustObject(t, objects, key))["argocd.argoproj.io/sync-wave"]; set {
 			t.Errorf("%s sets sync-wave %v; it must stay in the default wave 0", key, wave)
 		}
 	}
@@ -271,6 +263,8 @@ func TestMigrationJobRunsTheCommandBeforeTheSyncOnlyWhenSet(t *testing.T) {
 		t.Errorf("Job sets args; the command is the whole shell line: %v", c["args"])
 	}
 
+	// The migration sees what the Application sees: DATABASE_URL from the
+	// same Secret, the plain env, and every named Secret.
 	url := envItem(t, c, "DATABASE_URL")
 	if url == nil {
 		t.Fatalf("no DATABASE_URL in env %v", get[[]any](t, c, "env"))
@@ -281,10 +275,15 @@ func TestMigrationJobRunsTheCommandBeforeTheSyncOnlyWhenSet(t *testing.T) {
 	if key := get[string](t, url, "valueFrom", "secretKeyRef", "key"); key != "uri" {
 		t.Errorf("secretKeyRef.key = %q, want uri", key)
 	}
-	// The Application's plain env comes along, so a migration tool sees what
-	// the Application sees.
 	if nodeEnv := envItem(t, c, "NODE_ENV"); nodeEnv == nil || nodeEnv["value"] != "production" {
 		t.Errorf("NODE_ENV = %v, want the Application's value", nodeEnv)
+	}
+	var refs []string
+	for _, item := range get[[]any](t, c, "envFrom") {
+		refs = append(refs, get[string](t, item, "secretRef", "name"))
+	}
+	if want := []string{"shop-stripe", "shop-smtp"}; !slices.Equal(refs, want) {
+		t.Errorf("envFrom secretRefs = %v, want the Application's secrets %v", refs, want)
 	}
 }
 
@@ -323,9 +322,10 @@ func TestRenderingRefusesPostgresValuesItCannotHonour(t *testing.T) {
 	cases := []struct {
 		fixture, message string
 	}{
-		{"migration-without-postgres.yaml", `postgres.migrationCommand needs postgres.enabled: true; there is no database to migrate`},
-		{"postgres-missing-bucket.yaml", `platform.backupsBucket is required when postgres.enabled`},
-		{"env-sets-database-url.yaml", `env must not set DATABASE_URL; the Postgres Capability injects it`},
+		{"refuse-migration-without-postgres.yaml", `postgres.migrationCommand needs postgres.enabled: true; there is no database to migrate`},
+		{"refuse-postgres-missing-bucket.yaml", `platform.backupsBucket is required when postgres.enabled`},
+		{"refuse-env-sets-database-url.yaml", `env must not set DATABASE_URL; the Postgres Capability injects it`},
+		{"refuse-postgres-static-site.yaml", `postgres.enabled needs kind: web-service; a Static site has no server to use a database`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
@@ -364,19 +364,4 @@ func TestPostgresManifestsPassKubeconformWithTheCRDSchemas(t *testing.T) {
 			t.Logf("kubeconform: %s", strings.TrimSpace(string(out)))
 		})
 	}
-}
-
-// keyOfKind returns the key of the single rendered object of the given Kind.
-func keyOfKind(t *testing.T, objects map[string]object, kind string) string {
-	t.Helper()
-	var found []string
-	for _, key := range keys(objects) {
-		if k, _, _ := strings.Cut(key, "/"); k == kind {
-			found = append(found, key)
-		}
-	}
-	if len(found) != 1 {
-		t.Fatalf("rendered %d objects of kind %s, want 1; got %v", len(found), kind, keys(objects))
-	}
-	return found[0]
 }

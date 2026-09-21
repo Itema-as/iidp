@@ -32,7 +32,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: migrate
-          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository | toString) (required "image.tag is required" .Values.image.tag | toString) | quote }}
+          image: {{ include "application.image" . | quote }}
           command:
             - sh
             - -c
@@ -43,6 +43,15 @@ spec:
               value: {{ $value | toString | quote }}
             {{- end }}
             {{- include "application.postgres.databaseURLEnv" . | nindent 12 }}
+          {{- with .Values.secrets }}
+          # The same named Secrets the Application gets, so a migration tool
+          # sees the environment the Application runs with.
+          envFrom:
+            {{- range . }}
+            - secretRef:
+                name: {{ . | toString | quote }}
+            {{- end }}
+          {{- end }}
           resources:
             {{- include "application.resources" . | nindent 12 }}
 {{- end }}

@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: {{ include "application.name" . }}
-          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository | toString) (required "image.tag is required" .Values.image.tag | toString) | quote }}
+          image: {{ include "application.image" . | quote }}
           ports:
             - name: http
               containerPort: {{ include "application.port" . }}

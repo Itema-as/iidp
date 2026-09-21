@@ -57,11 +57,14 @@ jobs:
           rm kubeconform kubeconform.tar.gz
           kubeconform -v
       # The chart has required values, so a bare lint only warns. Linting
-      # with each rendering fixture under --strict turns warnings into errors.
+      # with every rendering fixture under --strict turns warnings into
+      # errors. Fixtures named refuse-* exist to be refused by the templates
+      # and are covered by the tests instead.
       - name: helm lint
         run: |
-          for values in prod-small staging-medium prod-large postgres-prod postgres-staging; do
-            helm lint --strict chart/application --values "chart/application/testdata/${values}.yaml"
+          for values in chart/application/testdata/*.yaml; do
+            case "$(basename "$values")" in refuse-*) continue ;; esac
+            helm lint --strict chart/application --values "$values"
           done
       - name: go test
         # The chart tests skip when a tool is missing; here that must fail.
