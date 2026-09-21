@@ -76,7 +76,8 @@ func (r *Repository) Push(ctx context.Context, branch string) error {
 func (r *Repository) run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append(r.configArgs(), args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	// LC_ALL=C keeps git's messages in English, which Push matches on.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	if r.auth.Token != "" {
 		cmd.Env = append(cmd.Env, "IIDP_GIT_TOKEN="+r.auth.Token)
 	}

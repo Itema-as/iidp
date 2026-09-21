@@ -23,7 +23,7 @@ const ConfigFile = "platform.yaml"
 
 // DefaultChartRepository is the OCI reference of the generic chart when
 // platform.yaml does not name one: where the release workflow pushes it.
-var DefaultChartRepository = "oci://ghcr.io/" + strings.ToLower(platform.Org) + "/charts/application"
+var DefaultChartRepository = "oci://" + platform.Registry + "/charts/application"
 
 // Config is what the CLI reads from platform.yaml. Fields other tickets
 // add to the file are ignored rather than rejected.

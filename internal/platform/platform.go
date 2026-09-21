@@ -7,6 +7,12 @@
 // appear in code.
 package platform
 
+import "strings"
+
+// Registry is the GHCR namespace of Org, where Application images and the
+// generic chart are pushed: ghcr.io/<org> in lowercase, as GHCR wants it.
+var Registry = "ghcr.io/" + strings.ToLower(Org)
+
 const (
 	// Org is the GitHub org that owns the Platform repository and the
 	// Application repositories the CLI creates.

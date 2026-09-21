@@ -45,7 +45,9 @@ iidp app create --name shop --kind web-service --size medium --port 8080 --probe
 | `--probe-path` | `/` | Path the readiness and liveness probes request |
 | `--yes` | | Skip the confirmation (nothing is asked yet) |
 
-The command writes the Application's `prod` Environment to the Platform repository, an ArgoCD Application pinned to the chart version in `platform.yaml` and the values file that defines the Environment, commits as you and pushes to `main`. It then prints the Environment's address and where to look in ArgoCD and Grafana Cloud. The Environment deploys once the deploy workflow writes the first image tag. Nothing talks to Kubernetes; the files and how they are written are described in [`docs/platform-repository.md`](docs/platform-repository.md).
+The command writes the Application's `prod` Environment to the Platform repository, an ArgoCD Application pinned to the chart version in `platform.yaml` and the values file that defines the Environment, commits as you and pushes to `main`. It then prints the Environment's address and where to look in ArgoCD and Grafana Cloud. Nothing talks to Kubernetes; the files and how they are written are described in [`docs/platform-repository.md`](docs/platform-repository.md).
+
+Today that is all it does: the Application repository, Dockerfile and deploy workflow that Create generates, Adopt, the Capabilities and the interactive wizard come with later tickets. The Environment deploys once a deploy workflow writes the first image tag.
 
 ## Repository layout
 

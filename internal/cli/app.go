@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -61,10 +62,10 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.name, "name", "", "Application name: lowercase letters, digits and dashes, at most 40 characters, unique on the Platform")
+	f.StringVar(&opts.name, "name", "", "Application name: lowercase letters, digits and dashes, starting with a letter, at most 40 characters, unique on the Platform")
 	f.StringVar(&opts.kind, "kind", "", "Kind of Application: web-service (static-site is not available yet)")
 	f.StringVar(&opts.size, "size", "small", "Size: small, medium or large")
-	f.StringVar(&opts.image, "image", "", "Image repository (default ghcr.io/"+strings.ToLower(platform.Org)+"/<name>)")
+	f.StringVar(&opts.image, "image", "", "Image repository (default "+platform.Registry+"/<name>)")
 	f.IntVar(&opts.port, "port", 3000, "Port the container listens on")
 	f.StringVar(&opts.probePath, "probe-path", "/", "Path the readiness and liveness probes request")
 	f.BoolVar(&opts.yes, "yes", false, "Skip the confirmation (nothing is asked yet; accepted so scripts keep working once the wizard asks)")
@@ -121,7 +122,7 @@ func (o createOptions) application() (platformrepo.Application, error) {
 	default:
 		return platformrepo.Application{}, fmt.Errorf("unknown Kind %q: --kind must be %s (%s is not available yet)", o.kind, kindWebService, kindStaticSite)
 	}
-	if !contains(sizes, o.size) {
+	if !slices.Contains(sizes, o.size) {
 		return platformrepo.Application{}, fmt.Errorf("unknown size %q: --size must be %s", o.size, strings.Join(sizes, ", "))
 	}
 	if o.port < 1 || o.port > 65535 {
@@ -132,7 +133,7 @@ func (o createOptions) application() (platformrepo.Application, error) {
 	}
 	image := o.image
 	if image == "" {
-		image = "ghcr.io/" + strings.ToLower(platform.Org) + "/" + o.name
+		image = platform.Registry + "/" + o.name
 	}
 	return platformrepo.Application{
 		Name:            o.name,
@@ -157,13 +158,4 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 		fmt.Fprintf(out, "  Grafana:  %s\n", res.Config.GrafanaURL)
 	}
 	fmt.Fprintf(out, "\nThe Environment deploys once the deploy workflow writes the first image tag.\n")
-}
-
-func contains(list []string, s string) bool {
-	for _, item := range list {
-		if item == s {
-			return true
-		}
-	}
-	return false
 }

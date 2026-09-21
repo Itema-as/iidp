@@ -70,6 +70,12 @@ The rendered documents are asserted field by field through the CLI seam, as the 
 
 The chart notes recorded yaml.v3 as imported only by the chart tests. `platform.yaml` has to be parsed and the two files rendered, so the binary imports it now. No new dependency was added.
 
+## What the review changed, and what it did not
+
+A two-axis review (repository standards, then the ticket's acceptance criteria) was run before the pull request. Fixed: the GHCR namespace is now `platform.Registry`, derived from the org in the one package allowed to know it, instead of being spelled in two places; the CLI tests assert the Platform repository URL, name and registry through `internal/platform` rather than as literals; a failed `os.Stat` other than "not found" is an error instead of being read as "does not exist"; the files of an Environment are written in a fixed order; `LC_ALL=C` is set for git so the `[rejected]` match does not depend on the developer's locale; a second rejected push says that `main` moved twice and to run the command again; the name length check runs after the label check so it only ever counts ASCII; the required-flag test matches cobra's `"name" not set` and covers `--kind`; the commit author is asserted; and a refused push (simulated with a `pre-receive` hook, the way a permission denial reaches git) is tested to name the Platform repository and ask for write access.
+
+Left as they were: the `Example` tests in `internal/render` spell the registry and Platform repository URL literally because they are the function's inputs in that test, not the compiled-in constants, and Example output must be literal; `render.Environment` mirrors `platformrepo.Application` field by field because `render` is the leaf package `platformrepo` imports, so it cannot take the latter's type; and the Data Clump the two make is the price of keeping the two documents' rendering free of git and file-system concerns.
+
 ## Package layout
 
 `internal/git` (the binary wrapper), `internal/github` (the token source), `internal/render` (the two documents), `internal/platformrepo` (`platform.yaml`, name validation, the clone-write-commit-push-retry sequence) and the command in `internal/cli/app.go`. This follows the `wizard, github, platformrepo, render` list in `docs/design.md`; `git` is split from `platformrepo` because the Adopt path will need the same four operations on an Application repository.

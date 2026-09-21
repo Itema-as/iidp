@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Itema-as/iidp/internal/cli"
+	"github.com/Itema-as/iidp/internal/platform"
 )
 
 // The Platform repository is stood in for by a local bare git repository,
@@ -89,6 +90,25 @@ func cloneMain(t *testing.T, url string) string {
 	dir := filepath.Join(t.TempDir(), "clone")
 	gitRun(t, t.TempDir(), "clone", "--quiet", url, dir)
 	return dir
+}
+
+// headSubject is the subject of the newest commit on the Platform
+// repository's main.
+func headSubject(t *testing.T, url string) string {
+	t.Helper()
+	return strings.TrimSpace(gitRun(t, cloneMain(t, url), "log", "-1", "--format=%s"))
+}
+
+// refusePushes installs a pre-receive hook that refuses every push with
+// message, the way a missing write permission arrives at git.
+func refusePushes(t *testing.T, url, message string) {
+	t.Helper()
+	bare := strings.TrimPrefix(url, "file://")
+	hook := filepath.Join(bare, "hooks", "pre-receive")
+	writeFile(t, hook, "#!/bin/sh\necho \""+message+"\" >&2\nexit 1\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // pushCommit adds files to the Platform repository behind the CLI's back,
@@ -180,6 +200,9 @@ func TestAppCreateWritesProdEnvironmentToPlatformRepository(t *testing.T) {
 	if got := strings.TrimSpace(gitRun(t, clone, "log", "-1", "--format=%s")); got != "iidp app create shop" {
 		t.Errorf("commit subject = %q, want %q", got, "iidp app create shop")
 	}
+	if got := strings.TrimSpace(gitRun(t, clone, "log", "-1", "--format=%an <%ae>")); got != "Test Developer <developer@example.com>" {
+		t.Errorf("commit author = %q, want the developer's git identity", got)
+	}
 	added := strings.Fields(gitRun(t, clone, "show", "--name-only", "--format=", "HEAD"))
 	wantAdded := []string{"applications/shop/prod/application.yaml", "applications/shop/prod/values.yaml"}
 	if strings.Join(added, " ") != strings.Join(wantAdded, " ") {
@@ -196,11 +219,11 @@ func TestAppCreateWritesProdEnvironmentToPlatformRepository(t *testing.T) {
 		{[]any{"metadata", "name"}, "shop-prod"},
 		{[]any{"metadata", "namespace"}, "argocd"},
 		{[]any{"spec", "project"}, "default"},
-		{[]any{"spec", "sources", 0, "repoURL"}, "ghcr.io/itema-as/charts"},
+		{[]any{"spec", "sources", 0, "repoURL"}, platform.Registry + "/charts"},
 		{[]any{"spec", "sources", 0, "chart"}, "application"},
 		{[]any{"spec", "sources", 0, "targetRevision"}, "0.3.1"},
 		{[]any{"spec", "sources", 0, "helm", "valueFiles", 0}, "$values/applications/shop/prod/values.yaml"},
-		{[]any{"spec", "sources", 1, "repoURL"}, "https://github.com/Itema-as/iidp-platform.git"},
+		{[]any{"spec", "sources", 1, "repoURL"}, platform.RepositoryURL},
 		{[]any{"spec", "sources", 1, "targetRevision"}, "main"},
 		{[]any{"spec", "sources", 1, "ref"}, "values"},
 		{[]any{"spec", "destination", "server"}, "https://kubernetes.default.svc"},
@@ -226,7 +249,7 @@ func TestAppCreateWritesProdEnvironmentToPlatformRepository(t *testing.T) {
 		{[]any{"environment"}, "prod"},
 		{[]any{"platform", "baseDomain"}, "app.itma.no"},
 		{[]any{"kind"}, "web-service"},
-		{[]any{"image", "repository"}, "ghcr.io/itema-as/shop"},
+		{[]any{"image", "repository"}, platform.Registry + "/shop"},
 		{[]any{"image", "tag"}, ""},
 		{[]any{"size"}, "small"},
 		{[]any{"port"}, 3000},
@@ -273,16 +296,28 @@ func TestAppCreateHonoursSizeImagePortAndProbeFlags(t *testing.T) {
 	}
 }
 
-func TestAppCreateRequiresNameFlag(t *testing.T) {
+func TestAppCreateListsMissingRequiredFlags(t *testing.T) {
 	url := newPlatformRepository(t, testPlatformYAML)
-
-	_, stderr, code := createApplication(t, url, cli.Dependencies{}, "--kind", "web-service")
-
-	if code == 0 {
-		t.Fatalf("exit code = 0, want non-zero")
-	}
-	if !strings.Contains(stderr, "name") {
-		t.Errorf("stderr = %q, want it to name the missing --name flag", stderr)
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		missing []string
+	}{
+		{"no name", []string{"--kind", "web-service"}, []string{`"name" not set`}},
+		{"no kind", []string{"--name", "shop"}, []string{`"kind" not set`}},
+		{"nothing", nil, []string{`"kind"`, `"name"`, "not set"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := createApplication(t, url, cli.Dependencies{}, tc.args...)
+			if code == 0 {
+				t.Fatalf("exit code = 0, want non-zero")
+			}
+			for _, want := range tc.missing {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+				}
+			}
+		})
 	}
 	assertNoApplications(t, url)
 }
@@ -291,10 +326,10 @@ func TestAppCreateRequiresNameFlag(t *testing.T) {
 // what it was seeded with: nothing was written before the refusal.
 func assertNoApplications(t *testing.T, url string) {
 	t.Helper()
-	clone := cloneMain(t, url)
-	if got := strings.TrimSpace(gitRun(t, clone, "log", "-1", "--format=%s")); got != "Seed the Platform repository" {
+	if got := headSubject(t, url); got != "Seed the Platform repository" {
 		t.Errorf("Platform repository has a new commit %q, want none", got)
 	}
+	clone := cloneMain(t, url)
 	entries, err := os.ReadDir(filepath.Join(clone, "applications"))
 	if err != nil {
 		t.Fatal(err)
@@ -384,8 +419,7 @@ func TestAppCreateRefusesAnExistingApplication(t *testing.T) {
 	if !strings.Contains(stderr, "shop") || !strings.Contains(stderr, "already") {
 		t.Errorf("stderr = %q, want it to say shop already exists", stderr)
 	}
-	clone := cloneMain(t, url)
-	if got := strings.TrimSpace(gitRun(t, clone, "log", "-1", "--format=%s")); got != "Add shop by hand" {
+	if got := headSubject(t, url); got != "Add shop by hand" {
 		t.Errorf("Platform repository head is %q, want the hand-made commit untouched", got)
 	}
 }
@@ -399,8 +433,25 @@ func TestAppCreateRequiresAGitHubLogin(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "Itema-as/iidp-platform") || !strings.Contains(stderr, "not logged in") {
+	if !strings.Contains(stderr, platform.Repository) || !strings.Contains(stderr, "not logged in") {
 		t.Errorf("stderr = %q, want it to name the Platform repository and the missing login", stderr)
+	}
+	assertNoApplications(t, url)
+}
+
+func TestAppCreateExplainsARefusedPush(t *testing.T) {
+	url := newPlatformRepository(t, testPlatformYAML)
+	refusePushes(t, url, "Permission to iidp-platform denied to developer.")
+
+	_, stderr, code := createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero")
+	}
+	for _, want := range []string{platform.Repository, "write access", "Permission to iidp-platform denied"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+		}
 	}
 	assertNoApplications(t, url)
 }

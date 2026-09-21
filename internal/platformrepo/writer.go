@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -45,10 +46,11 @@ func ValidateName(name string) error {
 	switch {
 	case name == "":
 		return fmt.Errorf("%w: it is empty", ErrInvalidName)
-	case len(name) > MaxNameLength:
-		return fmt.Errorf("%w: %q is %d characters, the most is %d", ErrInvalidName, name, len(name), MaxNameLength)
 	case !dns1035Label.MatchString(name):
 		return fmt.Errorf("%w: %q must be lowercase letters, digits and dashes, start with a letter and not end with a dash", ErrInvalidName, name)
+	case len(name) > MaxNameLength:
+		// The label check above leaves only ASCII, so bytes are characters.
+		return fmt.Errorf("%w: %q is %d characters, the most is %d", ErrInvalidName, name, len(name), MaxNameLength)
 	}
 	return nil
 }
@@ -100,6 +102,9 @@ func (w *Writer) CreateApplication(ctx context.Context, app Application) (Result
 	if errors.Is(err, git.ErrPushRejected) {
 		res, err = w.attempt(ctx, app, true)
 	}
+	if errors.Is(err, git.ErrPushRejected) {
+		return Result{}, fmt.Errorf("main of %s moved twice while this command ran; nothing was written, run it again", platform.Repository)
+	}
 	return res, err
 }
 
@@ -118,11 +123,13 @@ func (w *Writer) attempt(ctx context.Context, app Application, retry bool) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	if _, err := os.Stat(filepath.Join(dir, ApplicationsDir, app.Name)); err == nil {
-		if retry {
-			return Result{}, fmt.Errorf("%w: %q was added to %s while this command ran; nothing was written", ErrApplicationExists, app.Name, platform.Repository)
-		}
+	switch _, err := os.Stat(filepath.Join(dir, ApplicationsDir, app.Name)); {
+	case err == nil && retry:
+		return Result{}, fmt.Errorf("%w: %q was added to %s while this command ran; nothing was written", ErrApplicationExists, app.Name, platform.Repository)
+	case err == nil:
 		return Result{}, fmt.Errorf("%w: %q already has a directory under %s/ in %s", ErrApplicationExists, app.Name, ApplicationsDir, platform.Repository)
+	case !errors.Is(err, fs.ErrNotExist):
+		return Result{}, fmt.Errorf("checking for an existing Application: %w", err)
 	}
 
 	files, err := w.writeEnvironment(dir, cfg, app, "prod")
@@ -185,10 +192,16 @@ func (w *Writer) writeEnvironment(dir string, cfg Config, app Application, envir
 	if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(envDir)), 0o755); err != nil {
 		return nil, err
 	}
-	for p, content := range map[string][]byte{applicationPath: application, valuesPath: values} {
-		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(p)), content, 0o644); err != nil {
+	files := []struct {
+		path    string
+		content []byte
+	}{{applicationPath, application}, {valuesPath, values}}
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(f.path)), f.content, 0o644); err != nil {
 			return nil, err
 		}
+		paths = append(paths, f.path)
 	}
-	return []string{applicationPath, valuesPath}, nil
+	return paths, nil
 }
