@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+
+	"github.com/Itema-as/iidp/internal/platformrepo"
 )
 
 // Framework names a built-in template.
@@ -41,9 +43,9 @@ func (f Framework) Valid() bool {
 func (f Framework) Kind() string {
 	switch f {
 	case NextJS:
-		return "web-service"
+		return platformrepo.KindWebService
 	case ViteReact:
-		return "static-site"
+		return platformrepo.KindStaticSite
 	default:
 		return ""
 	}

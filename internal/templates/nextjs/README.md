@@ -22,6 +22,6 @@ environment variable (`3000` by default) and answers `200` on `/`.
 ## Deploying
 
 There is no deploy workflow in this repository yet: pushing to `main` does
-not build or deploy an image until the deploy workflow is added (see
-[iidp issue #12](https://github.com/adriansberg/iidp/issues/12)). Until
-then, the Environment this Application was created with stays undeployed.
+not build or deploy an image until the deploy workflow is added (iidp issue
+#12). Until then, the Environment this Application was created with stays
+undeployed.

@@ -80,9 +80,11 @@ func (c *Client) RepositoryExists(ctx context.Context, owner, name string) (bool
 }
 
 // CreateRepository creates a new repository named name, under org (when org
-// is true) or under owner's personal account, and returns its clone URL.
-// It sets auto_init to false: Create always pushes its own first commit.
-func (c *Client) CreateRepository(ctx context.Context, owner string, org bool, name string, private bool) (cloneURL string, err error) {
+// is true) or under owner's personal account, and returns its clone URL and
+// the default branch GitHub gave it (so the caller can tell whether
+// SetDefaultBranch still needs to run). It sets auto_init to false: Create
+// always pushes its own first commit.
+func (c *Client) CreateRepository(ctx context.Context, owner string, org bool, name string, private bool) (cloneURL, defaultBranch string, err error) {
 	path := "/user/repos"
 	if org {
 		path = "/orgs/" + owner + "/repos"
@@ -93,15 +95,16 @@ func (c *Client) CreateRepository(ctx context.Context, owner string, org bool, n
 		"auto_init": false,
 	}
 	var repo struct {
-		CloneURL string `json:"clone_url"`
+		CloneURL      string `json:"clone_url"`
+		DefaultBranch string `json:"default_branch"`
 	}
 	if err := c.do(ctx, http.MethodPost, path, body, &repo); err != nil {
-		return "", fmt.Errorf("creating %s/%s: %w", owner, name, err)
+		return "", "", fmt.Errorf("creating %s/%s: %w", owner, name, err)
 	}
 	if repo.CloneURL == "" {
-		return "", fmt.Errorf("creating %s/%s: GitHub returned no clone_url", owner, name)
+		return "", "", fmt.Errorf("creating %s/%s: GitHub returned no clone_url", owner, name)
 	}
-	return repo.CloneURL, nil
+	return repo.CloneURL, repo.DefaultBranch, nil
 }
 
 // SetDefaultBranch sets owner/name's default branch. Create calls it after

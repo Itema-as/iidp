@@ -11,4 +11,4 @@ on the port the Platform gives it in the `PORT` environment variable.
 
 There is no deploy workflow in this repository yet, either: pushing to
 `main` does not build or deploy an image until the deploy workflow is added
-(see [iidp issue #12](https://github.com/adriansberg/iidp/issues/12)).
+(iidp issue #12).

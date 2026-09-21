@@ -29,7 +29,19 @@ const (
 	// Service name allow, for the -staging suffix and for the suffixes the
 	// chart adds to an Environment's objects.
 	MaxNameLength = 40
+
+	// KindWebService and KindStaticSite are the two Kinds the chart accepts
+	// (chart/application/values.yaml). This is the one place they are
+	// spelled in Go; internal/templates derives a Framework's Kind from
+	// these same constants.
+	KindWebService = "web-service"
+	KindStaticSite = "static-site"
 )
+
+// ValidKind reports whether kind is one the chart renders.
+func ValidKind(kind string) bool {
+	return kind == KindWebService || kind == KindStaticSite
+}
 
 // ErrApplicationExists is wrapped by CreateApplication when the Application
 // already has a directory in the Platform repository.

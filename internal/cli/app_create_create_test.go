@@ -27,12 +27,13 @@ type fakeGitHub struct {
 	t     *testing.T
 	login string
 
-	mu       sync.Mutex
-	requests []fakeRequest
-	existing map[string]bool
-	created  map[string]string
-	defaults map[string]string
-	reposDir string
+	mu                  sync.Mutex
+	requests            []fakeRequest
+	existing            map[string]bool
+	created             map[string]string
+	defaults            map[string]string
+	reposDir            string
+	createDefaultBranch string
 }
 
 type fakeRequest struct {
@@ -45,12 +46,13 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 	t.Helper()
 	setGitEnv(t)
 	f := &fakeGitHub{
-		t:        t,
-		login:    "devuser",
-		existing: map[string]bool{},
-		created:  map[string]string{},
-		defaults: map[string]string{},
-		reposDir: t.TempDir(),
+		t:                   t,
+		login:               "devuser",
+		existing:            map[string]bool{},
+		created:             map[string]string{},
+		defaults:            map[string]string{},
+		reposDir:            t.TempDir(),
+		createDefaultBranch: "master",
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/user", f.handleUser)
@@ -201,7 +203,7 @@ func (f *fakeGitHub) createRepo(w http.ResponseWriter, owner string, body map[st
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"clone_url":      cloneURL,
 		"full_name":      key,
-		"default_branch": "master",
+		"default_branch": f.createDefaultBranch,
 	})
 }
 
@@ -280,6 +282,22 @@ func TestAppCreatePathNextJSUnderOrgIsAWebService(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestAppCreatePathSkipsSettingTheDefaultBranchWhenAlreadyMain(t *testing.T) {
+	platformURL := newPlatformRepository(t, testPlatformYAML)
+	gh := newFakeGitHub(t)
+	gh.createDefaultBranch = "main"
+
+	_, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--name", "shop", "--path", "create", "--framework", "nextjs")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	if n := gh.requestsTo(http.MethodPatch, "/repos/"+platform.Org+"/shop"); n != 0 {
+		t.Errorf("PATCH /repos/%s/shop called %d times, want 0: GitHub already reported main as the default", platform.Org, n)
 	}
 }
 

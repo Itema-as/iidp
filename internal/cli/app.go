@@ -19,12 +19,6 @@ import (
 	"github.com/Itema-as/iidp/internal/templates"
 )
 
-// Kinds and sizes the chart accepts.
-const (
-	kindWebService = "web-service"
-	kindStaticSite = "static-site"
-)
-
 // The two values --path accepts today. Adopt is refused with a clear
 // message: issue #15 builds it. The zero value (no --path) is the legacy
 // bare behaviour of app create before this ticket: it writes only the
@@ -158,7 +152,7 @@ func runAppCreate(cmd *cobra.Command, opts createOptions, deps Dependencies) err
 		if err != nil {
 			if appRepo.URL != "" {
 				fmt.Fprintf(out, "\nCreated the Application repository %s, but: %v\n", appRepo.URL, err)
-				fmt.Fprintf(out, "Nothing was written to %s. The repository was left as it is; finish pushing the template by hand and re-run once it succeeds.\n", platform.Repository)
+				fmt.Fprintf(out, "Nothing was written to %s. Running this command again with the same --name will refuse: %s already exists. Either push the rendered template to %s by hand and finish with the Platform-repository step yourself (see docs/platform-repository.md), or delete the repository on GitHub and run this command again.\n", platform.Repository, appRepo.URL, appRepo.CloneURL)
 			}
 			return err
 		}
@@ -295,10 +289,8 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		}
 	}
 
-	switch kind {
-	case kindWebService, kindStaticSite:
-	default:
-		return createPlan{}, fmt.Errorf("unknown Kind %q: --kind must be %s or %s", kind, kindWebService, kindStaticSite)
+	if !platformrepo.ValidKind(kind) {
+		return createPlan{}, fmt.Errorf("unknown Kind %q: --kind must be %s or %s", kind, platformrepo.KindWebService, platformrepo.KindStaticSite)
 	}
 	if !slices.Contains(sizes, o.size) {
 		return createPlan{}, fmt.Errorf("unknown size %q: --size must be %s", o.size, strings.Join(sizes, ", "))

@@ -63,7 +63,7 @@ What each framework produces in the Application repository:
 - **vite-react**: a minimal Vite React app, a multi-stage Dockerfile that builds `dist/` and serves it with nginx on port 80, `index.html` at `/`. A Static site.
 - **other**: only a commented `Dockerfile` stub saying what to fill in (base image, build, `EXPOSE`, listen on `PORT`); the first deploy fails until it is completed. Requires `--kind`, since iidp cannot derive one.
 
-Every template includes a `.gitignore`, a `.dockerignore` and a README, but no deploy workflow yet: that is [issue #12](https://github.com/adriansberg/iidp/issues/12).
+Every template includes a `.gitignore`, a `.dockerignore` and a README, but no deploy workflow yet: that is issue #12.
 
 The command writes the Application's `prod` Environment to the Platform repository, an ArgoCD Application pinned to the chart version in `platform.yaml` and the values file that defines the Environment, commits as you and pushes to `main`. It then prints the Application repository URL (with `--path create`), the Environment's address, and where to look in ArgoCD and Grafana Cloud. Nothing talks to Kubernetes; the files and how they are written are described in [`docs/platform-repository.md`](docs/platform-repository.md).
 

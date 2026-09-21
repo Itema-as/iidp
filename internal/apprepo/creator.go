@@ -85,7 +85,7 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 	}
 
 	url := "https://github.com/" + app.Owner.Login + "/" + app.Name
-	cloneURL, err := c.Client.CreateRepository(ctx, app.Owner.Login, app.Owner.Org, app.Name, app.Private)
+	cloneURL, defaultBranch, err := c.Client.CreateRepository(ctx, app.Owner.Login, app.Owner.Org, app.Name, app.Private)
 	if err != nil {
 		return Result{}, err
 	}
@@ -104,8 +104,10 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 	if err := repo.Push(ctx, Branch); err != nil {
 		return res, fmt.Errorf("pushing the initial commit to %s/%s: %w", app.Owner.Login, app.Name, err)
 	}
-	if err := c.Client.SetDefaultBranch(ctx, app.Owner.Login, app.Name, Branch); err != nil {
-		return res, err
+	if defaultBranch != Branch {
+		if err := c.Client.SetDefaultBranch(ctx, app.Owner.Login, app.Name, Branch); err != nil {
+			return res, err
+		}
 	}
 	return res, nil
 }
