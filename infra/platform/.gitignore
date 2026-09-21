@@ -1,0 +1,5 @@
+# Written by scripts/bootstrap-wizard.sh: the oauth2-proxy Entra app
+# registration's tenant id, client id and client secret, kept here until
+# ticket #18 (Itema login) defines where it belongs in the Platform
+# repository. See docs/implementation-notes/05-bootstrap-wizard.md.
+oauth2-proxy-entra.env

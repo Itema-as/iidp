@@ -11,6 +11,24 @@ Two roots, applied in order:
 
 The split exists because a bucket cannot hold the state of its own creation. `state-bucket/` is applied once and rarely touched; keep its `terraform.tfstate` somewhere safe (it is gitignored). Losing it is recoverable, since a bucket is one `tofu import` away.
 
+## Bootstrap wizard
+
+`../scripts/bootstrap-wizard.sh` walks the Platform admin through every step below, plus Cloudflare, Grafana Cloud, the GitHub App and the two Entra app registrations, and writes the Platform repository's `platform.yaml` and `bootstrap/` files at the end. It is idempotent (a value that already exists is detected, shown masked and offered to keep) and safe to explore with no setup at all:
+
+```sh
+./scripts/bootstrap-wizard.sh --dry-run --platform-repo ../iidp-platform
+```
+
+Run it for real from a clone of this repository, with the Platform repository cloned at `--platform-repo` (default `../iidp-platform`, on `main`):
+
+```sh
+./scripts/bootstrap-wizard.sh --platform-repo ../iidp-platform
+```
+
+Requires `tofu`, `gh`, `sops`, `ssh`, `jq`, `curl` and bash >= 4.3 (macOS ships bash 3.2; `brew install bash` and invoke it explicitly if `bash --version` shows 3.x). `az` is optional: without it, the Entra stage prints the exact app registration to create by hand and asks for the resulting tenant id, client id and secret instead of creating it automatically. `--no-push` writes and commits the Platform repository without pushing; see `scripts/bootstrap-wizard.sh --help` for every flag, and `docs/implementation-notes/05-bootstrap-wizard.md` for why it is built the way it is.
+
+The sections below are the same steps done by hand, for when the wizard cannot run (no Hetzner/Cloudflare/Grafana/GitHub access from the current machine, or a step it got wrong needs redoing on its own) or when you want to see what each command actually does before trusting the wizard with it.
+
 ## Prerequisites
 
 - [OpenTofu](https://opentofu.org/docs/intro/install/) 1.10 or newer (`tofu`). CI runs 1.12.

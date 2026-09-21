@@ -7,6 +7,7 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #2 | [02-skeleton.md](02-skeleton.md) |
 | #3 | [03-infra.md](03-infra.md) |
 | #4 | [04-bootstrap.md](04-bootstrap.md) |
+| #5 | [05-bootstrap-wizard.md](05-bootstrap-wizard.md) |
 | #6 | [06-chart-web-service.md](06-chart-web-service.md) |
 | #7 | [07-chart-postgres.md](07-chart-postgres.md) |
 | #8 | [08-chart-static-domains-secrets.md](08-chart-static-domains-secrets.md) |
