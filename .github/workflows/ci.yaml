@@ -72,6 +72,47 @@ jobs:
           IIDP_REQUIRE_CHART_TOOLS: "1"
         run: go test -v ./chart/...
 
+  # Renders each built-in Create template with cmd/renderfixture, builds its
+  # Dockerfile and curls / for a 200: the same check done locally with
+  # Podman before this ticket's pull request, kept running on every PR.
+  # "other" is excluded: its stub Dockerfile is not meant to build.
+  templates:
+    name: Templates
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - framework: nextjs
+            container_port: 3000
+            run_args: -e PORT=3000
+          - framework: vite-react
+            container_port: 80
+            run_args: ""
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Render the template
+        run: go run ./cmd/renderfixture ${{ matrix.framework }} demoapp fixture
+      - name: Build the image
+        run: docker build -t iidp-template-${{ matrix.framework }} fixture
+      - name: Run it and curl /
+        run: |
+          docker run -d --name fixture -p 8080:${{ matrix.container_port }} ${{ matrix.run_args }} iidp-template-${{ matrix.framework }}
+          status=000
+          for _ in $(seq 1 30); do
+            status="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)"
+            [ "$status" = "200" ] && break
+            sleep 1
+          done
+          docker logs fixture || true
+          docker rm -f fixture
+          if [ "$status" != "200" ]; then
+            echo "GET / on the ${{ matrix.framework }} template returned $status, want 200"
+            exit 1
+          fi
+
   release-config:
     name: GoReleaser check
     runs-on: ubuntu-latest

@@ -386,7 +386,6 @@ func TestAppCreateRefusesKindsAndSizesTheChartDoesNotRender(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"static site not yet", []string{"--name", "shop", "--kind", "static-site"}, "not available yet"},
 		{"unknown kind", []string{"--name", "shop", "--kind", "cron-job"}, "cron-job"},
 		{"unknown size", []string{"--name", "shop", "--kind", "web-service", "--size", "huge"}, "huge"},
 		{"bad port", []string{"--name", "shop", "--kind", "web-service", "--port", "0"}, "port"},
@@ -403,6 +402,20 @@ func TestAppCreateRefusesKindsAndSizesTheChartDoesNotRender(t *testing.T) {
 		})
 	}
 	assertNoApplications(t, url)
+}
+
+func TestAppCreateAcceptsStaticSiteKind(t *testing.T) {
+	url := newPlatformRepository(t, testPlatformYAML)
+
+	_, stderr, code := createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "static-site")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
+	if got := lookup(t, values, "kind"); got != "static-site" {
+		t.Errorf("values.yaml kind = %v, want static-site", got)
+	}
 }
 
 func TestAppCreateRefusesAnExistingApplication(t *testing.T) {

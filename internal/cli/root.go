@@ -20,6 +20,10 @@ type Dependencies struct {
 	// BeforePush, when set, runs between committing to the Platform
 	// repository and each push attempt. Tests use it to move main.
 	BeforePush func() error
+	// GitHubAPI overrides the GitHub API base URL the Create path's client
+	// talks to; empty means the real API. Tests point it at an in-process
+	// fake server.
+	GitHubAPI string
 }
 
 // Run executes the CLI with the given arguments (excluding the program name)

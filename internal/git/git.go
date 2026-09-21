@@ -40,6 +40,21 @@ func Clone(ctx context.Context, url, branch, dir string, auth Auth) (*Repository
 	return r, nil
 }
 
+// Init creates a new repository at dir (which must already exist and hold
+// the files to commit) on branch, with an origin remote set to url, ready
+// for Add, Commit and Push. Create uses it for the Application repository's
+// first commit, where there is nothing to clone yet.
+func Init(ctx context.Context, dir, branch, url string, auth Auth) (*Repository, error) {
+	r := &Repository{Dir: dir, auth: auth}
+	if _, err := r.run(ctx, dir, "init", "--quiet", "--initial-branch", branch); err != nil {
+		return nil, fmt.Errorf("init: %w", err)
+	}
+	if _, err := r.run(ctx, dir, "remote", "add", "origin", url); err != nil {
+		return nil, fmt.Errorf("remote add origin %s: %w", url, err)
+	}
+	return r, nil
+}
+
 // Add stages the given paths, relative to the repository root.
 func (r *Repository) Add(ctx context.Context, paths ...string) error {
 	args := append([]string{"add", "--"}, paths...)
