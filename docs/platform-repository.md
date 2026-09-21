@@ -43,6 +43,7 @@ Read from the root of the repository on every run, so changing a Platform-wide s
 | `cloudflareZone` | only for `--domain` | The Cloudflare zone containing `baseDomain`. A `--domain` host inside it is fully automated: external-dns creates the record. Not required without `--domain`. |
 | `backupsBucket` | only for `--postgres` | The Object Storage bucket every Application database is backed up to, written into the Environment's `values.yaml` as `platform.backupsBucket`. Not required without `--postgres`. |
 | `objectStorageEndpoint` | only for `--postgres` | The S3 endpoint of `backupsBucket`'s location, for example `https://hel1.your-objectstorage.com`, written as `platform.objectStorageEndpoint`. Not required without `--postgres`. |
+| `githubApp.id`, `githubApp.installationId` | only for `iidp ci set-image` | The org GitHub App the deploy workflow's write-back authenticates as (`bootstrap/README.md`), and the id of its installation on the org. Not required to create an Application; required for `iidp ci set-image` to mint an installation token (the private key is never here: it comes from the `IIDP_DEPLOY_APP_PRIVATE_KEY` environment variable, an org Actions secret). |
 
 ```yaml
 baseDomain: app.itma.no
@@ -54,6 +55,9 @@ agePublicKey: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
 cloudflareZone: itma.no
 backupsBucket: itema-iidp-db-backups
 objectStorageEndpoint: https://hel1.your-objectstorage.com
+githubApp:
+  id: 123456
+  installationId: 78901234
 ```
 
 ## `applications/<name>/<environment>/application.yaml`
@@ -132,7 +136,7 @@ postgres:
   backupRetention: 30d
 ```
 
-`image.tag` is empty when the Application is created: no image exists yet. The deploy workflow writes the first tag (a commit SHA on `main`, a version on a `v*` tag), and until then ArgoCD reports the Environment as failing to render because the chart requires a tag. Itema login adds a key to this file in a later ticket; `env` is where plain environment variables go.
+`image.tag` is empty when the Application is created: no image exists yet. The deploy workflow's write-back, `iidp ci set-image <app> <environment> <tag>` (see "How the CLI writes" below), sets it in place, every other key and comment untouched: a commit SHA (the full SHA GitHub gives `github.sha`, not a short one) on every push to `main`, a version (the `v*` tag with its leading `v` stripped, for example tag `v1.2.3` writes `1.2.3`) on a `v*` tag. Until the first write, ArgoCD reports the Environment as failing to render because the chart requires a tag. Itema login adds a key to this file in a later ticket; `env` is where plain environment variables go.
 
 `secrets` (a list of Secret names, empty until `iidp secret set` adds to it) is documented below.
 
@@ -233,3 +237,14 @@ Both commits are pushed in one push. This means ArgoCD may apply the Environment
 5. If the push is rejected because `main` moved, it clones afresh and repeats once. If the Application's directory appeared in the meantime, it fails without writing; the other developer's Application wins.
 
 The temporary directory is removed afterwards.
+
+## How the deploy workflow writes back: `iidp ci set-image`
+
+`iidp ci set-image <app> <prod|staging|auto> <tag>` is the subcommand the deploy workflow (`.github/workflows/deploy.yaml` in every Created Application repository, `internal/templates`) runs after it pushes an image to GHCR. Unlike every other command, it is not meant to be run by a developer and does not use the `gh` CLI's login:
+
+1. Clones `main` of the Platform repository with no credential at all (`platformrepo.LoadRemoteConfig`) to read `platform.yaml`. This is safe because `platform.yaml` carries no secret: `agePublicKey` is a public key, and every other field is Platform-wide configuration, not a credential. Refuses clearly if `githubApp.id` or `githubApp.installationId` is not set.
+2. Signs a short-lived RS256 JWT for `githubApp.id` with the standard library (no JWT dependency), using the private key from `IIDP_DEPLOY_APP_PRIVATE_KEY` (a PEM) or `IIDP_DEPLOY_APP_PRIVATE_KEY_FILE` (a path to one) — the org Actions secret the bootstrap wizard creates (`bootstrap/README.md`), available to the workflow but never written to the Platform repository.
+3. Exchanges the JWT for a GitHub App installation token (`POST /app/installations/{githubApp.installationId}/access_tokens`), using the same `internal/github` client and injectable base URL every other command's GitHub calls use.
+4. Uses that installation token as the git credential for the rest of the operation: `auto` resolves to `staging` when `applications/<app>/staging/` exists in the freshly cloned repository and to `prod` otherwise (the decision is made here, from the Platform repository, never by the workflow); refuses clearly if the Application or the resolved Environment does not exist. It then edits `image.tag` in place in the Environment's `values.yaml` (`render.SetImageTag`, the same node-level YAML editing `iidp secret set` uses for `secrets:` and `spec.sources`, so every other key and every comment survives), commits `Deploy <app> <environment> <tag>` and pushes to `main`, retrying once after a fresh clone if the push is rejected because `main` moved — the same logic `iidp app create` uses.
+
+The GitHub App needs `contents: write` on the Platform repository for step 4 to succeed; the bootstrap wizard's manifest already requests it (`docs/implementation-notes/05-bootstrap-wizard.md`).

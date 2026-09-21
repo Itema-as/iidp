@@ -60,6 +60,21 @@ type Config struct {
 	// platform.objectStorageEndpoint. Required for --postgres; not required
 	// otherwise.
 	ObjectStorageEndpoint string `yaml:"objectStorageEndpoint"`
+	// GitHubApp is the org GitHub App iidp ci set-image authenticates as.
+	// Required for ci set-image; not required to create an Application.
+	GitHubApp GitHubApp `yaml:"githubApp"`
+}
+
+// GitHubApp is what iidp ci set-image needs to mint a GitHub App
+// installation token: the app id and installation id the bootstrap wizard
+// records after creating and installing the org's deploy App
+// (docs/implementation-notes/05-bootstrap-wizard.md). The private key is
+// never written here: it comes from the environment
+// (internal/githubapp.PrivateKeyFromEnv), never from the Platform
+// repository.
+type GitHubApp struct {
+	ID             int64 `yaml:"id"`
+	InstallationID int64 `yaml:"installationId"`
 }
 
 // LoadConfig reads platform.yaml from a clone of the Platform repository.

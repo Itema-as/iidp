@@ -21,7 +21,22 @@ The image builds `dist/` with Vite and serves it with nginx on port 80,
 
 ## Deploying
 
-There is no deploy workflow in this repository yet: pushing to `main` does
-not build or deploy an image until the deploy workflow is added (iidp issue
-#12). Until then, the Environment this Application was created with stays
-undeployed.
+`.github/workflows/deploy.yaml` builds and deploys this Application. On a
+push to `main` it builds the image with buildx, pushes
+`ghcr.io/<owner>/{{.Name}}:<commit SHA>` and runs `iidp ci set-image` to
+write that tag into the Platform repository (staging when this Application
+has one, prod otherwise). On a `v*` tag it retags the already-built SHA
+image with the tag's version, with no rebuild, and runs `iidp ci set-image`
+for prod.
+
+The write-back authenticates as the org's GitHub App, using the
+`IIDP_DEPLOY_APP_PRIVATE_KEY` org Actions secret the Platform admin's
+bootstrap wizard creates. That secret has org visibility, so an
+org-owned repository receives it automatically; a repository under a
+personal account does not and needs it added by hand (Settings → Secrets
+and variables → Actions → New repository secret).
+
+The image GHCR receives on the first push is private by default: make the
+package public before the first deploy (its GitHub page, Package settings
+→ Danger Zone → Change visibility), or give the Environment's namespace
+pull credentials for it instead.

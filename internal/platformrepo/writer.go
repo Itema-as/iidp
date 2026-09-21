@@ -108,6 +108,10 @@ type Result struct {
 	// Domains reports how each requested custom domain will be served, in
 	// the order given.
 	Domains []DomainPlan
+	// Environment is set by SetImageTag to the Environment actually
+	// written: the literal prod or staging it was given, or, given auto,
+	// whichever of the two it resolved to.
+	Environment string
 }
 
 // Writer commits Applications to the Platform repository.
@@ -187,6 +191,23 @@ func (w *Writer) CheckAvailable(ctx context.Context, name string) error {
 		return fmt.Errorf("cloning %s: %w", platform.Repository, err)
 	}
 	return checkApplicationAbsent(dir, name, false)
+}
+
+// LoadRemoteConfig clones url anonymously (no credential at all) and reads
+// platform.yaml. iidp ci set-image uses it to discover githubApp.id and
+// githubApp.installationId before it has any credential to authenticate
+// with: platform.yaml carries no secret (agePublicKey is a public key), so
+// reading it needs none (docs/implementation-notes/12-deploy-workflow.md).
+func LoadRemoteConfig(ctx context.Context, url string) (Config, error) {
+	dir, err := os.MkdirTemp("", "iidp-platform-config-")
+	if err != nil {
+		return Config{}, err
+	}
+	defer os.RemoveAll(dir)
+	if _, err := git.Clone(ctx, url, Branch, dir, git.Auth{}); err != nil {
+		return Config{}, fmt.Errorf("cloning %s: %w", platform.Repository, err)
+	}
+	return LoadConfig(dir)
 }
 
 // checkApplicationAbsent errors if name already has a directory under

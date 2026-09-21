@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/github"
 	"github.com/Itema-as/iidp/internal/templates"
+	"github.com/Itema-as/iidp/internal/version"
 )
 
 // Branch is the branch Create pushes the first commit to and sets as the
@@ -52,6 +54,9 @@ type Result struct {
 	// Files are the rendered template's files, relative to the repository
 	// root, in the order they were written.
 	Files []string
+	// IidpVersion is the iidp release .github/workflows/deploy.yaml was
+	// pinned to: internal/version.Version, or "latest" for a dev build.
+	IidpVersion string
 }
 
 // Creator creates Application repositories through the GitHub API.
@@ -79,7 +84,12 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 		return Result{}, err
 	}
 	defer os.RemoveAll(dir)
-	files, err := templates.Render(app.Framework, templates.Data{Name: app.Name}, dir)
+	iidpVersion := templateIidpVersion()
+	files, err := templates.Render(app.Framework, templates.Data{
+		Name:        app.Name,
+		Owner:       strings.ToLower(app.Owner.Login),
+		IidpVersion: iidpVersion,
+	}, dir)
 	if err != nil {
 		return Result{}, err
 	}
@@ -89,7 +99,7 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	res := Result{URL: url, CloneURL: cloneURL, Files: files}
+	res := Result{URL: url, CloneURL: cloneURL, Files: files, IidpVersion: iidpVersion}
 
 	repo, err := git.Init(ctx, dir, Branch, cloneURL, c.Auth)
 	if err != nil {
@@ -110,4 +120,15 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 		}
 	}
 	return res, nil
+}
+
+// templateIidpVersion is the iidp release .github/workflows/deploy.yaml
+// pins its install step to: the version of the running binary, or "latest"
+// for a dev build ("dev", internal/version's zero value), since there is
+// no released archive matching a dev build to pin to.
+func templateIidpVersion() string {
+	if version.Version == "dev" {
+		return "latest"
+	}
+	return version.Version
 }

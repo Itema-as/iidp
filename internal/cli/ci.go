@@ -1,0 +1,143 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/Itema-as/iidp/internal/git"
+	"github.com/Itema-as/iidp/internal/github"
+	"github.com/Itema-as/iidp/internal/githubapp"
+	"github.com/Itema-as/iidp/internal/platform"
+	"github.com/Itema-as/iidp/internal/platformrepo"
+)
+
+// ciSetImageOptions are the positional arguments of ci set-image.
+type ciSetImageOptions struct {
+	application  string
+	environment  string
+	tag          string
+	platformRepo string
+}
+
+func newCICommand(deps Dependencies) *cobra.Command {
+	ci := &cobra.Command{
+		Use:   "ci",
+		Short: "Commands the deploy workflow runs; not for developers",
+	}
+	ci.AddCommand(newCISetImageCommand(deps))
+	return ci
+}
+
+func newCISetImageCommand(deps Dependencies) *cobra.Command {
+	var opts ciSetImageOptions
+	cmd := &cobra.Command{
+		Use:   "set-image <app> <prod|staging|auto> <tag>",
+		Short: "Write an image tag into an Environment's values.yaml (run by the deploy workflow)",
+		Long: "Writes tag into image.tag of an Application's Environment in the Platform\n" +
+			"repository (" + platform.Repository + "), the way the deploy workflow's\n" +
+			"write-back step does: a commit SHA on every push to main, a version on a\n" +
+			"v* tag. auto targets staging when the Application has one and prod\n" +
+			"otherwise; that decision is made from the Platform repository, never by\n" +
+			"the workflow.\n\n" +
+			"Authenticates as the org's GitHub App, not the developer: the app id and\n" +
+			"installation id come from platform.yaml (githubApp.id,\n" +
+			"githubApp.installationId), the private key from IIDP_DEPLOY_APP_PRIVATE_KEY\n" +
+			"(a PEM) or IIDP_DEPLOY_APP_PRIVATE_KEY_FILE (a path to one). gh auth login\n" +
+			"is not consulted; this command is not meant to be run by hand.",
+		Args: cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.application = args[0]
+			opts.environment = args[1]
+			opts.tag = args[2]
+			return runCISetImage(cmd, opts, deps)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
+	_ = f.MarkHidden("platform-repo")
+	return cmd
+}
+
+func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies) error {
+	if err := platformrepo.ValidateName(opts.application); err != nil {
+		return err
+	}
+	if err := validateCIEnvironment(opts.environment); err != nil {
+		return err
+	}
+	if strings.TrimSpace(opts.tag) == "" {
+		return errors.New("the tag must not be empty")
+	}
+
+	auth, err := ciInstallationAuth(cmd.Context(), opts.platformRepo, deps)
+	if err != nil {
+		return err
+	}
+
+	writer := &platformrepo.Writer{URL: opts.platformRepo, Auth: auth, BeforePush: deps.BeforePush}
+	res, err := writer.SetImageTag(cmd.Context(), opts.application, opts.environment, opts.tag)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Deploy %s %s %s\n", opts.application, res.Environment, opts.tag)
+	fmt.Fprintf(out, "\nCommitted to %s:\n", platform.Repository)
+	for _, f := range res.Files {
+		fmt.Fprintf(out, "  %s\n", f)
+	}
+	return nil
+}
+
+// validateCIEnvironment refuses anything but the three values ci set-image
+// accepts, clearly, before any network call.
+func validateCIEnvironment(environment string) error {
+	switch environment {
+	case "prod", "staging", platformrepo.EnvironmentAuto:
+		return nil
+	default:
+		return fmt.Errorf("unknown Environment %q: must be prod, staging or auto", environment)
+	}
+}
+
+// ciInstallationAuth mints the GitHub App installation token ci set-image
+// authenticates the Platform repository with. The app id and installation
+// id come from platform.yaml, read with an anonymous clone
+// (platformrepo.LoadRemoteConfig): platform.yaml carries no secret
+// (agePublicKey is a public key), which is what makes reading it possible
+// before any credential exists at all. The private key comes from the
+// environment. See docs/implementation-notes/12-deploy-workflow.md.
+func ciInstallationAuth(ctx context.Context, platformRepoURL string, deps Dependencies) (git.Auth, error) {
+	cfg, err := platformrepo.LoadRemoteConfig(ctx, platformRepoURL)
+	if err != nil {
+		return git.Auth{}, err
+	}
+	if cfg.GitHubApp.ID == 0 || cfg.GitHubApp.InstallationID == 0 {
+		return git.Auth{}, fmt.Errorf("%s in %s sets no githubApp.id or githubApp.installationId; iidp ci set-image cannot authenticate without them", platformrepo.ConfigFile, platform.Repository)
+	}
+	key, err := githubapp.PrivateKeyFromEnv()
+	if err != nil {
+		return git.Auth{}, err
+	}
+	jwt, err := githubapp.SignJWT(cfg.GitHubApp.ID, key, time.Now())
+	if err != nil {
+		return git.Auth{}, err
+	}
+	ghClient := &github.Client{Token: jwt}
+	if deps.GitHubAPI != "" {
+		ghClient.BaseURL = deps.GitHubAPI
+	}
+	token, err := ghClient.CreateInstallationToken(ctx, cfg.GitHubApp.InstallationID)
+	if err != nil {
+		return git.Auth{}, err
+	}
+	if deps.CIAuthObserved != nil {
+		deps.CIAuthObserved(token)
+	}
+	return git.Auth{Token: token}, nil
+}

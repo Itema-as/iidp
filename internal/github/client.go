@@ -118,6 +118,26 @@ func (c *Client) SetDefaultBranch(ctx context.Context, owner, name, branch strin
 	return nil
 }
 
+// CreateInstallationToken creates an installation access token for
+// installationID (POST /app/installations/{installation_id}/access_tokens).
+// Token must be a JWT signed with the GitHub App's private key
+// (internal/githubapp.SignJWT): this is the one request in this client
+// authenticated as the App itself rather than as a user or an installation.
+// Installation tokens expire one hour after creation.
+func (c *Client) CreateInstallationToken(ctx context.Context, installationID int64) (string, error) {
+	var resp struct {
+		Token string `json:"token"`
+	}
+	path := fmt.Sprintf("/app/installations/%d/access_tokens", installationID)
+	if err := c.do(ctx, http.MethodPost, path, nil, &resp); err != nil {
+		return "", fmt.Errorf("creating a GitHub App installation access token: %w", err)
+	}
+	if resp.Token == "" {
+		return "", errors.New("creating a GitHub App installation access token: GitHub returned no token")
+	}
+	return resp.Token, nil
+}
+
 func (c *Client) baseURL() string {
 	if c.BaseURL == "" {
 		return DefaultBaseURL

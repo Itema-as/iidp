@@ -254,6 +254,10 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		for _, f := range appRepo.Files {
 			fmt.Fprintf(out, "  %s\n", f)
 		}
+		fmt.Fprintf(out, "\nThe deploy workflow (.github/workflows/deploy.yaml) is pinned to iidp %s.\n", appRepo.IidpVersion)
+		if !ownerIsOrg {
+			fmt.Fprintf(out, "IIDP_DEPLOY_APP_PRIVATE_KEY is an org Actions secret; a personal-account repository does not receive it. Add it by hand: %s/settings/secrets/actions/new (name IIDP_DEPLOY_APP_PRIVATE_KEY, the org GitHub App's private key PEM).\n", appRepo.URL)
+		}
 	}
 
 	fmt.Fprintf(out, "\nWriting the prod Environment to %s...\n", platform.Repository)

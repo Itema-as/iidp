@@ -12,10 +12,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
 
+	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 )
 
@@ -59,6 +61,17 @@ type Data struct {
 	// Name is the Application's name: used as the package.json name and in
 	// the README, wherever the template says what it generated.
 	Name string
+	// Owner is the lowercased GitHub login the Application repository is
+	// created under: the deploy workflow template pushes to
+	// ghcr.io/<Owner>/<Name>, matching the image repository iidp writes to
+	// the Platform repository
+	// (docs/implementation-notes/11-cli-create-path.md, "Image repository").
+	Owner string
+	// IidpVersion is the iidp release .github/workflows/deploy.yaml pins
+	// its own install step to: the version of the iidp binary that
+	// rendered the template (internal/version), or "latest" for a dev
+	// build ("dev").
+	IidpVersion string
 }
 
 // Render writes framework's template into dir (which must already exist),
@@ -103,7 +116,17 @@ func Render(framework Framework, data Data, dir string) ([]string, error) {
 	return written, nil
 }
 
+// workflowPath matches a GitHub Actions workflow file's path within a
+// template. Those files are full of the ${{ ... }} expression syntax
+// GitHub Actions itself uses, which collides with text/template's own {{ }}
+// delimiters, so they are rendered by plain string substitution
+// (renderWorkflow) instead of being parsed as a Go template.
+var workflowPath = regexp.MustCompile(`(^|/)\.github/workflows/[^/]+\.ya?ml$`)
+
 func renderFile(name string, content []byte, data Data) ([]byte, error) {
+	if workflowPath.MatchString(name) {
+		return renderWorkflow(content, data), nil
+	}
 	tmpl, err := template.New(name).Parse(string(content))
 	if err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", name, err)
@@ -113,4 +136,16 @@ func renderFile(name string, content []byte, data Data) ([]byte, error) {
 		return nil, fmt.Errorf("rendering %s: %w", name, err)
 	}
 	return buf.Bytes(), nil
+}
+
+// renderWorkflow substitutes the placeholder tokens a workflow file uses
+// in place of Go template actions (see workflowPath) with data's values.
+func renderWorkflow(content []byte, data Data) []byte {
+	r := strings.NewReplacer(
+		"__IIDP_APP_NAME__", data.Name,
+		"__IIDP_OWNER__", data.Owner,
+		"__IIDP_VERSION__", data.IidpVersion,
+		"__IIDP_CLI_REPO__", platform.CLIRepository,
+	)
+	return []byte(r.Replace(string(content)))
 }

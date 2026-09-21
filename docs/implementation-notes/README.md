@@ -14,6 +14,7 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #9 | [09-e2e-fixture-application.md](09-e2e-fixture-application.md) |
 | #10 | [10-cli-platform-repository.md](10-cli-platform-repository.md) |
 | #11 | [11-cli-create-path.md](11-cli-create-path.md) |
+| #12 | [12-deploy-workflow.md](12-deploy-workflow.md) |
 | #13 | [13-cli-capabilities.md](13-cli-capabilities.md) |
 | #14 | [14-cli-wizard.md](14-cli-wizard.md) |
 | #16 | [16-cli-secret-set.md](16-cli-secret-set.md) |
