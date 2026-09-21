@@ -95,6 +95,7 @@ spec:
 ```
 
 - The Application is named `<name>-<environment>` and installs into a namespace of the same name, created by ArgoCD on the first sync. Every Environment therefore has its own namespace.
+- The kind end-to-end test's fixture Application deviates in one field only: the chart source's `repoURL`, `targetRevision` and `path` point at this repository's `iidp.git`, served in-cluster, at `path: chart/application`, instead of the OCI reference, because kind has no GHCR to pull it from. Everything else, including the second source and the `$values/...` valueFiles pattern, is exactly as below.
 - `repoURL` of the chart source is `chartRepository` from `platform.yaml` without the `oci://` scheme and without the last path segment, which becomes `chart`. `targetRevision` is `chartVersion` at the time the Environment was created.
 - Sync is automated with prune and self-heal, so a commit is a deploy and a hand change in the cluster is reverted.
 - The resources finalizer makes deleting the ArgoCD Application delete the Environment's resources, which is what `iidp app delete` will rely on.
@@ -102,6 +103,8 @@ spec:
 - Once the Environment has at least one secret, `iidp secret set` adds a third source, the same repository at `main` with `path: applications/<name>/<environment>/sops` and no `ref` and no `chart`: ArgoCD detects the `kustomization.yaml` there and renders it with KSOPS, the same way `bootstrap/platform-secrets.yaml` renders `bootstrap/sops/` (`bootstrap/README.md`). It is added once, after the first secret, and left alone after that.
 
 What the bootstrap must provide for this to reconcile: the `default` ArgoCD project (or a stricter one, if the bootstrap changes `project` here and in the CLI together) allowed to use both source repositories and to deploy to any namespace on the in-cluster server; and ArgoCD credentials for the Platform repository and, if the chart package on GHCR is private, for the OCI registry. Nothing has to be replicated into Environment namespaces: the Platform's wildcard certificate is Traefik's default certificate (a `TLSStore` named `default`, see the chart README), so a new namespace needs no secret of its own.
+
+Nothing makes ArgoCD notice a file under `applications/` by itself: the root Application only syncs `bootstrap/` (see [`bootstrap/README.md`](../bootstrap/README.md)). `bootstrap/applications.yaml` is the file that does, one more hand-written Application next to `platform-components.yaml` and `platform-secrets.yaml`: a directory source on the Platform repository itself, path `applications`, `directory: {recurse: true, include: '*/*/application.yaml'}`. Every Application repository written by the CLI is picked up as soon as it is pushed, with no further wiring; the fixture Platform repository ([`test/e2e/fixtures/platform-repo`](../test/e2e/fixtures/platform-repo)) carries this file, and the kind end-to-end test proves it works. See [`docs/implementation-notes/09-e2e-fixture-application.md`](implementation-notes/09-e2e-fixture-application.md) for the alternatives considered.
 
 ## `applications/<name>/<environment>/values.yaml`
 

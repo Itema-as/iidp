@@ -1,0 +1,23 @@
+# Values for shop's staging Environment. See prod/values.yaml for what each
+# key is for; only the Environment, and the read-write Service the migration
+# checks (shop-staging-db-rw, staging's own CloudNativePG Cluster), differ.
+application:
+  name: shop
+environment: staging
+platform:
+  baseDomain: app.example.test
+  backupsBucket: iidp-backups
+  objectStorageEndpoint: https://objectstorage.invalid
+kind: web-service
+image:
+  repository: docker.io/library/nginx
+  tag: "1.27-alpine"
+size: small
+port: 80
+probe:
+  path: /
+env: {}
+postgres:
+  enabled: true
+  migrationCommand: >-
+    test -n "$DATABASE_URL" && nc -z -w 5 shop-staging-db-rw 5432 && echo "migrated: DATABASE_URL set, shop-staging-db-rw:5432 reachable"
