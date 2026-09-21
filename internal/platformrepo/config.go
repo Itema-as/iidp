@@ -42,6 +42,10 @@ type Config struct {
 	ArgoCDURL string `yaml:"argocdURL"`
 	// GrafanaURL is where developers look at their Application's logs.
 	GrafanaURL string `yaml:"grafanaURL"`
+	// AgePublicKey is what iidp secret set encrypts values with. The
+	// matching private key exists only in the cluster. Required for
+	// secret set; not required to create an Application.
+	AgePublicKey string `yaml:"agePublicKey"`
 }
 
 // LoadConfig reads platform.yaml from a clone of the Platform repository.

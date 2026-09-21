@@ -11,3 +11,4 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #7 | [07-chart-postgres.md](07-chart-postgres.md) |
 | #8 | [08-chart-static-domains-secrets.md](08-chart-static-domains-secrets.md) |
 | #10 | [10-cli-platform-repository.md](10-cli-platform-repository.md) |
+| #16 | [16-cli-secret-set.md](16-cli-secret-set.md) |

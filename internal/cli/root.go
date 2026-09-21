@@ -61,6 +61,7 @@ func newRootCommand(deps Dependencies) *cobra.Command {
 	}
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newAppCommand(deps))
+	root.AddCommand(newSecretCommand(deps))
 	return root
 }
 

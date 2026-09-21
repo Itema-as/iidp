@@ -13,6 +13,7 @@ import (
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/render"
+	"github.com/Itema-as/iidp/internal/sops"
 )
 
 const (
@@ -90,6 +91,17 @@ type Writer struct {
 	// BeforePush, when set, runs after the commit and before each push
 	// attempt. Tests use it to move main in the meantime.
 	BeforePush func() error
+	// Encryptor encrypts secret values for SetSecrets; nil means
+	// sops.Binary{}, the sops binary on PATH.
+	Encryptor sops.Encryptor
+}
+
+// encryptor returns w.Encryptor, defaulting to the sops binary on PATH.
+func (w *Writer) encryptor() sops.Encryptor {
+	if w.Encryptor != nil {
+		return w.Encryptor
+	}
+	return sops.Binary{}
 }
 
 // CreateApplication adds the prod Environment of app to the Platform
@@ -98,9 +110,19 @@ type Writer struct {
 // because main moved is retried once from a fresh clone; if the Application
 // appeared in the meantime, the retry fails with ErrApplicationExists.
 func (w *Writer) CreateApplication(ctx context.Context, app Application) (Result, error) {
-	res, err := w.attempt(ctx, app, false)
+	return w.runWithRetry(ctx, func(ctx context.Context, retry bool) (Result, error) {
+		return w.attemptCreate(ctx, app, retry)
+	})
+}
+
+// runWithRetry runs attempt once, retrying it once after a fresh clone if
+// the push is rejected because main moved in the meantime. attempt does
+// everything from clone to push for one try; retry is true on the second
+// call, so it can tell a genuine conflict from a first attempt.
+func (w *Writer) runWithRetry(ctx context.Context, attempt func(ctx context.Context, retry bool) (Result, error)) (Result, error) {
+	res, err := attempt(ctx, false)
 	if errors.Is(err, git.ErrPushRejected) {
-		res, err = w.attempt(ctx, app, true)
+		res, err = attempt(ctx, true)
 	}
 	if errors.Is(err, git.ErrPushRejected) {
 		return Result{}, fmt.Errorf("main of %s moved twice while this command ran; nothing was written, run it again", platform.Repository)
@@ -108,7 +130,7 @@ func (w *Writer) CreateApplication(ctx context.Context, app Application) (Result
 	return res, err
 }
 
-func (w *Writer) attempt(ctx context.Context, app Application, retry bool) (Result, error) {
+func (w *Writer) attemptCreate(ctx context.Context, app Application, retry bool) (Result, error) {
 	dir, err := os.MkdirTemp("", "iidp-platform-")
 	if err != nil {
 		return Result{}, err
