@@ -20,6 +20,16 @@ platform:
   # for a custom domain the Platform's wildcard does not cover. Created by
   # the bootstrap.
   httpIssuer: letsencrypt-http01
+  # The Object Storage bucket every Application database is backed up to.
+  # Required when postgres.enabled.
+  backupsBucket: ""
+  # The S3 endpoint of the location the bucket lives in, for example
+  # https://hel1.your-objectstorage.com. Required when postgres.enabled.
+  objectStorageEndpoint: ""
+  # The Secret holding the Object Storage access key (key ACCESS_KEY_ID) and
+  # secret key (key ACCESS_SECRET_KEY) the backups are written with. It must
+  # exist in the namespace the Environment is installed into.
+  backupsCredentialsSecret: backups-credentials
 
 # What the Application fundamentally is: web-service (a container listening
 # on port) or static-site (an nginx image built by CI, listening on 80).
@@ -43,12 +53,14 @@ probe:
   # The path the readiness and liveness probes request on port.
   path: /
 
-# Plain environment variables, name to value. Secrets do not go here.
+# Plain environment variables, name to value. Secrets do not go here, and
+# neither does DATABASE_URL, which the Postgres Capability injects.
 env: {}
 
 # Names of Kubernetes Secrets in the Environment's namespace whose keys are
-# all exposed to the container as environment variables. The CLI writes
-# them SOPS-encrypted next to this file; the chart never renders a Secret.
+# all exposed to the container, and to the migration Job, as environment
+# variables. The CLI writes them SOPS-encrypted next to this file; the
+# chart never renders a Secret.
 secrets: []
 
 # Custom domains, one hostname each, served in addition to the Platform
@@ -58,3 +70,16 @@ secrets: []
 # creates records for zones on Cloudflare, anything else needs a CNAME to
 # the Platform address.
 domains: []
+
+postgres:
+  # The Postgres Capability: a single-instance database of this Environment's
+  # own, DATABASE_URL injected into the container, continuous backups to the
+  # Platform's backups bucket.
+  enabled: false
+  # A shell command run from the Application image, with DATABASE_URL set,
+  # before every rollout; a failing command stops the rollout. Empty means
+  # the Application has no migrations. Needs enabled: true.
+  migrationCommand: ""
+  # How long backups and WAL are kept in the bucket: a number of days (d),
+  # weeks (w) or months (m).
+  backupRetention: 30d

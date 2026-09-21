@@ -60,7 +60,7 @@ jobs:
       # with each rendering fixture under --strict turns warnings into errors.
       - name: helm lint
         run: |
-          for values in prod-small staging-medium prod-large; do
+          for values in prod-small staging-medium prod-large postgres-prod postgres-staging; do
             helm lint --strict chart/application --values "chart/application/testdata/${values}.yaml"
           done
       - name: go test

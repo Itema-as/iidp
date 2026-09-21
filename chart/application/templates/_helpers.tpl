@@ -48,6 +48,64 @@ Helm renders first. It produces no output.
 {{- if hasKey (.Values.env | default dict) "PORT" -}}
 {{- fail "env must not set PORT; it is injected from port" -}}
 {{- end -}}
+{{- if and .Values.postgres.migrationCommand (not .Values.postgres.enabled) -}}
+{{- fail "postgres.migrationCommand needs postgres.enabled: true; there is no database to migrate" -}}
+{{- end -}}
+{{- if and .Values.postgres.enabled (hasKey (.Values.env | default dict) "DATABASE_URL") -}}
+{{- fail "env must not set DATABASE_URL; the Postgres Capability injects it" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Whether the Postgres Capability is on.
+*/}}
+{{- define "application.postgres.enabled" -}}
+{{- if .Values.postgres.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+The name of this Environment's CloudNativePG Cluster, and of the ObjectStore
+and ScheduledBackup that belong to it: <fullname>-db.
+*/}}
+{{- define "application.postgres.cluster" -}}
+{{- printf "%s-db" (include "application.fullname" .) -}}
+{{- end -}}
+
+{{/*
+The CNPG-I plugin that archives WAL and takes base backups: the Barman
+Cloud Plugin, which the bootstrap installs next to the operator.
+*/}}
+{{- define "application.postgres.backupPlugin" -}}
+barman-cloud.cloudnative-pg.io
+{{- end -}}
+
+{{/*
+Where this Environment's backups live in the Platform's backups bucket:
+s3://<bucket>/<application>/<environment>/, so one bucket holds every
+database and a prefix is one Environment.
+*/}}
+{{- define "application.postgres.backupPath" -}}
+{{- printf "s3://%s/%s/%s/" (required "platform.backupsBucket is required when postgres.enabled" .Values.platform.backupsBucket | toString) (include "application.name" .) (include "application.environment" .) -}}
+{{- end -}}
+
+{{/*
+The Secret CloudNativePG generates for the database owner, <cluster>-app,
+whose uri key is the whole DATABASE_URL. Nothing in the chart handles the
+credentials themselves.
+*/}}
+{{- define "application.postgres.appSecret" -}}
+{{- printf "%s-app" (include "application.postgres.cluster" .) -}}
+{{- end -}}
+
+{{/*
+The DATABASE_URL env entry, for the Deployment and the migration Job.
+*/}}
+{{- define "application.postgres.databaseURLEnv" -}}
+- name: DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "application.postgres.appSecret" . }}
+      key: uri
 {{- end -}}
 
 {{/*

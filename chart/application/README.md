@@ -2,7 +2,7 @@
 
 The generic Helm chart every Application on Itema's Platform is an instance of ([ADR-0003](../../docs/adr/0003-one-generic-helm-chart-per-application.md)). The Platform repository holds, per Environment, one ArgoCD Application pointing at a pinned version of this chart and one values file; that values file is the Environment's whole definition. The CLI writes it, developers do not edit it by hand, and every Platform convention lives in the templates here rather than in the CLI.
 
-Today the chart renders both Kinds, Web service and Static site, as a Deployment, a Service and an Ingress on a Platform address served with the Platform's wildcard certificate; custom domains, each with the right certificate; and named Secrets as environment variables. Postgres, migrations and Itema login are added by later tickets.
+Today the chart renders both Kinds, Web service and Static site, as a Deployment, a Service and an Ingress on a Platform address served with the Platform's wildcard certificate; custom domains, each with the right certificate; and named Secrets as environment variables. With the Postgres Capability on it also renders the Environment's own CloudNativePG database with continuous backups, injects `DATABASE_URL`, and runs the migration command before every rollout. Itema login is added by a later ticket.
 
 ## Values
 
@@ -12,15 +12,21 @@ Today the chart renders both Kinds, Web service and Static site, as a Deployment
 | `environment` | `prod` | `prod` or `staging`. Anything else fails rendering. |
 | `platform.baseDomain` | required | The Platform base domain, for example `app.itma.no`. |
 | `platform.httpIssuer` | `letsencrypt-http01` | The cert-manager ClusterIssuer, created by the bootstrap, that issues a certificate over HTTP-01 for a custom domain the wildcard does not cover. |
+| `platform.backupsBucket` | required with Postgres | The Object Storage bucket every Application database is backed up to, for example `itema-iidp-db-backups`. |
+| `platform.objectStorageEndpoint` | required with Postgres | The S3 endpoint of the bucket's location, for example `https://hel1.your-objectstorage.com`. |
+| `platform.backupsCredentialsSecret` | `backups-credentials` | The Secret holding the Object Storage access key (key `ACCESS_KEY_ID`) and secret key (key `ACCESS_SECRET_KEY`) the backups are written with. It must exist in the namespace the Environment is installed into. |
 | `kind` | `web-service` | What the Application is: `web-service` (a container listening on `port`) or `static-site` (an nginx image built by CI, listening on 80). Anything else fails. |
 | `image.repository` | required | The image, for example `ghcr.io/itema-as/shop`. |
 | `image.tag` | required | The tag CI wrote: a commit SHA on `main`, a version on a `v*` tag. |
 | `size` | `small` | `small`, `medium` or `large`. See below. Anything else fails. |
 | `port` | `3000` | The port a Web service listens on. Ignored by a Static site, which always listens on 80. |
 | `probe.path` | `/` | The path the readiness and liveness probes request. |
-| `env` | `{}` | Plain environment variables, name to value. Not for secrets, and it must not set `PORT`: a Web service gets it from `port`, and a Static site listens on 80 regardless. |
-| `secrets` | `[]` | Names of Secrets in the Environment's namespace. Every key of each becomes an environment variable. The chart renders no Secret; the CLI writes them SOPS-encrypted next to the values file. |
+| `env` | `{}` | Plain environment variables, name to value. Not for secrets, and it must not set `PORT` (a Web service gets it from `port`, and a Static site listens on 80 regardless) nor `DATABASE_URL` when Postgres is enabled. |
+| `secrets` | `[]` | Names of Secrets in the Environment's namespace. Every key of each becomes an environment variable, of the Application and of the migration Job. The chart renders no Secret; the CLI writes them SOPS-encrypted next to the values file. |
 | `domains` | `[]` | Custom domains, one hostname each, served beside the Platform address. A hostname that is not lowercase DNS, is listed twice, is the Environment's own Platform address, or is too long for its TLS secret's name fails rendering. See "Custom domains" below. |
+| `postgres.enabled` | `false` | The Postgres Capability. See below. |
+| `postgres.migrationCommand` | `""` | A shell line run from the Application image, with `DATABASE_URL` set, before every rollout. Empty means no migrations. Setting it without `postgres.enabled` fails rendering. |
+| `postgres.backupRetention` | `30d` | How long backups and WAL are kept in the bucket: a number of days (`d`), weeks (`w`) or months (`m`). |
 
 ## Conventions the chart encodes
 
@@ -51,6 +57,10 @@ DNS is not the chart's business. external-dns creates the records for hosts in z
 
 **Replicas.** One. The Platform is a single node; there is nothing to spread over.
 
+**Postgres.** With `postgres.enabled`, the Environment gets a CloudNativePG `Cluster` named `<name>-db` (`shop-db`, `shop-staging-db`): one instance, 250m CPU and 256Mi memory as both requests and limits whatever the Application's size, a 5Gi volume, and a database and owner both named after the Application. The operator generates the owner's password and the Secret `<name>-db-app`; the container gets `DATABASE_URL` from that Secret's `uri` key, so neither the CLI nor the developer ever handles credentials, and the same key is the whole connection string in every Environment. Backups are continuous: every WAL segment is archived through the Barman Cloud Plugin to an `ObjectStore` of the same name at `s3://<platform.backupsBucket>/<name>/<environment>/` on `platform.objectStorageEndpoint`, gzip-compressed, with the keys from `platform.backupsCredentialsSecret`, and a `ScheduledBackup` takes a base backup every day at 03:00 UTC, the first one immediately. Backups and WAL older than `postgres.backupRetention` are deleted from the bucket. The database Pods carry the two `iidp.itema.no/*` labels so Alloy attributes their logs, but not the selector labels. The Platform must run CloudNativePG 1.30 or newer with the Barman Cloud Plugin installed (see [the implementation notes](../../docs/implementation-notes/07-chart-postgres.md) for the versions assumed).
+
+**Migrations.** With `postgres.migrationCommand` set, a Job named `<name>-migrate` runs `sh -c "<command>"` from the Application image with the Application's `env` and `DATABASE_URL`, at the Application's size. It is an ArgoCD `Sync` hook in sync wave -1: the `Cluster` and `ObjectStore` are applied in wave -2 and must be healthy first, the Job runs next, and the Deployment, Service and Ingress in wave 0 are applied only if it succeeds. A failed migration (`backoffLimit: 0`, `restartPolicy: Never`) therefore fails the sync and stops the rollout; the previous run's Job is deleted before the next is created (`BeforeHookCreation`). The migration Pod does not carry the selector labels, so the Service never routes to it.
+
 ## Rendering locally
 
 From the repository root:
@@ -60,6 +70,7 @@ helm template shop chart/application --values chart/application/testdata/prod-sm
 helm template shop chart/application --values chart/application/testdata/staging-medium.yaml
 helm template brochure chart/application --values chart/application/testdata/static-site.yaml
 helm template shop chart/application --values chart/application/testdata/custom-domains-mixed.yaml
+helm template shop chart/application --values chart/application/testdata/postgres-prod.yaml
 ```
 
 Or with your own values:
@@ -80,7 +91,7 @@ helm lint --strict chart/application --values chart/application/testdata/prod-sm
 
 ## Tests
 
-`chart_test.go` is a Go test package that shells out to `helm template` with the fixtures in `testdata/`, parses the rendered manifests, and asserts on them: each size's resources, the prod and staging hosts, the default and an overridden probe path, the injected `PORT`, the labels, the wildcard host naming no secret, and that unknown sizes, unknown Kinds and bad names are refused. `static_site_test.go` covers the Static site Kind (port 80, no `PORT`, the probes) and `domains_test.go` covers custom domains under and outside the wildcard, the second Ingress, secrets as `envFrom`, and the refused domains. Each runs `kubeconform -strict` on its fixtures' rendered output against the Kubernetes minor of the k3s release pinned in `infra/platform/variables.tf`, so the node's version is the only pin. The tests skip themselves when `helm` or `kubeconform` is not on `PATH`, so `go test ./...` passes on any machine; the `Chart` job in CI installs both, sets `IIDP_REQUIRE_CHART_TOOLS` so a missing tool fails instead of skipping, and runs them on every pull request.
+`chart_test.go` is a Go test package that shells out to `helm template` with the fixtures in `testdata/`, parses the rendered manifests, and asserts on them: each size's resources, the prod and staging hosts, the default and an overridden probe path, the injected `PORT`, the labels, the wildcard host naming no secret, and that unknown sizes, unknown Kinds and bad names are refused. `static_site_test.go` covers the Static site Kind (port 80, no `PORT`, the probes) and `domains_test.go` covers custom domains under and outside the wildcard, the second Ingress, secrets as `envFrom`, and the refused domains. `postgres_test.go` covers the Postgres Capability with the same helpers: nothing database-related renders with it off, the Cluster's shape, `DATABASE_URL` from the app Secret, the backup configuration, the migration Job present only with a command and ordered before the Application's objects, that only the Deployment's Pods match the Service, and the refusals. Each runs `kubeconform -strict` on its fixtures' rendered output against the Kubernetes minor of the k3s release pinned in `infra/platform/variables.tf`, so the node's version is the only pin; the Postgres run adds the CloudNativePG and Barman Cloud CRD schemas from the datreeio CRDs-catalog as a second schema location. The tests skip themselves when `helm` or `kubeconform` is not on `PATH`, so `go test ./...` passes on any machine; the `Chart` job in CI installs both, sets `IIDP_REQUIRE_CHART_TOOLS` so a missing tool fails instead of skipping, and runs them on every pull request.
 
 ```sh
 go test ./chart/...

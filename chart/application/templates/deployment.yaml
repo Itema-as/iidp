@@ -23,7 +23,7 @@ spec:
               containerPort: {{ include "application.port" . }}
               protocol: TCP
           {{- $webService := eq (include "application.kind" .) "web-service" }}
-          {{- if or $webService .Values.env }}
+          {{- if or $webService .Values.env .Values.postgres.enabled }}
           env:
             {{- if $webService }}
             - name: PORT
@@ -32,6 +32,9 @@ spec:
             {{- range $name, $value := .Values.env }}
             - name: {{ $name | quote }}
               value: {{ $value | toString | quote }}
+            {{- end }}
+            {{- if include "application.postgres.enabled" . }}
+            {{- include "application.postgres.databaseURLEnv" . | nindent 12 }}
             {{- end }}
           {{- end }}
           {{- with .Values.secrets }}

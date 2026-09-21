@@ -1,0 +1,48 @@
+{{- include "application.validate" . -}}
+{{- if and (include "application.postgres.enabled" .) .Values.postgres.migrationCommand }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "application.fullname" . }}-migrate
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    # A Sync-phase hook one wave after the database and one before the
+    # Application's objects: ArgoCD waits for the Cluster to be healthy,
+    # runs the Job, and applies the Deployment only when it succeeds, so a
+    # failed migration stops the rollout. A PreSync hook would run before
+    # the Cluster exists on an Environment's first sync and never start.
+    # The previous run's Job is deleted before the next is created.
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  # One attempt: a migration that failed once must not be retried blindly.
+  backoffLimit: 0
+  template:
+    metadata:
+      # Not the selector labels: the Service must never route to this Pod.
+      labels:
+        app.kubernetes.io/name: {{ include "application.name" . }}
+        app.kubernetes.io/component: migration
+        iidp.itema.no/application: {{ include "application.name" . }}
+        iidp.itema.no/environment: {{ include "application.environment" . }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository | toString) (required "image.tag is required" .Values.image.tag | toString) | quote }}
+          command:
+            - sh
+            - -c
+            - {{ .Values.postgres.migrationCommand | toString | quote }}
+          env:
+            {{- range $name, $value := .Values.env }}
+            - name: {{ $name | quote }}
+              value: {{ $value | toString | quote }}
+            {{- end }}
+            {{- include "application.postgres.databaseURLEnv" . | nindent 12 }}
+          resources:
+            {{- include "application.resources" . | nindent 12 }}
+{{- end }}
