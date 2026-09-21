@@ -139,8 +139,19 @@ func (w *Writer) encryptor() sops.Encryptor {
 // appeared in the meantime, the retry fails with ErrApplicationExists.
 func (w *Writer) CreateApplication(ctx context.Context, app Application) (Result, error) {
 	return runWithRetry(ctx, func(ctx context.Context, retry bool) (Result, error) {
-		return w.attemptCreate(ctx, app, retry)
+		return w.attemptCreate(ctx, app, retry, false)
 	})
+}
+
+// PreviewApplication reports what CreateApplication would write for app —
+// the Environment addresses, the domain plans, and the paths that would be
+// written — without committing or pushing anything. The wizard's summary
+// screen (docs/implementation-notes/14-cli-wizard.md) uses it so that
+// declining the confirmation leaves no trace: platform.yaml is read from a
+// clone that is removed before this method returns, and nothing is ever
+// added, committed or pushed.
+func (w *Writer) PreviewApplication(ctx context.Context, app Application) (Result, error) {
+	return w.attemptCreate(ctx, app, false, true)
 }
 
 // runWithRetry runs attempt once, retrying it once after a fresh clone if
@@ -194,7 +205,12 @@ func checkApplicationAbsent(dir, name string, retry bool) error {
 	}
 }
 
-func (w *Writer) attemptCreate(ctx context.Context, app Application, retry bool) (Result, error) {
+// attemptCreate validates app against a fresh clone of the Platform
+// repository and, unless preview is true, writes its Environment files,
+// commits and pushes them. preview stops right after validation, before
+// anything is written to the clone or the working tree, so PreviewApplication
+// costs one clone and nothing else.
+func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, preview bool) (Result, error) {
 	dir, err := os.MkdirTemp("", "iidp-platform-")
 	if err != nil {
 		return Result{}, err
@@ -227,34 +243,44 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry bool)
 		return Result{}, err
 	}
 
-	files, err := w.writeEnvironment(dir, cfg, app, "prod")
-	if err != nil {
-		return Result{}, err
-	}
+	environments := []string{"prod"}
 	if app.Staging {
-		stagingFiles, err := w.writeEnvironment(dir, cfg, app, "staging")
-		if err != nil {
+		environments = append(environments, "staging")
+	}
+
+	var files []string
+	if preview {
+		for _, environment := range environments {
+			envDir := EnvironmentDir(app.Name, environment)
+			files = append(files, path.Join(envDir, "application.yaml"), path.Join(envDir, "values.yaml"))
+		}
+	} else {
+		for _, environment := range environments {
+			envFiles, err := w.writeEnvironment(dir, cfg, app, environment)
+			if err != nil {
+				return Result{}, err
+			}
+			files = append(files, envFiles...)
+		}
+		if err := repo.Add(ctx, files...); err != nil {
 			return Result{}, err
 		}
-		files = append(files, stagingFiles...)
-	}
-	if err := repo.Add(ctx, files...); err != nil {
-		return Result{}, err
-	}
-	if err := repo.Commit(ctx, "iidp app create "+app.Name); err != nil {
-		return Result{}, err
-	}
-	if w.BeforePush != nil {
-		if err := w.BeforePush(); err != nil {
+		if err := repo.Commit(ctx, "iidp app create "+app.Name); err != nil {
 			return Result{}, err
 		}
-	}
-	if err := repo.Push(ctx, Branch); err != nil {
-		if errors.Is(err, git.ErrPushRejected) {
-			return Result{}, err
+		if w.BeforePush != nil {
+			if err := w.BeforePush(); err != nil {
+				return Result{}, err
+			}
 		}
-		return Result{}, fmt.Errorf("pushing to %s: %w\nIf this is a permission error, ask the Platform admin for write access to %s", platform.Repository, err, platform.Repository)
+		if err := repo.Push(ctx, Branch); err != nil {
+			if errors.Is(err, git.ErrPushRejected) {
+				return Result{}, err
+			}
+			return Result{}, fmt.Errorf("pushing to %s: %w\nIf this is a permission error, ask the Platform admin for write access to %s", platform.Repository, err, platform.Repository)
+		}
 	}
+
 	res := Result{
 		Config:  cfg,
 		Files:   files,

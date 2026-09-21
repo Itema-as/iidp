@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/Itema-as/iidp/internal/apprepo"
 	"github.com/Itema-as/iidp/internal/git"
@@ -19,6 +20,7 @@ import (
 	"github.com/Itema-as/iidp/internal/migrate"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
+	"github.com/Itema-as/iidp/internal/prompt"
 	"github.com/Itema-as/iidp/internal/templates"
 )
 
@@ -65,6 +67,10 @@ type createOptions struct {
 	appDir           string
 	staging          bool
 	domains          []string
+	// interactive forces the wizard even without a terminal on stdin: the
+	// hidden --interactive flag, so tests can drive it with an injected
+	// reader and writer (docs/implementation-notes/14-cli-wizard.md).
+	interactive bool
 }
 
 func newAppCreateCommand(deps Dependencies) *cobra.Command {
@@ -87,7 +93,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 			"(and, with --path create, to the Application's owner) is the authorisation.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runAppCreate(cmd, opts, deps)
+			return runAppCreate(cmd, &opts, deps)
 		},
 	}
 	f := cmd.Flags()
@@ -111,18 +117,51 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to serve besides the Platform address, for prod only (repeatable)")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
+	f.BoolVar(&opts.interactive, "interactive", false, "Run the wizard even without a terminal on stdin")
+	_ = f.MarkHidden("interactive")
 	return cmd
 }
 
-func runAppCreate(cmd *cobra.Command, opts createOptions, deps Dependencies) error {
-	if err := opts.checkRequiredFlags(cmd); err != nil {
+// isInteractive reports whether app create should run the wizard: forced by
+// the hidden --interactive flag (how tests drive it without a real
+// terminal), or stdin being a terminal. Without either, behaviour is
+// unchanged: a missing required flag is an error.
+//
+// This checks golang.org/x/term.IsTerminal rather than only
+// os.Stdin.Stat's os.ModeCharDevice bit: /dev/null is itself a character
+// device, so that bit alone cannot tell a real terminal from stdin
+// redirected from /dev/null, which every non-interactive script, cron job
+// and CI runner does
+// (docs/implementation-notes/14-cli-wizard.md).
+func isInteractive(opts createOptions) bool {
+	if opts.interactive {
+		return true
+	}
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) error {
+	out := cmd.OutOrStdout()
+	interactive := isInteractive(*opts)
+	// One Prompter for the whole command: prompt.New wraps its reader in a
+	// bufio.Reader, which reads ahead of what it returns, so a second
+	// Prompter over the same underlying reader (the confirmation, below)
+	// would lose whatever the first one had already buffered.
+	p := prompt.New(cmd.InOrStdin(), out)
+
+	if interactive {
+		if err := runWizard(cmd, opts, p); err != nil {
+			return err
+		}
+	} else if err := opts.checkRequiredFlags(cmd); err != nil {
 		return err
 	}
+
 	plan, err := opts.plan(cmd)
 	if err != nil {
 		return err
 	}
-	migrationCommand, err := detectMigrationCommand(plan, cmd.OutOrStdout())
+	migrationCommand, err := detectMigrationCommand(plan, out)
 	if err != nil {
 		return err
 	}
@@ -132,16 +171,16 @@ func runAppCreate(cmd *cobra.Command, opts createOptions, deps Dependencies) err
 		return fmt.Errorf("not logged in to GitHub, so %s cannot be written: %w", platform.Repository, err)
 	}
 
-	out := cmd.OutOrStdout()
 	auth := git.Auth{Token: token}
 	platformWriter := &platformrepo.Writer{URL: opts.platformRepo, Auth: auth, BeforePush: deps.BeforePush}
 
 	ownerLogin := platform.Org
 	ownerIsOrg := true
 	var appRepo apprepo.Result
+	var ghClient *github.Client
 
 	if plan.path == pathCreate {
-		ghClient := &github.Client{Token: token}
+		ghClient = &github.Client{Token: token}
 		if deps.GitHubAPI != "" {
 			ghClient.BaseURL = deps.GitHubAPI
 		}
@@ -152,7 +191,42 @@ func runAppCreate(cmd *cobra.Command, opts createOptions, deps Dependencies) err
 			}
 			ownerLogin, ownerIsOrg = login, false
 		}
+	}
 
+	image := plan.imageOverride
+	if image == "" {
+		image = "ghcr.io/" + strings.ToLower(ownerLogin) + "/" + plan.name
+	}
+	app := platformrepo.Application{
+		Name:             plan.name,
+		Kind:             plan.kind,
+		Size:             plan.size,
+		ImageRepository:  image,
+		Port:             plan.port,
+		ProbePath:        plan.probePath,
+		Postgres:         plan.postgres,
+		MigrationCommand: migrationCommand,
+		Staging:          plan.staging,
+		Domains:          plan.domains,
+	}
+
+	if interactive && !opts.yes {
+		preview, err := platformWriter.PreviewApplication(cmd.Context(), app)
+		if err != nil {
+			return err
+		}
+		printSummary(out, plan, ownerLogin, app, preview)
+		proceed, err := p.YesNo("Proceed?", true)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			fmt.Fprintln(out, "Nothing created: declined at the summary.")
+			return nil
+		}
+	}
+
+	if plan.path == pathCreate {
 		fmt.Fprintf(out, "Creating Application %s on the Platform (Create path):\n", plan.name)
 		fmt.Fprintf(out, "  Framework: %s\n", plan.framework)
 		fmt.Fprintf(out, "  Owner:     %s (%s)\n", ownerLogin, plan.ownerMode)
@@ -180,23 +254,6 @@ func runAppCreate(cmd *cobra.Command, opts createOptions, deps Dependencies) err
 		for _, f := range appRepo.Files {
 			fmt.Fprintf(out, "  %s\n", f)
 		}
-	}
-
-	image := plan.imageOverride
-	if image == "" {
-		image = "ghcr.io/" + strings.ToLower(ownerLogin) + "/" + plan.name
-	}
-	app := platformrepo.Application{
-		Name:             plan.name,
-		Kind:             plan.kind,
-		Size:             plan.size,
-		ImageRepository:  image,
-		Port:             plan.port,
-		ProbePath:        plan.probePath,
-		Postgres:         plan.postgres,
-		MigrationCommand: migrationCommand,
-		Staging:          plan.staging,
-		Domains:          plan.domains,
 	}
 
 	fmt.Fprintf(out, "\nWriting the prod Environment to %s...\n", platform.Repository)
@@ -277,9 +334,14 @@ type createPlan struct {
 	private          bool
 	postgres         bool
 	migrationCommand string
-	appDir           string
-	staging          bool
-	domains          []string
+	// migrationCommandSet is true when --migration-command was given
+	// explicitly (including by the wizard, which sets the flag even on an
+	// empty answer): detectMigrationCommand then uses migrationCommand
+	// as-is instead of running detection again.
+	migrationCommandSet bool
+	appDir              string
+	staging             bool
+	domains             []string
 }
 
 // plan validates every flag before anything is cloned or written, and
@@ -364,64 +426,80 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	}
 
 	return createPlan{
-		name:             o.name,
-		kind:             kind,
-		framework:        framework,
-		size:             o.size,
-		imageOverride:    o.image,
-		port:             o.port,
-		probePath:        o.probePath,
-		path:             o.path,
-		ownerMode:        ownerMode,
-		private:          private,
-		postgres:         o.postgres,
-		migrationCommand: o.migrationCommand,
-		appDir:           o.appDir,
-		staging:          o.staging,
-		domains:          o.domains,
+		name:                o.name,
+		kind:                kind,
+		framework:           framework,
+		size:                o.size,
+		imageOverride:       o.image,
+		port:                o.port,
+		probePath:           o.probePath,
+		path:                o.path,
+		ownerMode:           ownerMode,
+		private:             private,
+		postgres:            o.postgres,
+		migrationCommand:    o.migrationCommand,
+		migrationCommandSet: cmd.Flags().Changed("migration-command"),
+		appDir:              o.appDir,
+		staging:             o.staging,
+		domains:             o.domains,
 	}, nil
 }
 
-// detectMigrationCommand resolves plan's migration command: the explicit
-// --migration-command flag if given, otherwise, with --postgres, a
-// detection in --app-dir, the Create path's generated template, or the
-// current directory when it has a package.json, in that order. It prints
-// what it looked in and what it found (or didn't) to out, the way
-// docs/design.md's wizard help text does.
+// resolveMigrationDir picks the directory detection should look in for
+// plan, in the order docs/design.md's wizard describes: --app-dir, then the
+// Create path's rendered template, then the current directory when it has a
+// package.json. dir is "" when there is nowhere to look; description names
+// the directory for the "Looking for a migration command in ..." message;
+// cleanup removes any temporary directory this created and must always be
+// called.
+func resolveMigrationDir(plan createPlan) (dir, description string, cleanup func(), err error) {
+	noop := func() {}
+	switch {
+	case plan.appDir != "":
+		return plan.appDir, plan.appDir, noop, nil
+	case plan.path == pathCreate:
+		tmp, err := os.MkdirTemp("", "iidp-detect-")
+		if err != nil {
+			return "", "", noop, err
+		}
+		if _, err := templates.Render(plan.framework, templates.Data{Name: plan.name}, tmp); err != nil {
+			os.RemoveAll(tmp)
+			return "", "", noop, err
+		}
+		return tmp, "the generated " + string(plan.framework) + " template", func() { os.RemoveAll(tmp) }, nil
+	default:
+		if cwd, err := os.Getwd(); err == nil {
+			if info, err := os.Stat(filepath.Join(cwd, "package.json")); err == nil && !info.IsDir() {
+				return cwd, cwd + " (the current directory)", noop, nil
+			}
+		}
+		return "", "", noop, nil
+	}
+}
+
+// detectMigrationCommand resolves plan's migration command: migrationCommand
+// as-is when migrationCommandSet (an explicit --migration-command, including
+// one the wizard set from the developer's answer), otherwise, with
+// --postgres, a detection with resolveMigrationDir. It prints what it looked
+// in and what it found (or didn't) to out, the way docs/design.md's wizard
+// help text does.
 func detectMigrationCommand(plan createPlan, out io.Writer) (string, error) {
-	if plan.migrationCommand != "" {
+	if plan.migrationCommandSet {
 		return plan.migrationCommand, nil
 	}
 	if !plan.postgres {
 		return "", nil
 	}
 
-	dir := plan.appDir
-	switch {
-	case dir != "":
-		fmt.Fprintf(out, "Looking for a migration command in %s...\n", dir)
-	case plan.path == pathCreate:
-		tmp, err := os.MkdirTemp("", "iidp-detect-")
-		if err != nil {
-			return "", err
-		}
-		defer os.RemoveAll(tmp)
-		if _, err := templates.Render(plan.framework, templates.Data{Name: plan.name}, tmp); err != nil {
-			return "", err
-		}
-		dir = tmp
-		fmt.Fprintf(out, "Looking for a migration command in the generated %s template...\n", plan.framework)
-	default:
-		if cwd, err := os.Getwd(); err == nil {
-			if info, err := os.Stat(filepath.Join(cwd, "package.json")); err == nil && !info.IsDir() {
-				dir = cwd
-				fmt.Fprintf(out, "Looking for a migration command in %s (the current directory)...\n", dir)
-			}
-		}
+	dir, description, cleanup, err := resolveMigrationDir(plan)
+	if err != nil {
+		return "", err
 	}
+	defer cleanup()
 	if dir == "" {
 		return "", nil
 	}
+	fmt.Fprintf(out, "Looking for a migration command in %s...\n", description)
 
 	det, ok, err := migrate.Detect(dir)
 	if err != nil {
@@ -433,6 +511,23 @@ func detectMigrationCommand(plan createPlan, out io.Writer) (string, error) {
 	}
 	fmt.Fprintf(out, "Detected %s; migration command: %s\n", det.Tool, det.Command)
 	return det.Command, nil
+}
+
+// suggestMigrationCommand runs the same detection detectMigrationCommand
+// would, without printing anything: the wizard's migration question uses it
+// to show docs/design.md's help text (including the detected suggestion)
+// before asking, given the answers gathered so far (name, path, framework,
+// app-dir).
+func suggestMigrationCommand(plan createPlan) (migrate.Detection, bool, error) {
+	dir, _, cleanup, err := resolveMigrationDir(plan)
+	if err != nil {
+		return migrate.Detection{}, false, err
+	}
+	defer cleanup()
+	if dir == "" {
+		return migrate.Detection{}, false, nil
+	}
+	return migrate.Detect(dir)
 }
 
 func printCreated(out io.Writer, name string, res platformrepo.Result) {
