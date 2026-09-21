@@ -87,7 +87,42 @@ func TestDeployWorkflowIsRenderedForEveryFramework(t *testing.T) {
 			if !strings.Contains(content, "Itema-as/iidp") {
 				t.Errorf("deploy.yaml does not name the iidp release repository:\n%s", content)
 			}
+
+			promote, ok := lookup(t, doc, "jobs", "promote").(map[string]any)
+			if !ok {
+				t.Fatalf("jobs.promote is missing or not a map")
+			}
+			steps, ok := promote["steps"].([]any)
+			if !ok {
+				t.Fatalf("jobs.promote.steps is missing or not a list")
+			}
+			for _, s := range steps {
+				step, _ := s.(map[string]any)
+				if uses, _ := step["uses"].(string); strings.HasPrefix(uses, "actions/checkout") {
+					t.Errorf("jobs.promote has an actions/checkout step, which retagging via imagetools needs no repository files for:\n%s", content)
+				}
+			}
 		})
+	}
+}
+
+func TestDeployWorkflowIsIdenticalAcrossFrameworks(t *testing.T) {
+	var rendered [][]byte
+	for _, fw := range []templates.Framework{templates.NextJS, templates.ViteReact, templates.Other} {
+		dir := t.TempDir()
+		if _, err := templates.Render(fw, templates.Data{Name: "shop", Owner: "itema-as", IidpVersion: "0.3.1"}, dir); err != nil {
+			t.Fatalf("Render(%s): %v", fw, err)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "deploy.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rendered = append(rendered, data)
+	}
+	for i := 1; i < len(rendered); i++ {
+		if string(rendered[i]) != string(rendered[0]) {
+			t.Errorf("deploy.yaml rendered for a different framework than the first differs; it should be framework-independent")
+		}
 	}
 }
 

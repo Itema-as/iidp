@@ -10,7 +10,9 @@
 # with no rebuild, and runs `iidp ci set-image` for prod.
 #
 # `iidp app create` rewrites this file whenever it regenerates the
-# template; a hand edit here has no effect on iidp itself.
+# template; a hand edit here has no effect on iidp itself. The same file
+# is shared by every framework template (internal/templates/templates.go),
+# so it exists once, not once per framework.
 name: Deploy
 
 on:
@@ -82,9 +84,6 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 

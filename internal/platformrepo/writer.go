@@ -198,6 +198,9 @@ func (w *Writer) CheckAvailable(ctx context.Context, name string) error {
 // githubApp.installationId before it has any credential to authenticate
 // with: platform.yaml carries no secret (agePublicKey is a public key), so
 // reading it needs none (docs/implementation-notes/12-deploy-workflow.md).
+// This requires the Platform repository to allow anonymous read access
+// (public, or a public deploy key/mirror): a private repository refuses
+// the anonymous clone, and the error below says so.
 func LoadRemoteConfig(ctx context.Context, url string) (Config, error) {
 	dir, err := os.MkdirTemp("", "iidp-platform-config-")
 	if err != nil {
@@ -205,7 +208,7 @@ func LoadRemoteConfig(ctx context.Context, url string) (Config, error) {
 	}
 	defer os.RemoveAll(dir)
 	if _, err := git.Clone(ctx, url, Branch, dir, git.Auth{}); err != nil {
-		return Config{}, fmt.Errorf("cloning %s: %w", platform.Repository, err)
+		return Config{}, fmt.Errorf("cloning %s anonymously to read %s: %w\niidp ci set-image reads githubApp.id and githubApp.installationId from %s before it has any credential to authenticate with, which requires %s to allow anonymous read access (see docs/implementation-notes/12-deploy-workflow.md); if it is private, this is expected to fail", platform.Repository, ConfigFile, err, ConfigFile, platform.Repository)
 	}
 	return LoadConfig(dir)
 }

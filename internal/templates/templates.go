@@ -12,7 +12,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"text/template"
@@ -55,6 +54,13 @@ func (f Framework) Kind() string {
 
 //go:embed all:nextjs all:vite-react all:other
 var files embed.FS
+
+// deployWorkflowPath is where every framework's rendered template gets the
+// shared deploy workflow, relative to the template's root.
+const deployWorkflowPath = ".github/workflows/deploy.yaml"
+
+//go:embed deploy-workflow.yaml
+var deployWorkflowSource []byte
 
 // Data is the Application-specific value the templates are rendered with.
 type Data struct {
@@ -112,21 +118,25 @@ func Render(framework Framework, data Data, dir string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rendering the %s template: %w", framework, err)
 	}
+
+	// The deploy workflow is identical for every framework (it builds
+	// whatever Dockerfile the template shipped and never inspects the
+	// framework itself), so it lives once, here, rather than once per
+	// framework directory under nextjs/vite-react/other.
+	dest := filepath.Join(dir, filepath.FromSlash(deployWorkflowPath))
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(dest, renderWorkflow(deployWorkflowSource, data), 0o644); err != nil {
+		return nil, err
+	}
+	written = append(written, deployWorkflowPath)
+
 	sort.Strings(written)
 	return written, nil
 }
 
-// workflowPath matches a GitHub Actions workflow file's path within a
-// template. Those files are full of the ${{ ... }} expression syntax
-// GitHub Actions itself uses, which collides with text/template's own {{ }}
-// delimiters, so they are rendered by plain string substitution
-// (renderWorkflow) instead of being parsed as a Go template.
-var workflowPath = regexp.MustCompile(`(^|/)\.github/workflows/[^/]+\.ya?ml$`)
-
 func renderFile(name string, content []byte, data Data) ([]byte, error) {
-	if workflowPath.MatchString(name) {
-		return renderWorkflow(content, data), nil
-	}
 	tmpl, err := template.New(name).Parse(string(content))
 	if err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", name, err)
@@ -138,8 +148,11 @@ func renderFile(name string, content []byte, data Data) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// renderWorkflow substitutes the placeholder tokens a workflow file uses
-// in place of Go template actions (see workflowPath) with data's values.
+// renderWorkflow substitutes the placeholder tokens deploy-workflow.yaml
+// uses in place of Go template actions with data's values. Plain string
+// substitution, not text/template, because the workflow is full of GitHub
+// Actions' own ${{ ... }} expression syntax, which uses the same {{ }}
+// delimiters text/template does.
 func renderWorkflow(content []byte, data Data) []byte {
 	r := strings.NewReplacer(
 		"__IIDP_APP_NAME__", data.Name,
