@@ -783,6 +783,17 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	if out, err := c.Kubectl(ctx, "get", "pods", "-A", "--field-selector=status.phase!=Running,status.phase!=Succeeded"); err == nil {
 		c.Log("pods not running:\n%s", out)
 	}
+	// A Pod stuck Pending is almost always the scheduler refusing it (most
+	// often insufficient CPU or memory on kind's single node); the events
+	// and the node's allocated-resources table say which.
+	if out, err := c.Kubectl(ctx, "get", "events", "-A", "--field-selector=reason=FailedScheduling", "--sort-by=.lastTimestamp"); err == nil && strings.TrimSpace(out) != "" {
+		c.Log("FailedScheduling events:\n%s", out)
+	}
+	if out, err := c.Kubectl(ctx, "describe", "node"); err == nil {
+		if i := strings.Index(out, "Allocated resources:"); i >= 0 {
+			c.Log("node allocated resources:\n%s", out[i:])
+		}
+	}
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "deployment/argocd-repo-server", "--tail=40"); err == nil {
 		c.Log("argocd-repo-server log tail:\n%s", out)
 	}
