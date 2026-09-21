@@ -175,7 +175,7 @@ sops:
 
 The Secret's name (`<fullname>-<key-slug>`: the bare Application name for prod, `<name>-staging` for staging, so both Environments can share a namespace without their Secrets colliding, the same `fullname` the chart's own objects use) is added to the `secrets` list of `values.yaml`; the chart mounts every listed Secret's keys as container environment variables (`chart/application/README.md`, `values.yaml`'s `secrets:` field). `needs-hash: "false"` keeps that name stable; `sync-wave: "-2"` puts the Secret a wave before the migration Job's `"-1"` (notes for #7), so a migration or the Application container never starts before the Secret it needs exists. No `namespace`: the ArgoCD Application's `spec.destination.namespace` applies.
 
-`iidp secret set` requires `platform.yaml` to set `agePublicKey` and the Environment (`applications/<app>/<env>/`) to already exist; both are refused with a clear error before anything is cloned or written. The private key never reaches the CLI or the Platform repository; only the cluster (`bootstrap/README.md`, Secret `argocd/sops-age`) can decrypt.
+`iidp secret set` validates the Application name, the Environment (`prod` or `staging`) and every `KEY` before cloning anything. It then clones `main` to read `platform.yaml` and check that the Environment (`applications/<app>/<env>/`) already exists; a missing `agePublicKey` or a missing Environment is refused there, with a clear error, before anything is written. The private key never reaches the CLI or the Platform repository; only the cluster (`bootstrap/README.md`, Secret `argocd/sops-age`) can decrypt.
 
 ## How the CLI writes
 

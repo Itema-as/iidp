@@ -87,7 +87,7 @@ func runSecretSet(cmd *cobra.Command, opts secretSetOptions, deps Dependencies) 
 	for i, s := range secrets {
 		keys[i] = s.Key
 	}
-	fmt.Fprintf(out, "Setting %s for %s (%s): %s\n", keyWord(len(keys)), opts.application, opts.environment, strings.Join(keys, ", "))
+	fmt.Fprintf(out, "Setting %s for %s (%s): %s\n", secretCountPhrase(len(keys)), opts.application, opts.environment, strings.Join(keys, ", "))
 
 	writer := &platformrepo.Writer{
 		URL:        opts.platformRepo,
@@ -105,7 +105,8 @@ func runSecretSet(cmd *cobra.Command, opts secretSetOptions, deps Dependencies) 
 	return nil
 }
 
-func keyWord(n int) string {
+// secretCountPhrase is "1 secret" or "N secrets", for the progress line.
+func secretCountPhrase(n int) string {
 	if n == 1 {
 		return "1 secret"
 	}
