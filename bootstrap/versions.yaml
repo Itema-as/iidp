@@ -1,0 +1,64 @@
+# Every version the Platform bootstrap pins, in one place. The templates read
+# this file with .Files.Get; the kind harness (test/e2e) reads it to build a
+# cluster that matches the node. Sources were checked on 2026-09-21; see
+# docs/implementation-notes/04-bootstrap.md for why each version was chosen.
+#
+# Bumping a chart version here is a bootstrap release: the Platform
+# repository pins a revision of this directory (see README.md), so the change
+# reaches the Platform when that pin moves.
+
+argocd:
+  # The ArgoCD release cloud-init installs from manifests/install.yaml before
+  # the bootstrap takes over. Must match argocd_version in
+  # infra/platform/variables.tf; the harness installs exactly this.
+  manifest: v3.5.3
+  # The argo-cd Helm chart that then manages ArgoCD. Its appVersion is the
+  # release above, so the takeover changes configuration, not the binaries.
+  chart: 10.9.2
+  repository: https://argoproj.github.io/argo-helm
+
+certManager:
+  chart: v1.21.2
+  repository: https://charts.jetstack.io
+
+externalDNS:
+  chart: 1.22.0
+  repository: https://kubernetes-sigs.github.io/external-dns/
+
+cloudnativePG:
+  chart: 0.29.0
+  repository: https://cloudnative-pg.github.io/charts
+  # The Barman Cloud plugin (CNPG-I) that ships base backups and WAL to
+  # Object Storage; the application chart's Postgres Capability relies on it.
+  barmanCloudPluginChart: 0.8.0
+
+# Grafana's k8s-monitoring chart deploys Alloy (plus kube-state-metrics and
+# node-exporter) with the collection config Grafana Cloud expects.
+k8sMonitoring:
+  chart: 4.5.2
+  repository: https://grafana.github.io/helm-charts
+
+# KSOPS is a kustomize plugin, not a chart: the image ships the ksops binary
+# and a matching kustomize, installed into argocd-repo-server by an init
+# container.
+ksops:
+  image: viaductoss/ksops:v4.5.1
+
+# What the node runs, so the kind harness can mimic it. k3s bundles its own
+# build of the Traefik chart (manifests/traefik.yaml in the k3s release
+# names it; k3s-charts publishes it) and pins the Traefik image separately;
+# helm-controller is the k3s component that reads the HelmChartConfig the
+# bootstrap writes.
+k3s:
+  version: v1.36.4+k3s1
+  traefik:
+    chart: 40.1.4+up40.1.0
+    # k3s installs the CRD chart first, then the chart proper.
+    crdChartURL: https://github.com/k3s-io/k3s-charts/raw/main/assets/traefik-crd/traefik-crd-40.1.4+up40.1.0.tgz
+    chartURL: https://github.com/k3s-io/k3s-charts/raw/main/assets/traefik/traefik-40.1.4+up40.1.0.tgz
+    image: "3.7.8"
+  helmController: v0.17.7
+
+# The kind node image whose Kubernetes version matches the k3s version above.
+kind:
+  nodeImage: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed

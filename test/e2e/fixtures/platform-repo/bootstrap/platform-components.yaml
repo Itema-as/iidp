@@ -1,0 +1,47 @@
+# Pins the bootstrap from the iidp repository and renders it with this
+# repository's platform.yaml as values. The root Application `platform`
+# (applied by cloud-init, or by the kind harness) syncs this file.
+#
+# In the harness both repositories are served by an in-cluster git server;
+# on the Platform they are https://github.com/Itema-as/iidp.git (pinned to a
+# release tag) and https://github.com/Itema-as/iidp-platform.git.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-components
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp.git
+      targetRevision: main
+      path: bootstrap
+      helm:
+        valueFiles:
+          - $platform/platform.yaml
+        parameters:
+          # The component Applications that point back at the bootstrap
+          # (bootstrap/components/*) follow this source's repository and
+          # revision, whatever they are.
+          - name: bootstrap.repoURL
+            value: $ARGOCD_APP_SOURCE_REPO_URL
+          - name: bootstrap.targetRevision
+            value: $ARGOCD_APP_SOURCE_TARGET_REVISION
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+      targetRevision: HEAD
+      ref: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

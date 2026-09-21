@@ -1,0 +1,74 @@
+name: e2e
+
+# The kind end-to-end test: bootstraps the Platform components from a
+# fixture Platform repository on a kind cluster (test/e2e). Runs only when
+# the bootstrap, the chart or the harness change, and on every release tag.
+# The paths filter does not apply to tag pushes, which is what makes tags
+# always run it.
+on:
+  pull_request:
+    paths:
+      - "bootstrap/**"
+      - "chart/**"
+      - "test/e2e/**"
+      - ".github/workflows/e2e.yaml"
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "bootstrap/**"
+      - "chart/**"
+      - "test/e2e/**"
+      - ".github/workflows/e2e.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: helm lint bootstrap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+      - run: |
+          helm lint --strict bootstrap --values test/e2e/fixtures/platform-repo/platform.yaml
+          helm lint --strict bootstrap/components/tls
+      # The render tests skip without helm (the Go job of ci.yaml has none);
+      # here a missing helm must fail.
+      - name: go test ./bootstrap
+        env:
+          IIDP_REQUIRE_CHART_TOOLS: "1"
+        run: go test -v ./bootstrap/...
+
+  kind:
+    name: kind bootstrap
+    runs-on: ubuntu-latest
+    # A run takes well under fifteen minutes; the cap leaves room for the
+    # test's own ten-minute wait to expire and print its diagnostics.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+      # Only installs kind; the test creates the cluster itself so that CI
+      # and a laptop run exactly the same code.
+      - uses: helm/kind-action@v1
+        with:
+          version: v0.33.0
+          install_only: true
+      - name: go test -tags e2e
+        run: go test -tags e2e ./test/e2e/... -run TestBootstrap -v -timeout 18m

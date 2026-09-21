@@ -1,0 +1,16 @@
+# KSOPS generator: every listed file is decrypted with sops and emitted as a
+# resource. Each Secret carries kustomize.config.k8s.io/needs-hash: "false"
+# so its name stays what the components reference.
+apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: platform-secrets
+  annotations:
+    config.kubernetes.io/function: |
+      exec:
+        path: ksops
+files:
+  - argocd-entra.enc.yaml
+  - cloudflare-api-token-cert-manager.enc.yaml
+  - cloudflare-api-token-external-dns.enc.yaml
+  - grafana-cloud.enc.yaml

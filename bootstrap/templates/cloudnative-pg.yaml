@@ -1,0 +1,24 @@
+{{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
+# The CloudNativePG operator. Application databases are Cluster resources
+# rendered by the application chart; this only installs the operator.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudnative-pg
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ $v.cloudnativePG.repository }}
+    chart: cloudnative-pg
+    targetRevision: {{ $v.cloudnativePG.chart | quote }}
+    helm:
+      releaseName: cloudnative-pg
+      valuesObject:
+        crds:
+          create: true
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: cnpg-system
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list) | nindent 4 }}

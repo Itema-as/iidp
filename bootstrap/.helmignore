@@ -1,0 +1,6 @@
+# The component charts under components/ are separate Helm sources that the
+# Applications rendered here point at; they are not part of this chart.
+components/
+README.md
+*_test.go
+testdata/

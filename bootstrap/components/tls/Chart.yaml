@@ -1,0 +1,5 @@
+apiVersion: v2
+name: platform-tls
+description: The Platform's TLS setup - Let's Encrypt ClusterIssuer via Cloudflare DNS-01, the wildcard Certificate, Traefik's default TLS store and its HTTP to HTTPS redirect. Rendered by the platform-tls Application of the bootstrap.
+type: application
+version: 0.1.0

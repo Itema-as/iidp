@@ -1,0 +1,47 @@
+# Values for the Platform bootstrap. On the Platform these come from
+# platform.yaml at the root of the Platform repository, which the Application
+# `platform-components` passes as a Helm value file (see README.md). The
+# defaults here describe a Platform that does not exist; every field the
+# bootstrap reads is listed so the file doubles as documentation.
+#
+# platform.yaml also carries fields only the CLI reads (chartVersion,
+# githubApp, agePublicKey, grafanaURL, backupsBucket). Helm ignores them.
+
+# The domain Applications are served under: <application>.<baseDomain>. The
+# wildcard certificate covers *.<baseDomain> and <baseDomain>.
+baseDomain: app.itma.no
+
+# The Cloudflare zone that contains baseDomain. external-dns only manages
+# records in this zone.
+cloudflareZone: itma.no
+
+# Where ArgoCD is served. Its host must be covered by the wildcard
+# certificate, so keep it under baseDomain.
+argocdURL: https://argocd.app.itma.no
+
+# ACME registration for the wildcard certificate. The email is optional for
+# Let's Encrypt but is where expiry warnings go. Point server at
+# https://acme-staging-v02.api.letsencrypt.org/directory to test without
+# spending production rate limits.
+acme:
+  email: ""
+  server: https://acme-v02.api.letsencrypt.org/directory
+
+# Object id of the Entra ID group whose members are ArgoCD admins. Everyone
+# else who can log in is read-only. Empty means nobody is admin through the
+# UI; the Platform admin still has `argocd --core` with the kubeconfig.
+argocdAdminGroup: ""
+
+# Cluster label on everything shipped to Grafana Cloud.
+clusterName: iidp
+
+# The --txt-owner-id external-dns stamps on the records it creates. Change it
+# only for a second Platform sharing the same zone.
+dnsOwnerId: iidp
+
+# Where this chart lives, for the component Applications that point back at
+# it (bootstrap/components/*). The Platform repository sets both from ArgoCD's
+# build environment so they always match the pinned bootstrap revision.
+bootstrap:
+  repoURL: https://github.com/Itema-as/iidp.git
+  targetRevision: HEAD

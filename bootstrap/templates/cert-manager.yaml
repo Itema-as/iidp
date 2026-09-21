@@ -1,0 +1,25 @@
+{{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
+# cert-manager with its CRDs. The ClusterIssuer and the wildcard Certificate
+# are in platform-tls, which retries until these CRDs exist.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ $v.certManager.repository }}
+    chart: cert-manager
+    targetRevision: {{ $v.certManager.chart | quote }}
+    helm:
+      releaseName: cert-manager
+      valuesObject:
+        crds:
+          enabled: true
+          keep: true
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: cert-manager
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list) | nindent 4 }}

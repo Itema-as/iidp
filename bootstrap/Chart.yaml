@@ -1,0 +1,5 @@
+apiVersion: v2
+name: iidp-bootstrap
+description: ArgoCD app-of-apps for the Phase 1 Platform components. Rendered by ArgoCD with the Platform repository's platform.yaml as its values.
+type: application
+version: 0.1.0

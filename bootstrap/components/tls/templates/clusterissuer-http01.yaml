@@ -1,0 +1,19 @@
+# Let's Encrypt through HTTP-01 on Traefik, for custom domains whose zone is
+# not on Cloudflare: the application chart asks for a per-host certificate
+# from this issuer once the owner's CNAME points at the Platform.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-http01
+spec:
+  acme:
+    server: {{ .Values.acme.server }}
+    {{- if .Values.acme.email }}
+    email: {{ .Values.acme.email }}
+    {{- end }}
+    privateKeySecretRef:
+      name: letsencrypt-http01-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

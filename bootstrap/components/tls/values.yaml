@@ -1,0 +1,24 @@
+# Set by the platform-tls Application in bootstrap/templates from the
+# Platform repository's platform.yaml; the defaults are placeholders.
+
+# The wildcard certificate covers *.<baseDomain> and <baseDomain>.
+baseDomain: app.itma.no
+
+acme:
+  # Optional. Where Let's Encrypt sends expiry warnings.
+  email: ""
+  server: https://acme-v02.api.letsencrypt.org/directory
+
+# The Secret with the Cloudflare API token cert-manager uses for DNS-01,
+# in the cert-manager namespace (SOPS-encrypted in the Platform repository).
+cloudflareTokenSecret:
+  name: cloudflare-api-token
+  key: apiToken
+
+# Where the Certificate and the TLSStore live: the namespace k3s runs Traefik
+# in. Traefik only honours a TLSStore named default in its own namespace,
+# and the store can only reference Secrets in that namespace.
+traefikNamespace: kube-system
+
+# The Secret the wildcard certificate is written to.
+wildcardSecretName: wildcard-tls

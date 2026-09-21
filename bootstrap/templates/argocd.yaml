@@ -1,0 +1,119 @@
+{{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
+{{- $host := include "iidp-bootstrap.argocdHost" . }}
+# ArgoCD managing itself. cloud-init installs ArgoCD from the upstream
+# manifests once; from the first sync of this Application the argo-cd chart
+# owns every ArgoCD resource: Dex with the Entra ID connector, RBAC, the
+# ingress, and the KSOPS tooling in the repo server.
+#
+# The upstream manifests and the chart differ in the pod selectors of the
+# Deployments and the StatefulSet, and a selector is immutable, so those
+# workloads are recreated (Replace=true,Force=true) instead of patched.
+# ApplyOutOfSyncOnly limits that to workloads that actually changed, so an
+# ordinary sync does not restart ArgoCD.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ $v.argocd.repository }}
+    chart: argo-cd
+    targetRevision: {{ $v.argocd.chart | quote }}
+    helm:
+      releaseName: argocd
+      valuesObject:
+        # Name resources argocd-<component>, as the upstream manifests do.
+        fullnameOverride: argocd
+        global:
+          domain: {{ $host }}
+          deploymentAnnotations:
+            argocd.argoproj.io/sync-options: Replace=true,Force=true
+          statefulsetAnnotations:
+            argocd.argoproj.io/sync-options: Replace=true,Force=true
+        crds:
+          install: true
+          keep: true
+        configs:
+          cm:
+            # Nobody logs in with a local account (docs/design.md, Access).
+            admin.enabled: false
+            # KSOPS is a kustomize exec plugin; kustomize refuses to run
+            # plugins without both flags.
+            kustomize.buildOptions: --enable-alpha-plugins --enable-exec
+            dex.config: |
+              connectors:
+                - type: microsoft
+                  id: microsoft
+                  name: Microsoft Entra ID
+                  config:
+                    # From the Secret argocd-entra in the argocd namespace,
+                    # labelled app.kubernetes.io/part-of=argocd so ArgoCD
+                    # substitutes the values (SOPS-encrypted in the Platform
+                    # repository, decrypted by KSOPS).
+                    clientID: $argocd-entra:clientID
+                    clientSecret: $argocd-entra:clientSecret
+                    tenant: $argocd-entra:tenant
+                    redirectURI: {{ .Values.argocdURL }}/api/dex/callback
+                    # Groups come back as object ids so the RBAC mapping
+                    # below survives a group rename.
+                    groupNameFormat: id
+                    onlySecurityGroups: true
+          params:
+            # Traefik terminates TLS with the wildcard certificate.
+            server.insecure: true
+          rbac:
+            policy.default: role:readonly
+            {{- if .Values.argocdAdminGroup }}
+            policy.csv: |
+              g, {{ .Values.argocdAdminGroup }}, role:admin
+            {{- end }}
+        server:
+          ingress:
+            enabled: true
+            ingressClassName: traefik
+            hostname: {{ $host }}
+            annotations:
+              traefik.ingress.kubernetes.io/router.entrypoints: websecure
+              # TLS with no secret of its own: Traefik serves the default
+              # store's wildcard certificate (see platform-tls).
+              traefik.ingress.kubernetes.io/router.tls: "true"
+        repoServer:
+          # KSOPS: the init container copies ksops and its kustomize into an
+          # emptyDir that shadows the repo server's kustomize; sops reads the
+          # age private key that cloud-init generated into the Secret
+          # sops-age (key keys.txt).
+          initContainers:
+            - name: install-ksops
+              image: {{ $v.ksops.image }}
+              command: ["/usr/local/bin/ksops", "install", "--with-kustomize", "/custom-tools"]
+              volumeMounts:
+                - mountPath: /custom-tools
+                  name: custom-tools
+          volumes:
+            - name: custom-tools
+              emptyDir: {}
+            - name: sops-age
+              secret:
+                secretName: sops-age
+          volumeMounts:
+            - mountPath: /usr/local/bin/kustomize
+              name: custom-tools
+              subPath: kustomize
+            - mountPath: /usr/local/bin/ksops
+              name: custom-tools
+              subPath: ksops
+            - mountPath: /.config/sops/age
+              name: sops-age
+              readOnly: true
+          env:
+            - name: XDG_CONFIG_HOME
+              value: /.config
+            - name: SOPS_AGE_KEY_FILE
+              value: /.config/sops/age/keys.txt
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: argocd
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list "ApplyOutOfSyncOnly=true") | nindent 4 }}
