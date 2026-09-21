@@ -45,12 +45,11 @@ func Detect(dir string) (Detection, bool, error) {
 		return Detection{Tool: "Drizzle (" + filepath.Base(matches[0]) + ")", Command: "npx drizzle-kit migrate"}, true, nil
 	}
 	if fileExists(filepath.Join(dir, "package.json")) {
-		script, ok, err := npmMigrateScript(dir)
+		hasMigrateScript, err := npmHasMigrateScript(dir)
 		if err != nil {
 			return Detection{}, false, err
 		}
-		if ok {
-			_ = script
+		if hasMigrateScript {
 			return Detection{Tool: "an npm migrate script", Command: "npm run migrate"}, true, nil
 		}
 	}
@@ -62,20 +61,22 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// npmMigrateScript reports whether dir's package.json has a "migrate"
-// script, and its command.
-func npmMigrateScript(dir string) (command string, ok bool, err error) {
+// npmHasMigrateScript reports whether dir's package.json declares a
+// "migrate" script. Its own command is not iidp's concern: the chart always
+// runs "npm run migrate", the same indirection the developer's package.json
+// already gives them to change what that runs.
+func npmHasMigrateScript(dir string) (bool, error) {
 	path := filepath.Join(dir, "package.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", false, err
+		return false, err
 	}
 	var pkg struct {
 		Scripts map[string]string `json:"scripts"`
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
-		return "", false, fmt.Errorf("parsing %s: %w", path, err)
+		return false, fmt.Errorf("parsing %s: %w", path, err)
 	}
-	command, ok = pkg.Scripts["migrate"]
-	return command, ok, nil
+	_, ok := pkg.Scripts["migrate"]
+	return ok, nil
 }

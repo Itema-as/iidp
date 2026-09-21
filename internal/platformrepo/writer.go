@@ -212,9 +212,11 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry bool)
 		return Result{}, fmt.Errorf("%s in %s sets no backupsBucket or objectStorageEndpoint, needed for the Postgres Capability", ConfigFile, platform.Repository)
 	}
 
-	platformAddresses := []string{app.Name + "." + cfg.BaseDomain}
+	prodAddress := app.Name + "." + cfg.BaseDomain
+	stagingAddress := app.Name + "-staging." + cfg.BaseDomain
+	platformAddresses := []string{prodAddress}
 	if app.Staging {
-		platformAddresses = append(platformAddresses, app.Name+"-staging."+cfg.BaseDomain)
+		platformAddresses = append(platformAddresses, stagingAddress)
 	}
 	domainPlans, err := ValidateDomains(app.Domains, cfg.BaseDomain, cfg.CloudflareZone, platformAddresses)
 	if err != nil {
@@ -252,11 +254,11 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry bool)
 	res := Result{
 		Config:  cfg,
 		Files:   files,
-		Address: "https://" + platformAddresses[0],
+		Address: "https://" + prodAddress,
 		Domains: domainPlans,
 	}
 	if app.Staging {
-		res.StagingAddress = "https://" + platformAddresses[1]
+		res.StagingAddress = "https://" + stagingAddress
 	}
 	return res, nil
 }
