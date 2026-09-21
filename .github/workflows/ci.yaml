@@ -123,3 +123,17 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: check
+
+  # shellcheck and bash ship on the runner image; test/wizard/run.sh runs the
+  # wizard's wrapper functions with IIDP_WIZARD_FAKE=1 (no network, no real
+  # tofu/gh/sops/az/ssh calls) and the full script with --dry-run, so this
+  # needs no Hetzner, Cloudflare, GitHub App or Entra credentials.
+  wizard:
+    name: Wizard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: shellcheck scripts/bootstrap-wizard.sh test/wizard/run.sh
+      - name: fake run
+        run: bash test/wizard/run.sh

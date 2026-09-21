@@ -94,7 +94,7 @@ internal/            wizard, github, platformrepo, render
 chart/application/   the generic Helm chart
 infra/               OpenTofu for the node, cloud-init for k3s
 bootstrap/           ArgoCD app-of-apps for Platform components
-scripts/bootstrap-wizard.sh
+scripts/bootstrap-wizard.sh   walks the Platform admin through one-time setup (see infra/README.md)
 docs/adr/
 docs/design.md
 CONTEXT.md
