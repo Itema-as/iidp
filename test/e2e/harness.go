@@ -210,6 +210,14 @@ nodes:
 	if err != nil {
 		return fmt.Errorf("kind create cluster: %w\n%s", err, out)
 	}
+	// kind's single node stands in for the whole Platform node plus, on a
+	// hosted CI runner, the CI machine's own overhead; two CoreDNS replicas
+	// (kind's default, for the node it does not have) claim CPU and memory
+	// the Platform components and the fixture Application need instead. One
+	// replica is still enough DNS for a cluster this small.
+	if out, err := c.Kubectl(ctx, "-n", "kube-system", "scale", "deployment/coredns", "--replicas=1"); err != nil {
+		return fmt.Errorf("scale coredns: %w\n%s", err, out)
+	}
 	return nil
 }
 
