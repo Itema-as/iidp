@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/Itema-as/iidp/internal/migrate"
 	"github.com/Itema-as/iidp/internal/platform"
@@ -80,11 +81,7 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) erro
 			}
 		}
 		if opts.framework == string(templates.Other) && !f.Changed("kind") {
-			kind, err := p.Choice("Kind", []string{platformrepo.KindWebService, platformrepo.KindStaticSite}, platformrepo.KindWebService)
-			if err != nil {
-				return err
-			}
-			if err := f.Set("kind", kind); err != nil {
+			if err := askKind(f, p); err != nil {
 				return err
 			}
 		}
@@ -94,11 +91,7 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) erro
 		// never chooses it itself (question 2 only offers Create or
 		// Adopt), but a flag combination can still reach here, so the
 		// question is asked all the same.
-		kind, err := p.Choice("Kind", []string{platformrepo.KindWebService, platformrepo.KindStaticSite}, platformrepo.KindWebService)
-		if err != nil {
-			return err
-		}
-		if err := f.Set("kind", kind); err != nil {
+		if err := askKind(f, p); err != nil {
 			return err
 		}
 	}
@@ -159,6 +152,17 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) erro
 	}
 
 	return nil
+}
+
+// askKind asks the Kind question (used both for --framework other, which
+// does not derive one, and for the legacy bare path) and sets --kind with
+// the answer.
+func askKind(f *pflag.FlagSet, p *prompt.Prompter) error {
+	kind, err := p.Choice("Kind", []string{platformrepo.KindWebService, platformrepo.KindStaticSite}, platformrepo.KindWebService)
+	if err != nil {
+		return err
+	}
+	return f.Set("kind", kind)
 }
 
 // askMigrationCommand shows docs/design.md's migration help text, including
