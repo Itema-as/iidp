@@ -60,6 +60,27 @@ type Config struct {
 	// platform.objectStorageEndpoint. Required for --postgres; not required
 	// otherwise.
 	ObjectStorageEndpoint string `yaml:"objectStorageEndpoint"`
+	// GitHubApp documents the org GitHub App iidp ci set-image authenticates
+	// as: the bootstrap wizard records it here after creating and installing
+	// the App, for a human reading platform.yaml to see which App and
+	// installation is in play. iidp ci set-image does not read this field to
+	// authenticate (see PeekGitHubAppInstallationID) and never requires it.
+	GitHubApp GitHubApp `yaml:"githubApp"`
+}
+
+// GitHubApp documents the org GitHub App id and installation id the
+// bootstrap wizard records after creating and installing the deploy App
+// (docs/implementation-notes/05-bootstrap-wizard.md). Neither field is
+// read to authenticate iidp ci set-image: the app id comes from the
+// IIDP_DEPLOY_APP_ID environment variable and the installation id is
+// discovered from GitHub (GET /app/installations), precisely so minting a
+// credential never depends on already having one to read the Platform
+// repository with (docs/implementation-notes/12-deploy-workflow.md). The
+// private key is never written here either: it comes from the environment
+// (internal/githubapp.PrivateKeyFromEnv).
+type GitHubApp struct {
+	ID             int64 `yaml:"id"`
+	InstallationID int64 `yaml:"installationId"`
 }
 
 // LoadConfig reads platform.yaml from a clone of the Platform repository.
@@ -85,6 +106,31 @@ func LoadConfig(dir string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// PeekGitHubAppInstallationID does a best-effort, tolerant read of
+// platform.yaml's githubApp.installationId in an already-cloned Platform
+// repository at dir, for documentation and logging only: unlike
+// LoadConfig, a missing file, invalid YAML, or a zero/absent id simply
+// reports ok=false rather than erroring. iidp ci set-image's own operation
+// never depends on this value; it is surfaced only so an operator sees
+// that platform.yaml's documented installation id (if the wizard recorded
+// one) agrees with reality.
+func PeekGitHubAppInstallationID(dir string) (id int64, ok bool) {
+	data, err := os.ReadFile(filepath.Join(dir, ConfigFile))
+	if err != nil {
+		return 0, false
+	}
+	var cfg struct {
+		GitHubApp GitHubApp `yaml:"githubApp"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return 0, false
+	}
+	if cfg.GitHubApp.InstallationID == 0 {
+		return 0, false
+	}
+	return cfg.GitHubApp.InstallationID, true
 }
 
 // Chart splits ChartRepository into the registry path ArgoCD wants as

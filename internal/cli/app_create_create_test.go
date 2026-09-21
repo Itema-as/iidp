@@ -591,3 +591,67 @@ func assertFileExists(t *testing.T, path string) {
 		t.Errorf("%s: %v", path, err)
 	}
 }
+
+func TestAppCreatePathAddsTheDeployWorkflow(t *testing.T) {
+	platformURL := newPlatformRepository(t, testPlatformYAML)
+	gh := newFakeGitHub(t)
+
+	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--name", "shop", "--path", "create", "--framework", "nextjs")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	clone := cloneAppRepo(t, gh, platform.Org, "shop")
+	workflowPath := filepath.Join(clone, ".github", "workflows", "deploy.yaml")
+	assertFileExists(t, workflowPath)
+
+	data, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "ghcr.io/"+strings.ToLower(platform.Org)+"/shop") {
+		t.Errorf("deploy.yaml lacks the expected image reference:\n%s", content)
+	}
+	if !strings.Contains(content, "iidp ci set-image shop auto") {
+		t.Errorf("deploy.yaml lacks the main-branch set-image invocation:\n%s", content)
+	}
+	if !strings.Contains(content, "iidp ci set-image shop prod") {
+		t.Errorf("deploy.yaml lacks the tag-promotion set-image invocation:\n%s", content)
+	}
+	if !strings.Contains(stdout, "pinned to iidp latest") {
+		t.Errorf("stdout lacks the dev-build iidp version note:\n%s", stdout)
+	}
+}
+
+func TestAppCreatePathPersonalOwnerIsToldToAddTheSecretByHand(t *testing.T) {
+	platformURL := newPlatformRepository(t, testPlatformYAML)
+	gh := newFakeGitHub(t)
+	gh.login = "developer42"
+
+	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--name", "shop", "--path", "create", "--framework", "nextjs", "--owner", "user")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "IIDP_DEPLOY_APP_PRIVATE_KEY") || !strings.Contains(stdout, "by hand") {
+		t.Errorf("stdout lacks the personal-account secret note:\n%s", stdout)
+	}
+}
+
+func TestAppCreatePathOrgOwnerGetsNoSecretNote(t *testing.T) {
+	platformURL := newPlatformRepository(t, testPlatformYAML)
+	gh := newFakeGitHub(t)
+
+	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--name", "shop", "--path", "create", "--framework", "nextjs")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	if strings.Contains(stdout, "by hand") {
+		t.Errorf("stdout should not mention adding the secret by hand for an org owner:\n%s", stdout)
+	}
+}

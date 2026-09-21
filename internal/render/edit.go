@@ -207,6 +207,38 @@ func boolNode(v bool) *yaml.Node {
 	return &yaml.Node{Kind: yaml.ScalarNode, Value: value, Tag: "!!bool"}
 }
 
+// SetImageTag sets image.tag in a values.yaml document (written by
+// iidp app create, later edited in place by iidp ci set-image) to tag,
+// leaving every other key, and every comment, untouched. It reports
+// whether the tag actually changed.
+func SetImageTag(valuesYAML []byte, tag string) (out []byte, changed bool, err error) {
+	root, err := decodeDocument(valuesYAML, "values.yaml")
+	if err != nil {
+		return nil, false, err
+	}
+	image := mappingValue(root, "image")
+	if image == nil {
+		return nil, false, fmt.Errorf("values.yaml has no image key")
+	}
+	for i := 0; i+1 < len(image.Content); i += 2 {
+		if image.Content[i].Value != "tag" {
+			continue
+		}
+		value := image.Content[i+1]
+		if value.Value == tag {
+			return valuesYAML, false, nil
+		}
+		value.Value = tag
+		// Force a plain string scalar: a version like "20260921" or a
+		// numeric-looking value must not be re-encoded as a YAML number.
+		value.Tag = "!!str"
+		value.Style = 0
+		out, err = encodeDocument(root)
+		return out, true, err
+	}
+	return nil, false, fmt.Errorf("values.yaml image has no tag key")
+}
+
 // decodeDocument parses data as a YAML document and returns its top-level
 // mapping node, the node every helper here edits in place.
 func decodeDocument(data []byte, what string) (*yaml.Node, error) {

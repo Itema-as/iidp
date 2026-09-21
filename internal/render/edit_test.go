@@ -304,3 +304,69 @@ func TestAddKustomizeSourceIsIdempotent(t *testing.T) {
 		t.Errorf("the sops path appears %d times, want 1", n)
 	}
 }
+
+func TestSetImageTagSetsAnEmptyTag(t *testing.T) {
+	out, changed, err := render.SetImageTag([]byte(testValuesYAML), "a1b2c3d4")
+	if err != nil {
+		t.Fatalf("SetImageTag: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if !strings.HasPrefix(string(out), "# Values for the prod Environment of shop") {
+		t.Errorf("the header comment was lost:\n%s", out)
+	}
+	if !strings.Contains(string(out), "image:\n    repository: ghcr.io/itema-as/shop\n    tag: a1b2c3d4\n") {
+		t.Errorf("image.tag was not set:\n%s", out)
+	}
+	// Everything else, including comments and the rest of image:, survives.
+	if !strings.Contains(string(out), "size: small\n") || !strings.Contains(string(out), "port: 3000\n") {
+		t.Errorf("unrelated keys were lost:\n%s", out)
+	}
+}
+
+func TestSetImageTagReplacesAnExistingTag(t *testing.T) {
+	withOne, _, err := render.SetImageTag([]byte(testValuesYAML), "a1b2c3d4")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, changed, err := render.SetImageTag(withOne, "1.2.3")
+	if err != nil {
+		t.Fatalf("SetImageTag: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if !strings.Contains(string(out), "tag: 1.2.3\n") {
+		t.Errorf("image.tag was not replaced:\n%s", out)
+	}
+	if strings.Contains(string(out), "a1b2c3d4") {
+		t.Errorf("the old tag is still present:\n%s", out)
+	}
+}
+
+func TestSetImageTagIsIdempotent(t *testing.T) {
+	withOne, _, err := render.SetImageTag([]byte(testValuesYAML), "a1b2c3d4")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, changed, err := render.SetImageTag(withOne, "a1b2c3d4")
+	if err != nil {
+		t.Fatalf("SetImageTag: %v", err)
+	}
+	if changed {
+		t.Error("changed = true, want false: the tag was already set")
+	}
+	if string(out) != string(withOne) {
+		t.Errorf("output changed even though changed=false:\nbefore:\n%s\nafter:\n%s", withOne, out)
+	}
+}
+
+func TestSetImageTagRejectsAValuesFileWithoutImage(t *testing.T) {
+	_, _, err := render.SetImageTag([]byte("application:\n    name: shop\n"), "a1b2c3d4")
+	if err == nil {
+		t.Fatal("err = nil, want an error: no image key")
+	}
+}

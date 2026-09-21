@@ -9,6 +9,26 @@ say what to fill in: a base image, how to build your application, the port
 it `EXPOSE`s, and the command that starts it. Your application must listen
 on the port the Platform gives it in the `PORT` environment variable.
 
-There is no deploy workflow in this repository yet, either: pushing to
-`main` does not build or deploy an image until the deploy workflow is added
-(iidp issue #12).
+`.github/workflows/deploy.yaml` is already here and works the same way it
+does for a built-in template: on a push to `main` it builds `Dockerfile`
+with buildx, pushes `ghcr.io/<owner>/{{.Name}}:<commit SHA>` to GHCR and
+runs `iidp ci set-image` to write that tag into the Platform repository
+(staging when this Application has one, prod otherwise); on a `v*` tag it
+retags the SHA image with the version, with no rebuild, and runs
+`iidp ci set-image` for prod. Until `Dockerfile` is completed, the build
+step fails and nothing deploys.
+
+The write-back authenticates as the org's GitHub App without ever reading
+the (private) Platform repository first: the `IIDP_DEPLOY_APP_PRIVATE_KEY`
+org Actions secret and the `IIDP_DEPLOY_APP_ID` org Actions variable the
+Platform admin's bootstrap wizard creates, plus an installation id
+discovered from GitHub itself. Both the secret and the variable have org
+visibility, so an org-owned repository receives them automatically; a
+repository under a personal account receives neither and needs both added
+by hand (Settings → Secrets and variables → Actions → New repository
+secret, and → New repository variable).
+
+The image GHCR receives on the first push is private by default: make the
+package public before the first deploy (its GitHub page, Package settings
+→ Danger Zone → Change visibility), or give the Environment's namespace
+pull credentials for it instead.

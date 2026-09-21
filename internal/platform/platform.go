@@ -28,4 +28,9 @@ const (
 	// the ArgoCD Applications it writes name as their values source. It is
 	// the same URL the bootstrap's root Application reconciles from.
 	RepositoryURL = "https://github.com/" + Repository + ".git"
+
+	// CLIRepository is this repository itself, as "owner/name": where the
+	// generated deploy workflow downloads iidp release archives from
+	// (docs/implementation-notes/12-deploy-workflow.md).
+	CLIRepository = Org + "/iidp"
 )

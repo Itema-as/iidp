@@ -21,9 +21,15 @@ type Dependencies struct {
 	// repository and each push attempt. Tests use it to move main.
 	BeforePush func() error
 	// GitHubAPI overrides the GitHub API base URL the Create path's client
-	// talks to; empty means the real API. Tests point it at an in-process
-	// fake server.
+	// and ci set-image's installation-token client talk to; empty means the
+	// real API. Tests point it at an in-process fake server.
 	GitHubAPI string
+	// CIAuthObserved, when set, is called by ci set-image with the GitHub
+	// App installation token it minted, right before using it as the
+	// Platform repository's git credential. Tests use it to assert that
+	// the token the fake GitHub server returned is the one that reaches
+	// git (docs/implementation-notes/12-deploy-workflow.md).
+	CIAuthObserved func(token string)
 }
 
 // Run executes the CLI with the given arguments (excluding the program name)
@@ -66,6 +72,7 @@ func newRootCommand(deps Dependencies) *cobra.Command {
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newAppCommand(deps))
 	root.AddCommand(newSecretCommand(deps))
+	root.AddCommand(newCICommand(deps))
 	return root
 }
 

@@ -108,6 +108,16 @@ type Result struct {
 	// Domains reports how each requested custom domain will be served, in
 	// the order given.
 	Domains []DomainPlan
+	// Environment is set by SetImageTag to the Environment actually
+	// written: the literal prod or staging it was given, or, given auto,
+	// whichever of the two it resolved to.
+	Environment string
+	// DocumentedGitHubAppInstallationID is set by SetImageTag to
+	// platform.yaml's githubApp.installationId when present, purely for
+	// logging: it plays no part in authenticating the command that
+	// produced this Result (docs/implementation-notes/12-deploy-workflow.md).
+	// Zero means platform.yaml documented none.
+	DocumentedGitHubAppInstallationID int64
 }
 
 // Writer commits Applications to the Platform repository.
