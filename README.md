@@ -43,6 +43,14 @@ iidp app create --name storefront --path create --framework vite-react --owner u
 iidp app create --name legacy-api --path create --framework other --kind web-service
 ```
 
+Add Capabilities with more flags. `--postgres` gives every Environment its own Postgres database and, without `--migration-command`, looks for a Prisma schema, a Drizzle config or an npm `migrate` script and proposes the matching command; `--staging` adds a second Environment next to prod with the same Capabilities; `--domain` (repeatable) serves a custom domain beside the Platform address:
+
+```sh
+iidp app create --name shop --path create --framework nextjs --postgres --staging
+iidp app create --name shop --kind web-service --postgres --migration-command "npx prisma migrate deploy"
+iidp app create --name shop --kind web-service --domain shop.example.com --domain butikk.app.itma.no
+```
+
 | Flag | Default | Meaning |
 |---|---|---|
 | `--name` | required | Application name: lowercase letters, digits and dashes, starting with a letter, at most 40 characters, unique on the Platform |
@@ -55,6 +63,10 @@ iidp app create --name legacy-api --path create --framework other --kind web-ser
 | `--image` | `ghcr.io/<owner lowercased>/<name>` | Image repository |
 | `--port` | `3000` | Port the container listens on |
 | `--probe-path` | `/` | Path the readiness and liveness probes request |
+| `--postgres` | off | Add the Postgres Capability: `DATABASE_URL` injected into every Environment, continuous backups. Needs `platform.yaml`'s `backupsBucket` and `objectStorageEndpoint` |
+| `--migration-command` | detected, or none | Shell command run before every rollout with `DATABASE_URL` set. Requires `--postgres`; without it, detected from Prisma, Drizzle or an npm `migrate` script |
+| `--staging` | off | Add a `staging` Environment next to `prod`: its own address, its own database, the same Capabilities |
+| `--domain` | none | Custom domain to serve besides the Platform address, for `prod` only (repeatable). Automatic inside `platform.yaml`'s `cloudflareZone`; otherwise the closing summary prints a CNAME to create |
 | `--yes` | | Skip the confirmation (nothing is asked yet) |
 
 What each framework produces in the Application repository:
@@ -65,7 +77,7 @@ What each framework produces in the Application repository:
 
 Every template includes a `.gitignore`, a `.dockerignore` and a README, but no deploy workflow yet: that is issue #12.
 
-The command writes the Application's `prod` Environment to the Platform repository, an ArgoCD Application pinned to the chart version in `platform.yaml` and the values file that defines the Environment, commits as you and pushes to `main`. It then prints the Application repository URL (with `--path create`), the Environment's address, and where to look in ArgoCD and Grafana Cloud. Nothing talks to Kubernetes; the files and how they are written are described in [`docs/platform-repository.md`](docs/platform-repository.md).
+The command writes the Application's `prod` Environment (and, with `--staging`, `staging` too) to the Platform repository, an ArgoCD Application pinned to the chart version in `platform.yaml` and the values file that defines each Environment, commits as you and pushes to `main`. It then prints the Application repository URL (with `--path create`), each Environment's address, where to look in ArgoCD and Grafana Cloud, and, for a `--domain` outside `platform.yaml`'s `cloudflareZone`, the CNAME to create by hand (`CNAME <host> -> <name>.<baseDomain>`). Nothing talks to Kubernetes; the files and how they are written are described in [`docs/platform-repository.md`](docs/platform-repository.md).
 
 Set a secret for an Environment. The value is encrypted with the Platform's age public key (`agePublicKey` in `platform.yaml`) and committed as a SOPS-encrypted Kubernetes Secret next to the Environment's values file, which the chart mounts by name; the private key never leaves the cluster and `iidp` never sees it:
 

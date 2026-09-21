@@ -83,4 +83,9 @@ func ExampleValues() {
 	// probe:
 	//     path: /
 	// env: {}
+	// domains: []
+	// postgres:
+	//     enabled: false
+	//     migrationCommand: ""
+	//     backupRetention: 30d
 }

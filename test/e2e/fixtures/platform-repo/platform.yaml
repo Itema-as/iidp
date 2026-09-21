@@ -27,8 +27,10 @@ githubApp:
 # only in the cluster (Secret argocd/sops-age).
 agePublicKey: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
 
-# The Object Storage bucket CloudNativePG backups go to.
+# The Object Storage bucket CloudNativePG backups go to, and the S3 endpoint
+# of its location. Read by the CLI; required for --postgres.
 backupsBucket: iidp-backups
+objectStorageEndpoint: https://hel1.your-objectstorage.com
 
 # Bootstrap-only settings.
 acme:

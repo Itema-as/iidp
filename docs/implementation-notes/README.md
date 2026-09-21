@@ -13,4 +13,5 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #8 | [08-chart-static-domains-secrets.md](08-chart-static-domains-secrets.md) |
 | #10 | [10-cli-platform-repository.md](10-cli-platform-repository.md) |
 | #11 | [11-cli-create-path.md](11-cli-create-path.md) |
+| #13 | [13-cli-capabilities.md](13-cli-capabilities.md) |
 | #16 | [16-cli-secret-set.md](16-cli-secret-set.md) |

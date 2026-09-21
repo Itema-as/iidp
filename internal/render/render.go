@@ -22,6 +22,19 @@ type Environment struct {
 	Size            string
 	Port            int
 	ProbePath       string
+	// Domains are the custom domains served beside the Platform address.
+	// Only prod carries any: staging keeps its Platform address (see
+	// docs/implementation-notes/13-cli-capabilities.md).
+	Domains []string
+	// PostgresEnabled, MigrationCommand, BackupsBucket and
+	// ObjectStorageEndpoint are the Postgres Capability. BackupsBucket and
+	// ObjectStorageEndpoint are set only when PostgresEnabled: the chart
+	// requires them only then, and they otherwise carry nothing the
+	// developer chose.
+	PostgresEnabled       bool
+	MigrationCommand      string
+	BackupsBucket         string
+	ObjectStorageEndpoint string
 }
 
 // Name is the Environment's object name, <application>-<environment>: the
@@ -84,18 +97,38 @@ func ArgoCDApplication(env Environment, chart Chart, platformRepoURL, valuesPath
 	return marshal("The ArgoCD Application for the "+env.Environment+" Environment of "+env.Application+".", app)
 }
 
+// defaultBackupRetention is postgres.backupRetention's value: how long
+// backups and WAL are kept in the bucket. There is no flag for it yet; it
+// is written the same as the chart's own default so the file states it
+// explicitly, the same reasoning as size, port and probe.path.
+const defaultBackupRetention = "30d"
+
 // Values renders the chart values file for env.
 func Values(env Environment) ([]byte, error) {
+	domains := env.Domains
+	if domains == nil {
+		domains = []string{}
+	}
 	v := values{
 		Application: applicationValues{Name: env.Application},
 		Environment: env.Environment,
-		Platform:    platformValues{BaseDomain: env.BaseDomain},
-		Kind:        env.Kind,
-		Image:       imageValues{Repository: env.ImageRepository, Tag: env.ImageTag},
-		Size:        env.Size,
-		Port:        env.Port,
-		Probe:       probeValues{Path: env.ProbePath},
-		Env:         map[string]string{},
+		Platform: platformValues{
+			BaseDomain:            env.BaseDomain,
+			BackupsBucket:         env.BackupsBucket,
+			ObjectStorageEndpoint: env.ObjectStorageEndpoint,
+		},
+		Kind:    env.Kind,
+		Image:   imageValues{Repository: env.ImageRepository, Tag: env.ImageTag},
+		Size:    env.Size,
+		Port:    env.Port,
+		Probe:   probeValues{Path: env.ProbePath},
+		Env:     map[string]string{},
+		Domains: domains,
+		Postgres: postgresValues{
+			Enabled:          env.PostgresEnabled,
+			MigrationCommand: env.MigrationCommand,
+			BackupRetention:  defaultBackupRetention,
+		},
 	}
 	return marshal("Values for the "+env.Environment+" Environment of "+env.Application+". image.tag is written by the deploy workflow.", v)
 }
@@ -167,6 +200,8 @@ type values struct {
 	Port        int               `yaml:"port"`
 	Probe       probeValues       `yaml:"probe"`
 	Env         map[string]string `yaml:"env"`
+	Domains     []string          `yaml:"domains"`
+	Postgres    postgresValues    `yaml:"postgres"`
 }
 
 type applicationValues struct {
@@ -174,7 +209,15 @@ type applicationValues struct {
 }
 
 type platformValues struct {
-	BaseDomain string `yaml:"baseDomain"`
+	BaseDomain            string `yaml:"baseDomain"`
+	BackupsBucket         string `yaml:"backupsBucket,omitempty"`
+	ObjectStorageEndpoint string `yaml:"objectStorageEndpoint,omitempty"`
+}
+
+type postgresValues struct {
+	Enabled          bool   `yaml:"enabled"`
+	MigrationCommand string `yaml:"migrationCommand"`
+	BackupRetention  string `yaml:"backupRetention"`
 }
 
 type imageValues struct {

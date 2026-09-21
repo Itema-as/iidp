@@ -62,7 +62,8 @@ Until the `argocd` Application has completed its first sync, `platform-secrets` 
 | `chartVersion` | CLI | The application chart version written into new Environments |
 | `githubApp.id`, `githubApp.installationId` | CLI | The org GitHub App the deploy workflow writes back with |
 | `agePublicKey` | CLI | What `iidp secret set` encrypts with; the private key exists only in the cluster |
-| `backupsBucket` | CLI | The Object Storage bucket for CloudNativePG backups |
+| `backupsBucket` | CLI | The Object Storage bucket for CloudNativePG backups. Required for `--postgres` |
+| `objectStorageEndpoint` | CLI | The S3 endpoint of `backupsBucket`'s location, for example `https://hel1.your-objectstorage.com`. Required for `--postgres` |
 | `acme.email` | bootstrap | Optional; where Let's Encrypt sends expiry warnings |
 | `acme.server` | bootstrap | The ACME directory; the staging one for a test Platform |
 | `argocdAdminGroup` | bootstrap | Object id of the Entra ID group whose members are ArgoCD admins; everyone else who can log in is read-only |

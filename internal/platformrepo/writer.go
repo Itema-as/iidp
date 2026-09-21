@@ -83,6 +83,17 @@ type Application struct {
 	ImageRepository string
 	Port            int
 	ProbePath       string
+	// Postgres and MigrationCommand are the Postgres Capability, written
+	// into every Environment. MigrationCommand is only meaningful with
+	// Postgres.
+	Postgres         bool
+	MigrationCommand string
+	// Staging, when true, adds a second Environment next to prod: its own
+	// address, its own database, the same Capabilities.
+	Staging bool
+	// Domains are custom domains for the prod Environment only; staging
+	// keeps its Platform address (docs/implementation-notes/13-cli-capabilities.md).
+	Domains []string
 }
 
 // Result is what CreateApplication wrote and where it can be seen.
@@ -92,6 +103,11 @@ type Result struct {
 	Files []string
 	// Address is the prod Environment's URL.
 	Address string
+	// StagingAddress is the staging Environment's URL, or "" without one.
+	StagingAddress string
+	// Domains reports how each requested custom domain will be served, in
+	// the order given.
+	Domains []DomainPlan
 }
 
 // Writer commits Applications to the Platform repository.
@@ -192,10 +208,29 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry bool)
 	if err := checkApplicationAbsent(dir, app.Name, retry); err != nil {
 		return Result{}, err
 	}
+	if app.Postgres && (cfg.BackupsBucket == "" || cfg.ObjectStorageEndpoint == "") {
+		return Result{}, fmt.Errorf("%s in %s sets no backupsBucket or objectStorageEndpoint, needed for the Postgres Capability", ConfigFile, platform.Repository)
+	}
+
+	platformAddresses := []string{app.Name + "." + cfg.BaseDomain}
+	if app.Staging {
+		platformAddresses = append(platformAddresses, app.Name+"-staging."+cfg.BaseDomain)
+	}
+	domainPlans, err := ValidateDomains(app.Domains, cfg.BaseDomain, cfg.CloudflareZone, platformAddresses)
+	if err != nil {
+		return Result{}, err
+	}
 
 	files, err := w.writeEnvironment(dir, cfg, app, "prod")
 	if err != nil {
 		return Result{}, err
+	}
+	if app.Staging {
+		stagingFiles, err := w.writeEnvironment(dir, cfg, app, "staging")
+		if err != nil {
+			return Result{}, err
+		}
+		files = append(files, stagingFiles...)
 	}
 	if err := repo.Add(ctx, files...); err != nil {
 		return Result{}, err
@@ -214,11 +249,16 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry bool)
 		}
 		return Result{}, fmt.Errorf("pushing to %s: %w\nIf this is a permission error, ask the Platform admin for write access to %s", platform.Repository, err, platform.Repository)
 	}
-	return Result{
+	res := Result{
 		Config:  cfg,
 		Files:   files,
-		Address: "https://" + app.Name + "." + cfg.BaseDomain,
-	}, nil
+		Address: "https://" + platformAddresses[0],
+		Domains: domainPlans,
+	}
+	if app.Staging {
+		res.StagingAddress = "https://" + platformAddresses[1]
+	}
+	return res, nil
 }
 
 // writeEnvironment renders and writes the files of one Environment into
@@ -229,14 +269,25 @@ func (w *Writer) writeEnvironment(dir string, cfg Config, app Application, envir
 		return nil, err
 	}
 	env := render.Environment{
-		Application:     app.Name,
-		Environment:     environment,
-		BaseDomain:      cfg.BaseDomain,
-		Kind:            app.Kind,
-		ImageRepository: app.ImageRepository,
-		Size:            app.Size,
-		Port:            app.Port,
-		ProbePath:       app.ProbePath,
+		Application:      app.Name,
+		Environment:      environment,
+		BaseDomain:       cfg.BaseDomain,
+		Kind:             app.Kind,
+		ImageRepository:  app.ImageRepository,
+		Size:             app.Size,
+		Port:             app.Port,
+		ProbePath:        app.ProbePath,
+		PostgresEnabled:  app.Postgres,
+		MigrationCommand: app.MigrationCommand,
+	}
+	if app.Postgres {
+		env.BackupsBucket = cfg.BackupsBucket
+		env.ObjectStorageEndpoint = cfg.ObjectStorageEndpoint
+	}
+	// Custom domains apply to prod only; staging keeps its Platform address
+	// (docs/implementation-notes/13-cli-capabilities.md).
+	if environment == "prod" {
+		env.Domains = app.Domains
 	}
 	envDir := EnvironmentDir(app.Name, environment)
 	applicationPath := path.Join(envDir, "application.yaml")

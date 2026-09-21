@@ -46,6 +46,20 @@ type Config struct {
 	// matching private key exists only in the cluster. Required for
 	// secret set; not required to create an Application.
 	AgePublicKey string `yaml:"agePublicKey"`
+	// CloudflareZone is the Cloudflare zone containing BaseDomain: the only
+	// zone external-dns manages, and so the only zone in which the CLI can
+	// fully automate a custom domain (--domain). Required for --domain;
+	// not required to create an Application without one.
+	CloudflareZone string `yaml:"cloudflareZone"`
+	// BackupsBucket is the Object Storage bucket every Application database
+	// is backed up to, written as platform.backupsBucket. Required for
+	// --postgres; not required otherwise.
+	BackupsBucket string `yaml:"backupsBucket"`
+	// ObjectStorageEndpoint is the S3 endpoint of BackupsBucket's location,
+	// for example https://hel1.your-objectstorage.com, written as
+	// platform.objectStorageEndpoint. Required for --postgres; not required
+	// otherwise.
+	ObjectStorageEndpoint string `yaml:"objectStorageEndpoint"`
 }
 
 // LoadConfig reads platform.yaml from a clone of the Platform repository.

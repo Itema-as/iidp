@@ -18,6 +18,8 @@ applications/
         ksops.yaml            the KSOPS generator listing every *.enc.yaml below
         <key-slug>.enc.yaml   one SOPS document per secret KEY
     staging/                  the same files, when the Application has a staging Environment
+                               (--staging on iidp app create), its own address
+                               (<name>-staging.<baseDomain>) and its own database
 ```
 
 The CLI only ever adds and changes files under `applications/<name>/`. Anything else in the repository is left alone, so an emergency hand edit elsewhere does not break the next `iidp` run.
@@ -34,6 +36,9 @@ Read from the root of the repository on every run, so changing a Platform-wide s
 | `argocdURL` | no | Printed by the CLI as where to look at an Application's status. |
 | `grafanaURL` | no | Printed by the CLI as where to look at an Application's logs. |
 | `agePublicKey` | only for `iidp secret set` | What `iidp secret set` encrypts values with. The matching private key exists only in the cluster (`bootstrap/README.md`, Secret `argocd/sops-age`); the CLI never sees it. Not required to create an Application. |
+| `cloudflareZone` | only for `--domain` | The Cloudflare zone containing `baseDomain`. A `--domain` host inside it is fully automated: external-dns creates the record. Not required without `--domain`. |
+| `backupsBucket` | only for `--postgres` | The Object Storage bucket every Application database is backed up to, written into the Environment's `values.yaml` as `platform.backupsBucket`. Not required without `--postgres`. |
+| `objectStorageEndpoint` | only for `--postgres` | The S3 endpoint of `backupsBucket`'s location, for example `https://hel1.your-objectstorage.com`, written as `platform.objectStorageEndpoint`. Not required without `--postgres`. |
 
 ```yaml
 baseDomain: app.itma.no
@@ -42,6 +47,9 @@ chartRepository: oci://ghcr.io/itema-as/charts/application
 argocdURL: https://argocd.platform.itma.no
 grafanaURL: https://itema.grafana.net
 agePublicKey: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
+cloudflareZone: itma.no
+backupsBucket: itema-iidp-db-backups
+objectStorageEndpoint: https://hel1.your-objectstorage.com
 ```
 
 ## `applications/<name>/<environment>/application.yaml`
@@ -110,11 +118,23 @@ port: 3000
 probe:
   path: /
 env: {}
+domains: []
+postgres:
+  enabled: false
+  migrationCommand: ""
+  backupRetention: 30d
 ```
 
-`image.tag` is empty when the Application is created: no image exists yet. The deploy workflow writes the first tag (a commit SHA on `main`, a version on a `v*` tag), and until then ArgoCD reports the Environment as failing to render because the chart requires a tag. Later Capabilities (Postgres, custom domains, Itema login) add keys to this file; `env` is where plain environment variables go.
+`image.tag` is empty when the Application is created: no image exists yet. The deploy workflow writes the first tag (a commit SHA on `main`, a version on a `v*` tag), and until then ArgoCD reports the Environment as failing to render because the chart requires a tag. Itema login adds a key to this file in a later ticket; `env` is where plain environment variables go.
 
 `secrets` (a list of Secret names, empty until `iidp secret set` adds to it) is documented below.
+
+### What the Capabilities write
+
+- **`--postgres`** sets `postgres.enabled: true` in every Environment (prod and, with `--staging`, staging too: each gets its own database by construction, since the chart names the CloudNativePG `Cluster` after the Environment's own object name) and fills `platform.backupsBucket` and `platform.objectStorageEndpoint` from `platform.yaml`. `--migration-command` sets `postgres.migrationCommand` directly; left unset, the CLI looks for a Prisma schema, a Drizzle config or an npm `migrate` script in the Application repository (the generated template with `--path create`, or the current directory when it has a `package.json`) and proposes the matching command, printed before anything is written. A migration command without `--postgres` is refused: there is nothing to migrate.
+- **`--staging`** writes `applications/<name>/staging/{application.yaml,values.yaml}` next to `prod`, in the same commit: `environment: staging`, the ArgoCD Application `<name>-staging` in namespace `<name>-staging`, and the address `<name>-staging.<baseDomain>` (the chart derives it from `environment`). Every other Capability is the same in both Environments.
+- **`--domain`** (repeatable) validates each host the way the chart does at render time (a lowercase DNS hostname of at least two labels, no duplicates) plus one only the CLI can check: none may equal a Platform address of either Environment. It then classifies each host: one label directly under `baseDomain` is covered by the Platform's wildcard certificate; any host inside `platform.yaml`'s `cloudflareZone` (the wildcard-covered ones included) is fully automatic, since external-dns can create its DNS record; anything else needs a CNAME to the prod address, which the closing summary prints (`CNAME <host> -> <name>.<baseDomain>`). `domains` is written for prod only: custom domains apply there, staging keeps its Platform address.
+- **`--size`** (`small`, `medium` or `large`) applies to every Environment; any other value is refused.
 
 ## `applications/<name>/<environment>/sops/`
 
