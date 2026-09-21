@@ -222,6 +222,7 @@ func TestRenderingRefusesBadDomains(t *testing.T) {
 		{"domain-invalid.yaml", `domains: "https://shop.example.com/" is not a valid DNS hostname`},
 		{"domain-duplicate.yaml", `domains: "shop.example.com" is listed twice`},
 		{"domain-platform-address.yaml", `domains: "shop-staging.app.itma.no" is this Environment's Platform address, which is always served; remove it`},
+		{"domain-too-long.yaml", `is too long for the name of its TLS secret (shop-staging-<host>-tls must be at most 253 characters)`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {

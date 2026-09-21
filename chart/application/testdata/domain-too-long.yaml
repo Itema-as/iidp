@@ -1,0 +1,14 @@
+application:
+  name: shop
+environment: staging
+platform:
+  baseDomain: app.itma.no
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 1.4.2
+size: small
+domains:
+  # A valid hostname (four labels of 60 characters) whose TLS secret name,
+  # shop-staging-<host>-tls, would be longer than a Secret name may be.
+  - aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd

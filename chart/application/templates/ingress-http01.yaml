@@ -26,7 +26,7 @@ spec:
     {{- range $domains.foreign }}
     - hosts:
         - {{ . }}
-      secretName: {{ printf "%s-%s-tls" (include "application.fullname" $) (replace "." "-" .) }}
+      secretName: {{ include "application.tlsSecretName" (list $ .) }}
     {{- end }}
   rules:
     {{- range $domains.foreign }}

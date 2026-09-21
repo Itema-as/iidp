@@ -18,9 +18,9 @@ Today the chart renders both Kinds, Web service and Static site, as a Deployment
 | `size` | `small` | `small`, `medium` or `large`. See below. Anything else fails. |
 | `port` | `3000` | The port a Web service listens on. Ignored by a Static site, which always listens on 80. |
 | `probe.path` | `/` | The path the readiness and liveness probes request. |
-| `env` | `{}` | Plain environment variables, name to value. Not for secrets, and it must not set `PORT`. |
+| `env` | `{}` | Plain environment variables, name to value. Not for secrets, and it must not set `PORT`: a Web service gets it from `port`, and a Static site listens on 80 regardless. |
 | `secrets` | `[]` | Names of Secrets in the Environment's namespace. Every key of each becomes an environment variable. The chart renders no Secret; the CLI writes them SOPS-encrypted next to the values file. |
-| `domains` | `[]` | Custom domains, one hostname each, served beside the Platform address. A hostname that is not lowercase DNS, is listed twice, or is the Environment's own Platform address fails rendering. See "Custom domains" below. |
+| `domains` | `[]` | Custom domains, one hostname each, served beside the Platform address. A hostname that is not lowercase DNS, is listed twice, is the Environment's own Platform address, or is too long for its TLS secret's name fails rendering. See "Custom domains" below. |
 
 ## Conventions the chart encodes
 

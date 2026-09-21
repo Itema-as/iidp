@@ -41,7 +41,7 @@ Chosen: `platform.httpIssuer`, default `letsencrypt-http01`. The bootstrap creat
 
 ## What is refused?
 
-Chosen, all with a `fail` naming the value: a domain that is not a valid DNS hostname (lowercase labels of letters, digits and dashes, dot-separated, at least two labels, at most 253 characters; uppercase is refused rather than lowercased, so a duplicate cannot hide behind case), a domain listed twice, and a domain equal to the Environment's own Platform address (it is always served; listing it would render the host twice). A domain equal to the other Environment's Platform address is not refused; it would render as a wildcard host and Traefik would then see the same host on two Ingresses, which is a mistake the CLI is better placed to prevent because only it knows both Environments exist.
+Chosen, all with a `fail` naming the value: a domain that is not a valid DNS hostname (lowercase labels of letters, digits and dashes, dot-separated, at least two labels, at most 253 characters; uppercase is refused rather than lowercased, so a duplicate cannot hide behind case), a domain listed twice, a domain equal to the Environment's own Platform address (it is always served; listing it would render the host twice), and a foreign domain so long that `<fullname>-<host>-tls` would exceed the 253 characters a Secret name may have (cert-manager names the Certificate after the secret, so a longer name would fail at issuance instead of at render). A domain equal to the other Environment's Platform address is not refused; it would render as a wildcard host and Traefik would then see the same host on two Ingresses, which is a mistake the CLI is better placed to prevent because only it knows both Environments exist.
 
 ## Secrets
 

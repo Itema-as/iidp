@@ -77,10 +77,25 @@ certificate; any other host is foreign and needs a certificate of its own.
 {{- if and (hasSuffix $suffix $host) (not (contains "." (trimSuffix $suffix $host))) -}}
 {{- $wildcard = append $wildcard $host -}}
 {{- else -}}
+{{- if gt (len (include "application.tlsSecretName" (list $ $host))) 253 -}}
+{{- fail (printf "domains: %q is too long for the name of its TLS secret (%s-<host>-tls must be at most 253 characters)" $host (include "application.fullname" $)) -}}
+{{- end -}}
 {{- $foreign = append $foreign $host -}}
 {{- end -}}
 {{- end -}}
 {{- dict "wildcard" $wildcard "foreign" $foreign | toJson -}}
+{{- end -}}
+
+{{/*
+The Secret cert-manager writes a foreign host's certificate into, from a
+list of the root context and the host: <fullname>-<host with dots replaced
+by dashes>-tls. A validated host has only letters, digits, dashes and dots,
+so the result is a valid Secret name whenever it is short enough.
+*/}}
+{{- define "application.tlsSecretName" -}}
+{{- $root := index . 0 -}}
+{{- $host := index . 1 -}}
+{{- printf "%s-%s-tls" (include "application.fullname" $root) (replace "." "-" $host) -}}
 {{- end -}}
 
 {{/*
