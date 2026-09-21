@@ -15,7 +15,7 @@ The shared understanding reached in the design session on 2026-09-20. Vocabulary
 | Application model | Kind: Static site or Web service. Capabilities: Postgres, staging, custom domain, Itema login. Sizes small/medium/large |
 | Addresses | `<app>.app.itma.no`, `<app>-staging.app.itma.no`, one wildcard cert, custom domains on Cloudflare zones automatic, elsewhere by CNAME |
 | Delivery | CI builds SHA-tagged images to GHCR. `main` deploys to staging or prod, a `v*` tag retags and promotes to prod. Write-back via an org GitHub App |
-| Database | One single-instance CNPG cluster per Environment, `DATABASE_URL` injected, optional PreSync migration Job, continuous backups to Object Storage, final backup kept 30 days on delete |
+| Database | One single-instance CNPG cluster per Environment, `DATABASE_URL` injected, optional migration Job run as an ArgoCD sync hook before the rollout (see notes for #7 on why not PreSync), continuous backups to Object Storage, final backup kept 30 days on delete |
 | Secrets | CLI generates and SOPS-encrypts, private age key only in the cluster, `iidp secret set` for developer-supplied values |
 | Access | `gh auth` for the CLI, direct commits to `main` of the Platform repository, Entra SSO for ArgoCD, Grafana account for Grafana Cloud, kubeconfig only for the Platform admin |
 | CLI | Go, `iidp app create` wizard with flags for non-interactive use, Create and Adopt paths, Adopt opens a PR, framework Dockerfiles for Next.js and Vite only |

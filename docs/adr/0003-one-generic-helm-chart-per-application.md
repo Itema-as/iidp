@@ -15,7 +15,7 @@ Every Application, regardless of Kind, is an instance of a single Helm chart (`c
 
 ## Consequences
 
-- Platform conventions (probes, resource sizes, labels, ingress shape, the migration PreSync Job, the login middleware) live in the chart, not in the CLI. Changing them is a chart release and a version bump in the Platform repository, never a CLI release.
+- Platform conventions (probes, resource sizes, labels, ingress shape, the migration Job that runs as a sync hook before the rollout, the login middleware) live in the chart, not in the CLI. Changing them is a chart release and a version bump in the Platform repository, never a CLI release.
 - Upgrading every Application is bumping one chart version.
 - The chart is the Platform's contract with Applications and must be tested as such: `helm template` plus kubeconform on every change, a kind-based end-to-end when `chart/` or `bootstrap/` change.
 - Static sites are not special: CI builds them into an nginx image and the chart's Static site Kind sets nginx defaults. One pipeline, one chart.
