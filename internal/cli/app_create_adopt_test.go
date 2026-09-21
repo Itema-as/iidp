@@ -507,8 +507,8 @@ func TestAppAdoptWizardAsksForRepositoryAndSkipsKindAndFramework(t *testing.T) {
 	gh := newFakeGitHub(t)
 	gh.seedAdoptRepository(t, platform.Org, "shop", "main", map[string]string{"package.json": nextJSPackageJSON})
 
-	// name, path, repository, postgres, staging, domain, size, confirm.
-	stdin := "shop\nadopt\n" + platform.Org + "/shop\nn\nn\n\n\ny\n"
+	// name, path, repository, postgres, staging, domain, login, size, confirm.
+	stdin := "shop\nadopt\n" + platform.Org + "/shop\nn\nn\n\n\n\ny\n"
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin)
 

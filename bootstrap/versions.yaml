@@ -38,6 +38,15 @@ k8sMonitoring:
   chart: 4.5.2
   repository: https://grafana.github.io/helm-charts
 
+# oauth2-proxy: the Itema login Capability's one shared ForwardAuth provider
+# for the whole Platform base domain. Newest chart release from
+# https://oauth2-proxy.github.io/manifests/index.yaml on 2026-09-21.
+oauth2Proxy:
+  chart: 10.7.0
+  # The oauth2-proxy binary the chart installs at this chart version.
+  appVersion: 7.15.3
+  repository: https://oauth2-proxy.github.io/manifests
+
 # KSOPS is a kustomize plugin, not a chart: the image ships the ksops binary
 # and a matching kustomize, installed into argocd-repo-server by an init
 # container.

@@ -285,6 +285,72 @@ func TestAppAddCapabilityRefusesDomainAlreadyListed(t *testing.T) {
 	}
 }
 
+func TestAppAddCapabilityLoginEnablesInEveryEnvironment(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url, "--staging")
+
+	stdout, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	clone := cloneMain(t, url)
+	for _, env := range []string{"prod", "staging"} {
+		values := readYAML(t, filepath.Join(clone, "applications/shop", env, "values.yaml"))
+		if got := lookup(t, values, "login", "enabled"); got != true {
+			t.Errorf("%s login.enabled = %v, want true", env, got)
+		}
+	}
+	if !strings.Contains(stdout, "Itema") {
+		t.Errorf("stdout = %q, want it to mention Itema login", stdout)
+	}
+}
+
+func TestAppAddCapabilityRefusesLoginAlreadyEnabled(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url)
+	if _, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login"); code != 0 {
+		t.Fatalf("seeding login: exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+
+	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login")
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr, "already") {
+		t.Errorf("stderr = %q, want it to say Itema login is already enabled", stderr)
+	}
+}
+
+func TestAppAddCapabilityRefusesLoginWithDomainGivenTogether(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url)
+
+	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login", "--domain", "shop.example.com")
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr, "--login") || !strings.Contains(stderr, "--domain") {
+		t.Errorf("stderr = %q, want it to name both --login and --domain", stderr)
+	}
+}
+
+func TestAppAddCapabilityRefusesLoginWhenDomainAlreadyPresent(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url, "--domain", "shop.example.com")
+
+	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login")
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr, "shop") {
+		t.Errorf("stderr = %q, want it to name the Application with the existing custom domain", stderr)
+	}
+}
+
 func TestAppAddCapabilitySizeRewritesEveryEnvironment(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url, "--staging")

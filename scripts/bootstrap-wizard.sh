@@ -861,6 +861,7 @@ EOF
 
 ENTRA_ARGOCD_TENANT="" ENTRA_ARGOCD_CLIENT_ID="" ENTRA_ARGOCD_CLIENT_SECRET=""
 ENTRA_OAUTH2_PROXY_TENANT="" ENTRA_OAUTH2_PROXY_CLIENT_ID="" ENTRA_OAUTH2_PROXY_CLIENT_SECRET=""
+ENTRA_OAUTH2_PROXY_COOKIE_SECRET=""
 ARGOCD_URL="" ARGOCD_ADMIN_GROUP=""
 OAUTH2_PROXY_HOST=""
 
@@ -903,7 +904,7 @@ stage_entra() {
   OAUTH2_PROXY_HOST="auth.${BASE_DOMAIN}"
   local argocd_redirect="https://${argocd_host}/api/dex/callback"
   local oauth2_proxy_redirect="https://${OAUTH2_PROXY_HOST}/oauth2/callback"
-  log_choice "oauth2-proxy host: ${OAUTH2_PROXY_HOST} (ticket #18 reads this from docs/implementation-notes/05-bootstrap-wizard.md)"
+  log_choice "oauth2-proxy host: ${OAUTH2_PROXY_HOST} (bootstrap/README.md, the Itema login Capability)"
 
   local sops_entra="$PLATFORM_REPO/bootstrap/sops/argocd-entra.enc.yaml"
   local skip_argocd_app=0
@@ -916,30 +917,31 @@ stage_entra() {
       ENTRA_ARGOCD_TENANT ENTRA_ARGOCD_CLIENT_ID ENTRA_ARGOCD_CLIENT_SECRET 1
   fi
 
-  say "oauth2-proxy (ticket #18, Itema login) needs its own registration now, so it"
-  say "is ready when that ticket lands."
+  local sops_oauth2_entra="$PLATFORM_REPO/bootstrap/sops/oauth2-proxy-entra.enc.yaml"
+  if [[ -f "$sops_oauth2_entra" ]] && confirm "oauth2-proxy's Entra secret is already encrypted. Keep it and skip re-creating that registration?"; then
+    note "keeping the existing oauth2-proxy Entra secret and cookie secret"
+    return 0
+  fi
+
+  say "oauth2-proxy (Itema login) needs its own registration."
   entra_register_app "iidp-oauth2-proxy" "$oauth2_proxy_redirect" "$ENTRA_ARGOCD_TENANT" \
     ENTRA_OAUTH2_PROXY_TENANT ENTRA_OAUTH2_PROXY_CLIENT_ID ENTRA_OAUTH2_PROXY_CLIENT_SECRET 0
 
-  # No Platform component consumes this yet (ticket #18 adds it); keep it out
-  # of git, in a local file next to the other tfvars, until then.
-  local oauth2_env="$IIDP_REPO_ROOT/infra/platform/oauth2-proxy-entra.env"
+  # The cookie-signing secret oauth2-proxy needs: exactly 32 bytes, as a
+  # plain string, not base64-encoded. Confirmed against the running proxy
+  # in kind: it rejects a 44-character base64 encoding of 32 random bytes
+  # with "cookie_secret must be 16, 24, or 32 bytes ... but is 44 bytes",
+  # so a value that only decodes to 32 bytes is not enough here -- the
+  # container reads the raw string given (an env var from a stringData
+  # Secret key is never base64-decoded again), so the string itself must
+  # be 32 characters. Generated fresh every time this registration is
+  # (re-)done, never asked for, never logged.
   if [[ "$DRY_RUN" == "1" ]]; then
-    dry "would write $oauth2_env (tenant/client id/secret for ticket #18)"
+    ENTRA_OAUTH2_PROXY_COOKIE_SECRET="dry-run-cookie-secret-32-bytes.."
   else
-    umask 077
-    cat > "$oauth2_env" <<EOF
-# Entra app registration for oauth2-proxy (ticket #18, Itema login).
-# Not read by anything yet; #18's component reads it, or re-runs this wizard.
-# Redirect URI: ${oauth2_proxy_redirect}
-TENANT_ID=${ENTRA_OAUTH2_PROXY_TENANT}
-CLIENT_ID=${ENTRA_OAUTH2_PROXY_CLIENT_ID}
-CLIENT_SECRET=${ENTRA_OAUTH2_PROXY_CLIENT_SECRET}
-EOF
-    chmod 600 "$oauth2_env"
-    ok "wrote oauth2-proxy Entra credentials to $oauth2_env (git-ignored)"
+    ENTRA_OAUTH2_PROXY_COOKIE_SECRET=$(head -c256 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c32)
   fi
-  MANUAL_STEPS+=("oauth2-proxy Entra credentials are saved at infra/platform/oauth2-proxy-entra.env for ticket #18")
+  ok "generated a fresh oauth2-proxy cookie secret"
 }
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1176,6 +1178,7 @@ files:
   - cloudflare-api-token-cert-manager.enc.yaml
   - cloudflare-api-token-external-dns.enc.yaml
   - grafana-cloud.enc.yaml
+  - oauth2-proxy-entra.enc.yaml
 EOF
   ok "wrote $dir/kustomization.yaml and $dir/ksops.yaml"
 }
@@ -1210,6 +1213,7 @@ write_and_encrypt_secrets() {
     dry "would write and sops-encrypt bootstrap/sops/cloudflare-api-token-cert-manager.enc.yaml"
     dry "would write and sops-encrypt bootstrap/sops/cloudflare-api-token-external-dns.enc.yaml"
     dry "would write and sops-encrypt bootstrap/sops/grafana-cloud.enc.yaml"
+    dry "would write and sops-encrypt bootstrap/sops/oauth2-proxy-entra.enc.yaml"
     return 0
   fi
 
@@ -1249,6 +1253,18 @@ write_and_encrypt_secrets() {
     ok "wrote and encrypted bootstrap/sops/grafana-cloud.enc.yaml"
   else
     note "no new Grafana Cloud values collected; leaving grafana-cloud.enc.yaml as it is"
+  fi
+
+  if [[ -n "$ENTRA_OAUTH2_PROXY_CLIENT_ID" ]]; then
+    write_secret_plaintext "$sops_dir/oauth2-proxy-entra.enc.yaml" oauth2-proxy-entra oauth2-proxy "" \
+      "  clientID: ${ENTRA_OAUTH2_PROXY_CLIENT_ID}
+  clientSecret: ${ENTRA_OAUTH2_PROXY_CLIENT_SECRET}
+  tenant: ${ENTRA_OAUTH2_PROXY_TENANT}
+  cookieSecret: ${ENTRA_OAUTH2_PROXY_COOKIE_SECRET}"
+    sops_encrypt_in_place "bootstrap/sops/oauth2-proxy-entra.enc.yaml"
+    ok "wrote and encrypted bootstrap/sops/oauth2-proxy-entra.enc.yaml"
+  else
+    note "no new oauth2-proxy Entra values collected; leaving oauth2-proxy-entra.enc.yaml as it is"
   fi
 }
 

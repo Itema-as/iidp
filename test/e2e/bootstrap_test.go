@@ -104,6 +104,11 @@ func TestBootstrap(t *testing.T) {
 		"cert-manager":        Healthy,
 		"cloudnative-pg":      Healthy,
 		"cnpg-barman-cloud":   Healthy,
+		// The dummy Entra credentials and platform.yaml's
+		// oauth2Proxy.skipOIDCDiscovery (bootstrap/README.md) are enough for
+		// the pod itself to come up Healthy in kind; only a real sign-in
+		// would need real credentials.
+		"oauth2-proxy": Healthy,
 		// Cloud-dependent: configured, applied, but nothing to talk to.
 		"platform-tls": Synced,
 		"external-dns": Synced,
@@ -120,7 +125,10 @@ func TestBootstrap(t *testing.T) {
 // ticket onward: the fixture Application shop, with a prod and a staging
 // Environment and Postgres enabled, deployed through the real bootstrap and
 // chart, its migration run, and an HTTP request through Traefik answered
-// with 200 for both hosts.
+// with 200 for both hosts. staging also has the Itema login Capability on
+// (docs/implementation-notes/18-itema-login.md), so its host is asserted to
+// redirect an unauthenticated request instead, while prod, unprotected,
+// still answers 200.
 func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 	want := map[string]Expectation{
@@ -134,12 +142,19 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 
 	for _, env := range []struct {
 		namespace, job, host string
+		protected            bool
 	}{
-		{"shop-prod", "shop-migrate", "shop.app.example.test"},
-		{"shop-staging", "shop-staging-migrate", "shop-staging.app.example.test"},
+		{"shop-prod", "shop-migrate", "shop.app.example.test", false},
+		{"shop-staging", "shop-staging-migrate", "shop-staging.app.example.test", true},
 	} {
 		if err := cluster.WaitForJobSucceeded(ctx, env.namespace, env.job, time.Minute); err != nil {
 			t.Fatal(err)
+		}
+		if env.protected {
+			if err := cluster.CheckRedirect(ctx, env.host, 2*time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			continue
 		}
 		if err := cluster.CheckHTTP200(ctx, env.host, 2*time.Minute); err != nil {
 			t.Fatal(err)

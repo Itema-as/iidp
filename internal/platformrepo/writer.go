@@ -50,6 +50,13 @@ var ErrApplicationExists = errors.New("Application already exists")
 // ErrInvalidName is wrapped by ValidateName.
 var ErrInvalidName = errors.New("invalid Application name")
 
+// LoginDomainConflictMessage is the refusal both the CLI (flag-only, before
+// anything is cloned) and the Writer (after the clone, where an existing
+// custom domain on prod can also be seen) give for --login together with a
+// custom domain: Itema login is for Platform addresses only, since its
+// cookie is scoped to the base domain.
+const LoginDomainConflictMessage = "--login cannot be combined with --domain: Itema login is for Platform addresses only, since its cookie is scoped to the base domain"
+
 var dns1035Label = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 
 // ValidateName checks that name can be an Application name: a lowercase
@@ -94,6 +101,11 @@ type Application struct {
 	// Domains are custom domains for the prod Environment only; staging
 	// keeps its Platform address (docs/implementation-notes/13-cli-capabilities.md).
 	Domains []string
+	// Login is the Itema login Capability, written into every Environment:
+	// one oauth2-proxy cookie for the Platform base domain covers both
+	// (docs/implementation-notes/18-itema-login.md). Refused together with
+	// Domains: Itema login is for Platform addresses only.
+	Login bool
 }
 
 // Result is what CreateApplication wrote and where it can be seen.
@@ -118,6 +130,8 @@ type Result struct {
 	// produced this Result (docs/implementation-notes/12-deploy-workflow.md).
 	// Zero means platform.yaml documented none.
 	DocumentedGitHubAppInstallationID int64
+	// Login is whether the Itema login Capability is enabled.
+	Login bool
 }
 
 // Writer commits Applications to the Platform repository.
@@ -241,6 +255,9 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 	if app.Postgres && (cfg.BackupsBucket == "" || cfg.ObjectStorageEndpoint == "") {
 		return Result{}, fmt.Errorf("%s in %s sets no backupsBucket or objectStorageEndpoint, needed for the Postgres Capability", ConfigFile, platform.Repository)
 	}
+	if app.Login && len(app.Domains) > 0 {
+		return Result{}, errors.New(LoginDomainConflictMessage)
+	}
 
 	prodAddress := app.Name + "." + cfg.BaseDomain
 	stagingAddress := app.Name + "-staging." + cfg.BaseDomain
@@ -296,6 +313,7 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 		Files:   files,
 		Address: "https://" + prodAddress,
 		Domains: domainPlans,
+		Login:   app.Login,
 	}
 	if app.Staging {
 		res.StagingAddress = "https://" + stagingAddress
@@ -321,6 +339,7 @@ func (w *Writer) writeEnvironment(dir string, cfg Config, app Application, envir
 		ProbePath:        app.ProbePath,
 		PostgresEnabled:  app.Postgres,
 		MigrationCommand: app.MigrationCommand,
+		Login:            app.Login,
 	}
 	if app.Postgres {
 		env.BackupsBucket = cfg.BackupsBucket

@@ -39,6 +39,15 @@ clusterName: iidp
 # only for a second Platform sharing the same zone.
 dnsOwnerId: iidp
 
+# The Itema login Capability's oauth2-proxy. skipOIDCDiscovery is for a
+# cloud-less test cluster only (kind has no route to
+# login.microsoftonline.com): it makes oauth2-proxy skip the OIDC discovery
+# call at startup and use the manual endpoints below instead, so the pod
+# still starts with a dummy tenant and client id. A real Platform leaves it
+# false and gets normal OIDC discovery against Entra ID.
+oauth2Proxy:
+  skipOIDCDiscovery: false
+
 # Where this chart lives, for the component Applications that point back at
 # it (bootstrap/components/*). The Platform repository sets both from ArgoCD's
 # build environment so they always match the pinned bootstrap revision.

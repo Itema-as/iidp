@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: oauth2-proxy-entra
+    namespace: oauth2-proxy
+    annotations:
+        kustomize.config.k8s.io/needs-hash: "false"
+type: Opaque
+stringData:
+    clientID: ENC[AES256_GCM,data:U9Wl3uVmY78o9hq9YOotWHIfSYzUw/ZDP/azpyE5yYLs777j,iv:QKNjapyo+eOWmxWLgUe5UR2a6o+zSkdmP+oRBdbVM9g=,tag:IxMnj8Up9gCqIWzlj/IdTA==,type:str]
+    clientSecret: ENC[AES256_GCM,data:BDVRHg8+42Z4dXlDTegttweCoA==,iv:Sx0w3pkBuMudYgBX3HZV/TZ1sv1rkYczQ93BG80tRmA=,tag:zqKjEmtot/7zpcUX4xu22Q==,type:str]
+    tenant: ENC[AES256_GCM,data:UjM3c/5yV4HKrCBykmiiirnjTTQdb4zidpqS4UPniSpI2zWu,iv:Q4iD3moCMhAomw83MXQbHFBDMEJkksRIrMTcptEeMTI=,tag:sV2evq6gg3Si9hwaCXsFUA==,type:str]
+    cookieSecret: ENC[AES256_GCM,data:88lElU0p7o8ztyItrf4oWVXLo/44GOtE4L0vsD9zl0Q=,iv:ggs78LZolMMSJFo+7cSnvAHjdsJaYyZIapdmmszRYzM=,tag:ei19KHlYUBFeekqYAmVmDw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB5dDFBQzNENTkyMWMyamtC
+            dS9Uc09CV2w5cUk4c1M5V2lMam82SUg5OGpnCktVUnp2SnNFUTN0Z2lnbnJLbi9j
+            TkhiRUhIRWVkbG8zYVpZSTJ4KzdVZXMKLS0tIDhFVnlNeUNWd1NmeHJqNGdzY0J4
+            TXRHSy9ZSXBGcFVvTWlwOXdDOWI3YW8KhHwukx1M8k6ZnWKnZcXtcxux94sOlUBt
+            y4/t1fAtv+nSOE+wFn6hkuPoG81TI76gRscQryjDSaDocX6BoIWOEA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-22T01:48:58Z"
+    mac: ENC[AES256_GCM,data:vkRKd0+JbOFDd1uaIgt9H8p7s9Pe2Tvcc6Hy/wqdtAgBiFUOnv2fZ5CzljENu3MlUspP5Q6bdCfdXMREZPc3vPGWFNHEBMeOiigrWD5dGUrrIlwYC5j6gUYPALR+t98RB7aUI1vg/4ugRJe7f3YG72dXVUVYGgzQIbFKzXA6unA=,iv:q99eTRkH79DNWe3E2G+8HTlXgtzBq7DR28UJYz4GzJs=,tag:FA2fNA55A25Dyb3ve8CZSA==,type:str]
+    version: 3.13.3

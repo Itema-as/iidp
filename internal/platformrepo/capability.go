@@ -45,6 +45,9 @@ type Capabilities struct {
 	Domains []string
 	// Size, when not "", is the new size for every Environment.
 	Size string
+	// Login is the Itema login Capability, added to every Environment the
+	// Application already has (docs/implementation-notes/18-itema-login.md).
+	Login bool
 }
 
 // environmentState is the handful of values AddCapabilities reads back out
@@ -56,6 +59,9 @@ type environmentState struct {
 	} `yaml:"postgres"`
 	Domains []string `yaml:"domains"`
 	Size    string   `yaml:"size"`
+	Login   struct {
+		Enabled bool `yaml:"enabled"`
+	} `yaml:"login"`
 }
 
 // AddCapabilities adds caps to application's existing Environments: it
@@ -110,6 +116,12 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 	}
 	if caps.Postgres && (cfg.BackupsBucket == "" || cfg.ObjectStorageEndpoint == "") {
 		return Result{}, fmt.Errorf("%s in %s sets no backupsBucket or objectStorageEndpoint, needed for the Postgres Capability", ConfigFile, platform.Repository)
+	}
+	if caps.Login && len(caps.Domains) > 0 {
+		return Result{}, errors.New(LoginDomainConflictMessage)
+	}
+	if caps.Login && len(prod.Domains) > 0 {
+		return Result{}, fmt.Errorf("--login is refused: %q already has a custom domain, and Itema login is for Platform addresses only, since its cookie is scoped to the base domain", application)
 	}
 
 	platformAddresses := []string{application + "." + cfg.BaseDomain}
@@ -173,6 +185,7 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		Files:   files,
 		Address: "https://" + application + "." + cfg.BaseDomain,
 		Domains: domainPlans,
+		Login:   caps.Login || prod.Login.Enabled,
 	}
 	if stagingExists || caps.Staging {
 		res.StagingAddress = "https://" + application + "-staging." + cfg.BaseDomain
@@ -191,6 +204,9 @@ func checkCapabilitiesAbsent(application string, caps Capabilities, prod environ
 	}
 	if caps.Size != "" && caps.Size == prod.Size {
 		return fmt.Errorf("%w: %q is already size %q", ErrCapabilityExists, application, caps.Size)
+	}
+	if caps.Login && prod.Login.Enabled {
+		return fmt.Errorf("%w: Itema login is already enabled for %q", ErrCapabilityExists, application)
 	}
 	for _, host := range caps.Domains {
 		for _, existing := range prod.Domains {
@@ -217,6 +233,13 @@ func applyCapabilitiesToEnvironment(dir, application, environment string, caps C
 	changed := false
 	if caps.Postgres {
 		data, err = render.EnablePostgres(data, caps.MigrationCommand, cfg.BackupsBucket, cfg.ObjectStorageEndpoint)
+		if err != nil {
+			return nil, nil, err
+		}
+		changed = true
+	}
+	if caps.Login {
+		data, err = render.EnableLogin(data)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -304,6 +327,9 @@ func capabilityNames(caps Capabilities) []string {
 	}
 	if caps.Size != "" {
 		names = append(names, "size")
+	}
+	if caps.Login {
+		names = append(names, "login")
 	}
 	return names
 }

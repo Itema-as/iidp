@@ -1,0 +1,189 @@
+{{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
+{{- $host := printf "auth.%s" .Values.baseDomain }}
+# The Itema login Capability's one shared oauth2-proxy: it fronts every
+# Application whose values.yaml sets login.enabled, issuing one cookie for
+# the whole Platform base domain so signing in once covers every protected
+# Environment. Entra ID credentials (client id, client secret, tenant) and a
+# cookie-signing secret come from the SOPS-encrypted Secret
+# oauth2-proxy/oauth2-proxy-entra (bootstrap/README.md); nothing about them
+# is in git in the clear.
+#
+# Provider: entra-id, the dedicated Microsoft Entra ID provider (current
+# oauth2-proxy documentation, "Configuration > Providers > Microsoft Entra
+# ID"), fully OIDC-compliant, in place of the legacy "azure" provider. It is
+# set through alphaConfig rather than the classic --provider/--client-id
+# flags because the issuer URL has to be built from the tenant id, which
+# only the Secret holds: oauth2-proxy's own alpha config loader expands
+# ${VAR} tokens against the container's environment when it reads
+# oauth2_proxy.yml (documented under "Configuration > Alpha Configuration
+# Usage > Environment variable substitution"; the chart's own
+# oauth2-proxy.alpha-config helper passes configData through untouched, so
+# these tokens reach oauth2-proxy exactly as written, not expanded by Helm).
+# The three ENTRA_* env names below are therefore this component's own
+# choice, wired through extraEnv from the Secret's clientID/clientSecret/
+# tenant keys; OAUTH2_PROXY_COOKIE_SECRET is oauth2-proxy's own classic env
+# var for the session-cookie signing key (unaffected by alphaConfig, which
+# only replaces provider/upstream configuration), sourced the same way from
+# the Secret's cookieSecret key. proxyVarsAsSecrets is turned off because
+# the chart's own client-id/client-secret/cookie-secret Secret mechanism
+# expects fixed kebab-case keys this component does not use.
+#
+# email_domains: "*": any account of the tenant may sign in (the single-
+# tenant issuer URL is what actually restricts sign-in to Itema's tenant;
+# email_domains is not a second, narrower filter on top of that). This is
+# oauth2-proxy's own default (config.emailDomains) and needs no override.
+#
+# The classic --set-xauthrequest flag is documented as incompatible with
+# alphaConfig ("Using Alpha Configuration > How to inject custom headers":
+# "legacy flags such as pass-user-headers and set-xauthrequest are
+# incompatible and should be removed"), and using it crash-loops the
+# container ("unknown flag: --set-xauthrequest") once alphaConfig is
+# enabled. injectResponseHeaders is the alpha-config equivalent, added to
+# the response oauth2-proxy gives Traefik's ForwardAuth request; the
+# Application receives the user's email in X-Auth-Request-Email, listed in
+# the itema-login-auth Middleware's authResponseHeaders
+# (components/oauth2-proxy-login/middleware.yaml). The claimSource nesting
+# (rather than a bare "claim:") is the shape "Migrate Header Injections"
+# documents as required since oauth2-proxy v7.14.0, older than the
+# appVersion this chart installs (versions.yaml).
+#
+# Traefik pattern: current oauth2-proxy documentation
+# ("Configuration > Integrations > Traefik") shows two ForwardAuth shapes:
+# one middleware pointed at oauth2-proxy's root address, relying on Traefik
+# forwarding a 3xx from the auth server verbatim instead of erroring; and a
+# two-middleware shape (ForwardAuth against /oauth2/auth, which answers
+# 401/403 with no redirect, chained with an `errors` middleware rewriting
+# that into a redirect to /oauth2/sign_in?rd=...). The root-address shape
+# was tried first (it needs only one middleware, which is all the ticket's
+# acceptance criteria describe) and rejected: in a real kind run, hitting
+# it unauthenticated came back 403 rather than the redirect the docs'
+# example describes, with this component's alpha-config static upstream.
+# Traefik's router.middlewares annotation accepts a comma-separated list,
+# so the chart's Ingress instead names both itema-login-errors and
+# itema-login-auth (components/oauth2-proxy-login/middleware.yaml) -- the
+# documented, well-tested /oauth2/auth contract instead of the root
+# address's less predictable one.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: oauth2-proxy
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: {{ $v.oauth2Proxy.repository }}
+      chart: oauth2-proxy
+      targetRevision: {{ $v.oauth2Proxy.chart | quote }}
+      helm:
+        releaseName: oauth2-proxy
+        valuesObject:
+          fullnameOverride: oauth2-proxy
+          replicaCount: 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          proxyVarsAsSecrets: false
+          extraEnv:
+            - name: ENTRA_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-entra
+                  key: clientID
+            - name: ENTRA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-entra
+                  key: clientSecret
+            - name: ENTRA_TENANT
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-entra
+                  key: tenant
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-entra
+                  key: cookieSecret
+          alphaConfig:
+            enabled: true
+            configData:
+              providers:
+                - id: itema-entra
+                  provider: entra-id
+                  clientID: ${ENTRA_CLIENT_ID}
+                  clientSecret: ${ENTRA_CLIENT_SECRET}
+                  {{- if .Values.oauth2Proxy.skipOIDCDiscovery }}
+                  # kind only: no route to login.microsoftonline.com, so
+                  # oauth2-proxy must not try OIDC discovery at startup.
+                  # loginURL/redeemURL are Provider-level fields (sibling to
+                  # oidcConfig, confirmed by the current alpha-config schema
+                  # rejecting them inside oidcConfig: "'providers[0].oidcConfig'
+                  # has invalid keys: loginURL, redeemURL"); jwksURL is part
+                  # of oidcConfig. These endpoints are never reached by the
+                  # kind end-to-end test, which only proves the
+                  # unauthenticated redirect to /oauth2/start, not a real
+                  # sign-in.
+                  loginURL: https://oauth2-proxy-entra.invalid/authorize
+                  redeemURL: https://oauth2-proxy-entra.invalid/token
+                  {{- end }}
+                  oidcConfig:
+                    issuerURL: https://login.microsoftonline.com/${ENTRA_TENANT}/v2.0
+                    emailClaim: email
+                    groupsClaim: groups
+                    userIDClaim: email
+                    {{- if .Values.oauth2Proxy.skipOIDCDiscovery }}
+                    skipDiscovery: true
+                    jwksURL: https://oauth2-proxy-entra.invalid/keys
+                    {{- end }}
+                  scope: openid email profile
+              upstreamConfig:
+                upstreams:
+                  - id: itema-login
+                    path: /
+                    static: true
+                    staticCode: 200
+              injectResponseHeaders:
+                - name: X-Auth-Request-User
+                  values:
+                    - claimSource:
+                        claim: user
+                - name: X-Auth-Request-Email
+                  values:
+                    - claimSource:
+                        claim: email
+                - name: X-Auth-Request-Preferred-Username
+                  values:
+                    - claimSource:
+                        claim: preferred_username
+                - name: X-Auth-Request-Groups
+                  values:
+                    - claimSource:
+                        claim: groups
+          extraArgs:
+            reverse-proxy: "true"
+            cookie-domain: {{ printf ".%s" .Values.baseDomain | quote }}
+            whitelist-domain: {{ printf ".%s" .Values.baseDomain | quote }}
+            redirect-url: {{ printf "https://%s/oauth2/callback" $host | quote }}
+            cookie-secure: "true"
+          ingress:
+            enabled: true
+            className: traefik
+            annotations:
+              traefik.ingress.kubernetes.io/router.entrypoints: websecure
+              traefik.ingress.kubernetes.io/router.tls: "true"
+            hosts:
+              - {{ $host }}
+            tls:
+              - hosts:
+                  - {{ $host }}
+    - repoURL: {{ .Values.bootstrap.repoURL }}
+      targetRevision: {{ .Values.bootstrap.targetRevision }}
+      path: bootstrap/components/oauth2-proxy-login
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: oauth2-proxy
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list) | nindent 4 }}

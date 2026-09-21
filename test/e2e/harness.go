@@ -389,9 +389,50 @@ func (c *Cluster) WaitForJobSucceeded(ctx context.Context, namespace, name strin
 // kind, so there is no certificate to validate against. It retries until
 // timeout.
 func (c *Cluster) CheckHTTP200(ctx context.Context, host string, timeout time.Duration) error {
+	return c.pollGET(ctx, host, timeout, func(resp *http.Response) (ok, retry bool, message string) {
+		if resp.StatusCode != http.StatusOK {
+			return false, true, resp.Status
+		}
+		return true, false, resp.Status
+	})
+}
+
+// CheckRedirect requests "/" on host through Traefik's websecure entrypoint,
+// the same way CheckHTTP200 does, but expects a redirect (a 3xx status)
+// instead of following it: it is what an unauthenticated request to a
+// login.enabled host should get from the itema-login ForwardAuth middleware
+// (a straight 5xx instead would mean oauth2-proxy itself is not up). It
+// retries until timeout, and fails if any response is neither the wanted
+// redirect nor a plain connection error (a non-3xx, non-5xx status is not
+// something retrying will fix).
+func (c *Cluster) CheckRedirect(ctx context.Context, host string, timeout time.Duration) error {
+	return c.pollGET(ctx, host, timeout, func(resp *http.Response) (ok, retry bool, message string) {
+		if resp.StatusCode >= 500 {
+			return false, true, resp.Status + " (oauth2-proxy is likely not up yet)"
+		}
+		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+			return false, false, resp.Status + ", want a redirect (3xx)"
+		}
+		return true, false, resp.Status + " -> " + resp.Header.Get("Location")
+	})
+}
+
+// pollGET is the shared polling shape CheckHTTP200 and CheckRedirect build
+// on: GET "/" on host through Traefik's websecure entrypoint (mapped to
+// HTTPSPort on the host), certificate verification disabled (kind's Traefik
+// falls back to its own default certificate, since no cloud DNS-01 issuer
+// can complete inside kind). Redirects are never followed (CheckHTTP200
+// never sees one; CheckRedirect wants to see it directly). want inspects
+// the response and reports whether it is the wanted one; when it is not,
+// retry says whether polling again could still produce it (an unready
+// oauth2-proxy, say) as opposed to a wrong status entirely, which fails the
+// check immediately instead of waiting out the full timeout. A failure to
+// connect at all is always retried.
+func (c *Cluster) pollGET(ctx context.Context, host string, timeout time.Duration, want func(resp *http.Response) (ok, retry bool, message string)) error {
 	client := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // kind has no real certificate to check
+		Timeout:       10 * time.Second,
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // kind has no real certificate to check
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	url := fmt.Sprintf("https://127.0.0.1:%d/", c.HTTPSPort)
 	var lastErr error
@@ -408,11 +449,16 @@ func (c *Cluster) CheckHTTP200(ctx context.Context, host string, timeout time.Du
 				return false, nil
 			}
 			resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				lastErr = fmt.Errorf("GET %s (Host: %s): %s", url, host, resp.Status)
-				return false, nil
+			ok, retry, message := want(resp)
+			if !ok {
+				err := fmt.Errorf("GET %s (Host: %s): %s", url, host, message)
+				if retry {
+					lastErr = err
+					return false, nil
+				}
+				return false, err
 			}
-			c.Log("GET %s (Host: %s): %s", url, host, resp.Status)
+			c.Log("GET %s (Host: %s): %s", url, host, message)
 			return true, nil
 		},
 		func() error { return lastErr })

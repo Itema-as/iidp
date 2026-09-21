@@ -379,6 +379,42 @@ func TestAppCreateCustomDomainOnlyAppliesToProd(t *testing.T) {
 	}
 }
 
+func TestAppCreateLoginEnablesInEveryEnvironment(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+
+	stdout, stderr, code := createApplication(t, url, cli.Dependencies{},
+		"--name", "shop", "--kind", "web-service", "--staging", "--login")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	clone := cloneMain(t, url)
+	for _, env := range []string{"prod", "staging"} {
+		values := readYAML(t, filepath.Join(clone, "applications/shop", env, "values.yaml"))
+		if got := lookup(t, values, "login", "enabled"); got != true {
+			t.Errorf("%s values.yaml login.enabled = %v, want true", env, got)
+		}
+	}
+	if !strings.Contains(stdout, "Itema") {
+		t.Errorf("stdout = %q, want it to mention Itema login", stdout)
+	}
+}
+
+func TestAppCreateLoginRefusedWithCustomDomain(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+
+	_, stderr, code := createApplication(t, url, cli.Dependencies{},
+		"--name", "shop", "--kind", "web-service", "--login", "--domain", "shop.example.com")
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr, "--login") || !strings.Contains(stderr, "--domain") {
+		t.Errorf("stderr = %q, want it to name both --login and --domain", stderr)
+	}
+	assertNoApplications(t, url)
+}
+
 func TestAppCreateAllCapabilitiesCombined(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 

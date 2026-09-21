@@ -2,7 +2,7 @@
 
 The generic Helm chart every Application on Itema's Platform is an instance of ([ADR-0003](../../docs/adr/0003-one-generic-helm-chart-per-application.md)). The Platform repository holds, per Environment, one ArgoCD Application pointing at a pinned version of this chart and one values file; that values file is the Environment's whole definition. The CLI writes it, developers do not edit it by hand, and every Platform convention lives in the templates here rather than in the CLI.
 
-Today the chart renders both Kinds, Web service and Static site, as a Deployment, a Service and an Ingress on a Platform address served with the Platform's wildcard certificate; custom domains, each with the right certificate; and named Secrets as environment variables. With the Postgres Capability on it also renders the Environment's own CloudNativePG database with continuous backups, injects `DATABASE_URL`, and runs the migration command before every rollout. Itema login is added by a later ticket.
+Today the chart renders both Kinds, Web service and Static site, as a Deployment, a Service and an Ingress on a Platform address served with the Platform's wildcard certificate; custom domains, each with the right certificate; and named Secrets as environment variables. With the Postgres Capability on it also renders the Environment's own CloudNativePG database with continuous backups, injects `DATABASE_URL`, and runs the migration command before every rollout. With the Itema login Capability on, the Platform address's Ingress is annotated for the bootstrap's shared oauth2-proxy, so an Entra ID sign-in is required to reach it.
 
 ## Values
 
@@ -27,6 +27,7 @@ Today the chart renders both Kinds, Web service and Static site, as a Deployment
 | `postgres.enabled` | `false` | The Postgres Capability. See below. Needs `kind: web-service`; a Static site with it fails rendering. |
 | `postgres.migrationCommand` | `""` | A shell line run from the Application image, with `DATABASE_URL` set, before every rollout. Empty means no migrations. Setting it without `postgres.enabled` fails rendering. |
 | `postgres.backupRetention` | `30d` | How long backups and WAL are kept in the bucket: a number of days (`d`), weeks (`w`) or months (`m`). |
+| `login.enabled` | `false` | The Itema login Capability. See below. Platform addresses only: fails rendering when `domains` is non-empty. |
 
 ## Conventions the chart encodes
 
@@ -53,6 +54,8 @@ DNS is not the chart's business. external-dns creates the records for hosts in z
 
 **Secrets.** Each name in `secrets` becomes an `envFrom.secretRef` on the container, so every key of the Secret is an environment variable. The chart never renders a Secret and never sees a value: the CLI writes them SOPS-encrypted next to the values file, and KSOPS decrypts them on the Platform.
 
+**Itema login.** With `login.enabled`, the Platform address's Ingress (never the `-http01` one) carries `traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-itema-login-errors@kubernetescrd,oauth2-proxy-itema-login-auth@kubernetescrd`, the bootstrap's ForwardAuth middleware for the shared oauth2-proxy plus the `errors` middleware that turns its 401/403 into a sign-in redirect (`bootstrap/README.md`). One sign-in against Entra ID, cookied for the Platform base domain, covers every protected Environment. Refused at render time when `domains` is non-empty: the cookie is scoped to the base domain, so Itema login only makes sense on Platform addresses, never a custom domain.
+
 **Labels.** Every object, and the Pod template, carries `app.kubernetes.io/name` (the Application), `app.kubernetes.io/instance` (the Environment's object name, `<name>` or `<name>-staging`), `iidp.itema.no/application` and `iidp.itema.no/environment`. Grafana Alloy attributes logs and metrics by the last two. The Service and the Deployment select Pods by the first two, which never change between chart versions.
 
 **Replicas.** One. The Platform is a single node; there is nothing to spread over.
@@ -71,6 +74,7 @@ helm template shop chart/application --values chart/application/testdata/staging
 helm template brochure chart/application --values chart/application/testdata/static-site.yaml
 helm template shop chart/application --values chart/application/testdata/custom-domains-mixed.yaml
 helm template shop chart/application --values chart/application/testdata/postgres-prod.yaml
+helm template shop chart/application --values chart/application/testdata/login-enabled.yaml
 ```
 
 Or with your own values:
@@ -91,7 +95,7 @@ helm lint --strict chart/application --values chart/application/testdata/prod-sm
 
 ## Tests
 
-`chart_test.go` is a Go test package that shells out to `helm template` with the fixtures in `testdata/`, parses the rendered manifests, and asserts on them: each size's resources, the prod and staging hosts, the default and an overridden probe path, the injected `PORT`, the labels, the wildcard host naming no secret, and that unknown sizes, unknown Kinds and bad names are refused. `static_site_test.go` covers the Static site Kind (port 80, no `PORT`, the probes) and `domains_test.go` covers custom domains under and outside the wildcard, the second Ingress, secrets as `envFrom`, and the refused domains. `postgres_test.go` covers the Postgres Capability with the same helpers: nothing database-related renders with it off, the Cluster's shape, `DATABASE_URL` from the app Secret, the backup configuration, the migration Job present only with a command and ordered before the Application's objects, that only the Deployment's Pods match the Service, and the refusals. Each runs `kubeconform -strict` on its fixtures' rendered output against the Kubernetes minor of the k3s release pinned in `infra/platform/variables.tf`, so the node's version is the only pin; the Postgres run adds the CloudNativePG and Barman Cloud CRD schemas from the datreeio CRDs-catalog as a second schema location. The tests skip themselves when `helm` or `kubeconform` is not on `PATH`, so `go test ./...` passes on any machine; the `Chart` job in CI installs both, sets `IIDP_REQUIRE_CHART_TOOLS` so a missing tool fails instead of skipping, and runs them on every pull request.
+`chart_test.go` is a Go test package that shells out to `helm template` with the fixtures in `testdata/`, parses the rendered manifests, and asserts on them: each size's resources, the prod and staging hosts, the default and an overridden probe path, the injected `PORT`, the labels, the wildcard host naming no secret, and that unknown sizes, unknown Kinds and bad names are refused. `static_site_test.go` covers the Static site Kind (port 80, no `PORT`, the probes) and `domains_test.go` covers custom domains under and outside the wildcard, the second Ingress, secrets as `envFrom`, and the refused domains. `postgres_test.go` covers the Postgres Capability with the same helpers: nothing database-related renders with it off, the Cluster's shape, `DATABASE_URL` from the app Secret, the backup configuration, the migration Job present only with a command and ordered before the Application's objects, that only the Deployment's Pods match the Service, and the refusals. `login_test.go` covers the Itema login Capability: the ForwardAuth middleware annotation present on the Platform address's Ingress only when `login.enabled`, absent otherwise, and the refusal with a custom domain. Each runs `kubeconform -strict` on its fixtures' rendered output against the Kubernetes minor of the k3s release pinned in `infra/platform/variables.tf`, so the node's version is the only pin; the Postgres run adds the CloudNativePG and Barman Cloud CRD schemas from the datreeio CRDs-catalog as a second schema location. The tests skip themselves when `helm` or `kubeconform` is not on `PATH`, so `go test ./...` passes on any machine; the `Chart` job in CI installs both, sets `IIDP_REQUIRE_CHART_TOOLS` so a missing tool fails instead of skipping, and runs them on every pull request.
 
 ```sh
 go test ./chart/...

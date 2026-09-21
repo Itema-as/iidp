@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,7 @@ type addCapabilityOptions struct {
 	staging          bool
 	domains          []string
 	size             string
+	login            bool
 	platformRepo     string
 }
 
@@ -41,7 +43,10 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 			"--postgres enables Postgres in every Environment the Application already\n" +
 			"has. --staging adds a second Environment next to prod, copying prod's\n" +
 			"values (its secrets are not copied). --domain (repeatable) adds a custom\n" +
-			"domain to prod. --size changes the size of every Environment.",
+			"domain to prod. --size changes the size of every Environment. --login\n" +
+			"requires Itema (Entra ID) sign-in on the Platform addresses, in every\n" +
+			"Environment; refused together with --domain, or when a custom domain is\n" +
+			"already present.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAppAddCapability(cmd, args[0], opts, deps)
@@ -55,6 +60,7 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod, copying prod's values (its secrets are not copied)")
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to add to prod (repeatable)")
 	f.StringVar(&opts.size, "size", "", "New size for every Environment: small, medium or large")
+	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on the Platform addresses, in every Environment; refused together with --domain, or when a custom domain is already present")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
 	return cmd
@@ -68,14 +74,17 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 	// or --staging=false is "changed" but asks for nothing, and would
 	// otherwise reach AddCapabilities with an all-zero Capabilities and no
 	// file to commit.
-	if !opts.postgres && !opts.staging && len(opts.domains) == 0 && opts.size == "" {
-		return fmt.Errorf("at least one Capability flag is required: --postgres, --staging, --domain or --size")
+	if !opts.postgres && !opts.staging && len(opts.domains) == 0 && opts.size == "" && !opts.login {
+		return fmt.Errorf("at least one Capability flag is required: --postgres, --staging, --domain, --size or --login")
 	}
 	if opts.migrationCommand != "" && !opts.postgres {
 		return fmt.Errorf("--migration-command requires --postgres: there is no database to migrate")
 	}
 	if opts.size != "" && !slices.Contains(sizes, opts.size) {
 		return fmt.Errorf("unknown size %q: --size must be %s", opts.size, strings.Join(sizes, ", "))
+	}
+	if opts.login && len(opts.domains) > 0 {
+		return errors.New(platformrepo.LoginDomainConflictMessage)
 	}
 
 	out := cmd.OutOrStdout()
@@ -98,6 +107,7 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 		Staging:          opts.staging,
 		Domains:          opts.domains,
 		Size:             opts.size,
+		Login:            opts.login,
 	}, out)
 	if err != nil {
 		return err
@@ -122,6 +132,9 @@ func capabilitySummary(opts addCapabilityOptions) []string {
 	}
 	if opts.size != "" {
 		s = append(s, "size "+opts.size)
+	}
+	if opts.login {
+		s = append(s, "login")
 	}
 	return s
 }
@@ -178,6 +191,9 @@ func printAddCapabilityResult(out io.Writer, name string, res platformrepo.Resul
 	fmt.Fprintf(out, "\n  prod:     %s\n", res.Address)
 	if res.StagingAddress != "" {
 		fmt.Fprintf(out, "  staging:  %s\n", res.StagingAddress)
+	}
+	if res.Login {
+		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
 	}
 	printDomains(out, res)
 }
