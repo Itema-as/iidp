@@ -1,12 +1,12 @@
 application:
   name: brochure
-environment: prod
+environment: staging
 platform:
   baseDomain: app.itma.no
 kind: static-site
 image:
   repository: ghcr.io/itema-as/brochure
-  tag: 1.0.0
-size: medium
-env:
-  SITE_ORIGIN: https://brochure.app.itma.no
+  tag: 0d1c2b3a4f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9c
+size: small
+probe:
+  path: /healthz.html

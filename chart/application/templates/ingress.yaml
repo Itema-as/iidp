@@ -1,4 +1,5 @@
 {{- include "application.validate" . -}}
+{{- $domains := include "application.domains" . | fromJson -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -13,19 +14,20 @@ metadata:
 spec:
   ingressClassName: traefik
   tls:
+    # No secretName: the Platform's wildcard certificate is Traefik's default
+    # certificate (the bootstrap's TLSStore), served for every host that
+    # names no certificate of its own. Custom domains directly under the
+    # base domain are covered by it too. Hosts that are not go on the
+    # ingress-http01.yaml Ingress with certificates of their own.
     - hosts:
         - {{ include "application.host" . }}
-      # The Platform's wildcard certificate, written by the bootstrap's
-      # cert-manager Certificate. Traefik reads it from this namespace.
-      secretName: {{ .Values.platform.wildcardTLSSecret }}
+        {{- range $domains.wildcard }}
+        - {{ . }}
+        {{- end }}
   rules:
     - host: {{ include "application.host" . }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "application.fullname" . }}
-                port:
-                  number: {{ include "application.port" . }}
+      {{- include "application.ingressPaths" . | nindent 6 }}
+    {{- range $domains.wildcard }}
+    - host: {{ . }}
+      {{- include "application.ingressPaths" $ | nindent 6 }}
+    {{- end }}

@@ -16,13 +16,13 @@ platform:
   # The Platform base domain. Platform addresses are <name>.<baseDomain>
   # for prod and <name>-staging.<baseDomain> for staging. Required.
   baseDomain: ""
-  # The TLS secret holding the Platform's wildcard certificate, written by
-  # the bootstrap's cert-manager Certificate. It must exist in the namespace
-  # the Application is installed into.
-  wildcardTLSSecret: wildcard-tls
+  # The cert-manager ClusterIssuer that issues a certificate over HTTP-01
+  # for a custom domain the Platform's wildcard does not cover. Created by
+  # the bootstrap.
+  httpIssuer: letsencrypt-http01
 
-# What the Application fundamentally is. Only web-service renders today;
-# static-site is reserved and fails clearly until it is implemented.
+# What the Application fundamentally is: web-service (a container listening
+# on port) or static-site (an nginx image built by CI, listening on 80).
 kind: web-service
 
 image:
@@ -45,3 +45,16 @@ probe:
 
 # Plain environment variables, name to value. Secrets do not go here.
 env: {}
+
+# Names of Kubernetes Secrets in the Environment's namespace whose keys are
+# all exposed to the container as environment variables. The CLI writes
+# them SOPS-encrypted next to this file; the chart never renders a Secret.
+secrets: []
+
+# Custom domains, one hostname each, served in addition to the Platform
+# address. A host directly under platform.baseDomain is covered by the
+# Platform's wildcard certificate; any other host gets its own certificate
+# from platform.httpIssuer. DNS is not the chart's business: external-dns
+# creates records for zones on Cloudflare, anything else needs a CNAME to
+# the Platform address.
+domains: []

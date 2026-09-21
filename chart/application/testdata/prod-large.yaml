@@ -3,7 +3,6 @@ application:
 environment: prod
 platform:
   baseDomain: app.itma.no
-  wildcardTLSSecret: platform-wildcard-tls
 kind: web-service
 image:
   repository: ghcr.io/itema-as/warehouse

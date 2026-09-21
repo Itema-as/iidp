@@ -1,0 +1,19 @@
+application:
+  name: shop
+environment: staging
+platform:
+  baseDomain: app.itma.no
+  httpIssuer: letsencrypt-staging-http01
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e
+size: medium
+port: 8080
+domains:
+  # Directly under the base domain: covered by the wildcard.
+  - butikk-staging.app.itma.no
+  # Two labels under the base domain: a wildcard covers one label only.
+  - test.shop.app.itma.no
+  # On the Platform's own zone but not under the base domain.
+  - shop-staging.itma.no

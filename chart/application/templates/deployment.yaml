@@ -22,13 +22,28 @@ spec:
             - name: http
               containerPort: {{ include "application.port" . }}
               protocol: TCP
+          {{- $webService := eq (include "application.kind" .) "web-service" }}
+          {{- if or $webService .Values.env }}
           env:
+            {{- if $webService }}
             - name: PORT
               value: {{ include "application.port" . | quote }}
+            {{- end }}
             {{- range $name, $value := .Values.env }}
             - name: {{ $name | quote }}
               value: {{ $value | toString | quote }}
             {{- end }}
+          {{- end }}
+          {{- with .Values.secrets }}
+          # Every key of each named Secret becomes an environment variable.
+          # The Secrets themselves are SOPS-encrypted next to the values file
+          # in the Platform repository; the chart never sees their contents.
+          envFrom:
+            {{- range . }}
+            - secretRef:
+                name: {{ . | toString | quote }}
+            {{- end }}
+          {{- end }}
           readinessProbe:
             httpGet:
               path: {{ .Values.probe.path | quote }}
