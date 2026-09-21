@@ -17,4 +17,9 @@ const (
 
 	// Repository is the Platform repository as "owner/name".
 	Repository = Org + "/" + RepositoryName
+
+	// RepositoryURL is the git URL the CLI clones and pushes, and the URL
+	// the ArgoCD Applications it writes name as their values source. It is
+	// the same URL the bootstrap's root Application reconciles from.
+	RepositoryURL = "https://github.com/" + Repository + ".git"
 )
