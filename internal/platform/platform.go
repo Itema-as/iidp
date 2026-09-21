@@ -7,6 +7,12 @@
 // appear in code.
 package platform
 
+import "strings"
+
+// Registry is the GHCR namespace of Org, where Application images and the
+// generic chart are pushed: ghcr.io/<org> in lowercase, as GHCR wants it.
+var Registry = "ghcr.io/" + strings.ToLower(Org)
+
 const (
 	// Org is the GitHub org that owns the Platform repository and the
 	// Application repositories the CLI creates.
@@ -17,4 +23,9 @@ const (
 
 	// Repository is the Platform repository as "owner/name".
 	Repository = Org + "/" + RepositoryName
+
+	// RepositoryURL is the git URL the CLI clones and pushes, and the URL
+	// the ArgoCD Applications it writes name as their values source. It is
+	// the same URL the bootstrap's root Application reconciles from.
+	RepositoryURL = "https://github.com/" + Repository + ".git"
 )

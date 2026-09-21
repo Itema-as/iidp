@@ -7,20 +7,39 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Itema-as/iidp/internal/github"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/version"
 )
+
+// Dependencies are the CLI's boundaries with the outside world that tests
+// replace. A zero value means the real thing.
+type Dependencies struct {
+	// TokenSource yields the GitHub token; nil means the gh CLI.
+	TokenSource github.TokenSource
+	// BeforePush, when set, runs between committing to the Platform
+	// repository and each push attempt. Tests use it to move main.
+	BeforePush func() error
+}
 
 // Run executes the CLI with the given arguments (excluding the program name)
 // and streams, and returns the process exit code. main calls it with the real
 // process streams; tests call it with buffers.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return RunWith(args, stdin, stdout, stderr, Dependencies{})
+}
+
+// RunWith is Run with the CLI's external dependencies replaced.
+func RunWith(args []string, stdin io.Reader, stdout, stderr io.Writer, deps Dependencies) int {
 	// cobra treats SetArgs(nil) as "use os.Args[1:]", which would let a caller
 	// passing nil escape the in-process seam. An empty slice means no arguments.
 	if args == nil {
 		args = []string{}
 	}
-	root := newRootCommand()
+	if deps.TokenSource == nil {
+		deps.TokenSource = github.GhCLI{}
+	}
+	root := newRootCommand(deps)
 	root.SetArgs(args)
 	root.SetIn(stdin)
 	root.SetOut(stdout)
@@ -31,7 +50,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func newRootCommand() *cobra.Command {
+func newRootCommand(deps Dependencies) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "iidp",
 		Short: "Create and change Applications on Itema's Platform",
@@ -41,6 +60,7 @@ func newRootCommand() *cobra.Command {
 		SilenceUsage: true,
 	}
 	root.AddCommand(newVersionCommand())
+	root.AddCommand(newAppCommand(deps))
 	return root
 }
 
