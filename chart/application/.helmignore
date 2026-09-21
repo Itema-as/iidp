@@ -1,6 +1,6 @@
 # Kept out of the packaged chart: the tests and their fixtures live next to
 # the templates so there is one test runner, but they are not part of what
 # the Platform repository pulls.
-chart_test.go
+*_test.go
 testdata/
 .DS_Store

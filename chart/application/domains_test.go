@@ -198,7 +198,7 @@ func TestSecretsAreMountedAsEnvFromByName(t *testing.T) {
 	}
 
 	// Plain env is still there beside them, and the chart renders no
-	// Secret of its own: the SOPS-decrypted Secrets sit next to the values
+	// Secret of its own: the SOPS-encrypted Secrets sit next to the values
 	// file in the Platform repository.
 	if vars := envVars(t, c); vars["NODE_ENV"] != "production" || vars["PORT"] != "3000" {
 		t.Errorf("env = %v, want NODE_ENV and PORT beside the secrets", vars)
@@ -236,10 +236,11 @@ func TestRenderingRefusesBadDomains(t *testing.T) {
 	}
 }
 
-// The fixtures this file and static_site_test.go add render objects the
-// original fixtures do not (a second Ingress, envFrom, a port-80 Static
-// site), so they are validated against the Kubernetes schemas too.
-func TestNewFixturesPassKubeconform(t *testing.T) {
+// The Static site, custom domain and secrets fixtures render objects the
+// Web service fixtures of chart_test.go do not (a second Ingress, envFrom,
+// a port-80 container), so they are validated against the Kubernetes
+// schemas too.
+func TestStaticSiteDomainAndSecretFixturesPassKubeconform(t *testing.T) {
 	requireTool(t, "kubeconform")
 	version := kubernetesVersion(t)
 	for _, fixture := range []string{"static-site.yaml", "static-site-probe.yaml", "custom-domain-wildcard.yaml", "custom-domain-foreign.yaml", "custom-domains-mixed.yaml", "secrets.yaml"} {
