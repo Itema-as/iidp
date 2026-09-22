@@ -10,6 +10,19 @@
 # workloads are recreated (Replace=true,Force=true) instead of patched.
 # ApplyOutOfSyncOnly limits that to workloads that actually changed, so an
 # ordinary sync does not restart ArgoCD.
+#
+# The takeover race (docs/implementation-notes/04-bootstrap.md, "The takeover
+# race"): with every workload in the default sync wave, the chart replaces
+# redis, the repo server, the server, dex and the application controller
+# all at once, including the controller that is running this very sync. A
+# sync-wave annotation (merged with the Replace/Force ones above, not
+# replacing them) on the controller's StatefulSet alone moves it to the last
+# wave: every other workload (redis, the repo server, the server, dex)
+# stays in the default wave 0 and is replaced together, as before, but the
+# controller only replaces itself once all of them are already synced and
+# healthy. One extra wave boundary (0 -> 10), not two, keeps the added
+# reconcile cost to a minimum: only the controller's own replacement is
+# deferred, not reordered relative to everything else.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -32,6 +45,13 @@ spec:
             argocd.argoproj.io/sync-options: Replace=true,Force=true
           statefulsetAnnotations:
             argocd.argoproj.io/sync-options: Replace=true,Force=true
+        # The takeover race: the controller (which is running this sync)
+        # replaces itself last, once redis, the repo server, the server and
+        # dex (still all in the default wave 0) are already synced and
+        # healthy.
+        controller:
+          statefulsetAnnotations:
+            argocd.argoproj.io/sync-wave: "10"
         crds:
           install: true
           keep: true
