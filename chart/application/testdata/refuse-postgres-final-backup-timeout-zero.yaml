@@ -1,0 +1,15 @@
+application:
+  name: shop
+environment: prod
+platform:
+  baseDomain: app.itma.no
+  backupsBucket: itema-iidp-db-backups
+  objectStorageEndpoint: https://hel1.your-objectstorage.com
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 1.4.2
+size: small
+postgres:
+  enabled: true
+  finalBackupTimeout: 0

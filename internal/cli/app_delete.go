@@ -26,13 +26,17 @@ func newAppDeleteCommand(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete an Application from the Platform",
-		Long: "Delete an Application: for each Environment with Postgres enabled, commit a\n" +
-			"final CloudNativePG Backup annotated to be kept 30 days, then, in a second\n" +
-			"commit pushed together with the first, remove the Application's Environment\n" +
-			"directories. The Environments' own ArgoCD Applications carry the resources\n" +
-			"finalizer, so ArgoCD deletes their resources once it notices the directory\n" +
-			"is gone; the final Backup's own directory is kept as the record. The\n" +
-			"Application repository is never touched.\n\n" +
+		Long: "Delete an Application: remove each Environment's application.yaml from the\n" +
+			"Platform repository in one commit. Its own ArgoCD Application carries the\n" +
+			"resources finalizer, so ArgoCD deletes its resources once it notices\n" +
+			"application.yaml is gone -- but not before every ArgoCD PreDelete hook the\n" +
+			"chart renders for an Environment with Postgres enabled reaches Healthy: a Job\n" +
+			"takes a final Backup of the database, kept 30 days, and the deletion waits\n" +
+			"for it to complete before anything is torn down. values.yaml (and any\n" +
+			"secrets) are left in the Platform repository -- ArgoCD needs them to render\n" +
+			"the PreDelete hook at deletion time -- inert once application.yaml is gone;\n" +
+			"iidp app create notices and clears it automatically if this Application's\n" +
+			"name is used again. The Application repository is never touched.\n\n" +
 			"On a terminal, this asks for the Application name typed back and refuses on\n" +
 			"a mismatch. --force skips the confirmation for non-interactive use; without\n" +
 			"a terminal and without --force, the command refuses outright.",
@@ -59,7 +63,7 @@ func runAppDelete(cmd *cobra.Command, name string, opts deleteOptions, deps Depe
 		if !opts.interactive && !isTerminalReader(cmd.InOrStdin()) {
 			return fmt.Errorf("refusing to delete %q without confirmation: run this on a terminal, or pass --force to skip confirmation non-interactively", name)
 		}
-		fmt.Fprintf(out, "This deletes Application %q: its Environments and, where Postgres is enabled, its databases (a final backup is kept %d days). Type the Application name to confirm: ", name, platformrepo.FinalBackupRetentionDays)
+		fmt.Fprintf(out, "This deletes Application %q: its Environments and, where Postgres is enabled, its databases (the Platform takes a final backup first, kept %d days). Type the Application name to confirm: ", name, platformrepo.FinalBackupRetentionDays)
 		typed, err := readLine(cmd.InOrStdin())
 		if err != nil {
 			return fmt.Errorf("reading the confirmation: %w", err)
@@ -114,17 +118,13 @@ func readLine(r io.Reader) (string, error) {
 }
 
 func printDeleteResult(out io.Writer, name string, res platformrepo.DeleteResult) {
-	fmt.Fprintf(out, "\nDeleted Application %s from %s:\n", name, platform.Repository)
+	fmt.Fprintf(out, "\nDeleted Application %s from %s (application.yaml removed for):\n", name, platform.Repository)
 	for _, d := range res.Deleted {
 		fmt.Fprintf(out, "  %s\n", d)
 	}
-	if len(res.FinalBackups) == 0 {
+	if !res.PostgresEnabled {
 		fmt.Fprintln(out, "\nNo Environment had Postgres enabled; there was nothing to back up.")
 		return
 	}
-	fmt.Fprintln(out, "\nFinal Postgres backups recorded (ArgoCD applies each from its own directory):")
-	for _, b := range res.FinalBackups {
-		fmt.Fprintf(out, "  %s: Cluster %s in namespace %s, retain-until %s\n", b.Path, b.Cluster, b.Namespace, b.RetainUntil)
-	}
-	fmt.Fprintln(out, "\nThe continuous WAL archive and scheduled backups already in object storage stay for 30 days regardless of whether this final Backup completes before the Cluster is removed; they are not deleted with it.")
+	fmt.Fprintf(out, "\nFor each Environment where Postgres was enabled, the Platform takes a final backup of its database and keeps it %d days; ArgoCD's PreDelete hook waits for that backup to complete before deleting the Environment's resources, so the deletion above will finish once every hook does.\n", platformrepo.FinalBackupRetentionDays)
 }

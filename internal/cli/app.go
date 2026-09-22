@@ -387,7 +387,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required on the Platform addresses")
 	}
 
-	res, err := platformWriter.CreateApplication(cmd.Context(), app)
+	res, err := platformWriter.CreateApplication(cmd.Context(), app, out)
 	if err != nil {
 		switch plan.path {
 		case pathCreate:

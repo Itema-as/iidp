@@ -617,8 +617,11 @@ func TestAppCreatePathRefusesWhenTheRepositoryAlreadyExists(t *testing.T) {
 
 func TestAppCreatePathValidatesThePlatformRepositoryBeforeCreatingAnything(t *testing.T) {
 	platformURL := newPlatformRepository(t, testPlatformYAML)
+	// A live Environment (application.yaml included), not a leftover from
+	// iidp app delete: only a live Environment refuses iidp app create.
 	pushCommit(t, platformURL, "Add shop by hand", map[string]string{
-		"applications/shop/prod/values.yaml": "application:\n  name: shop\n",
+		"applications/shop/prod/application.yaml": "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: shop\n",
+		"applications/shop/prod/values.yaml":      "application:\n  name: shop\n",
 	})
 	gh := newFakeGitHub(t)
 

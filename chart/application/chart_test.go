@@ -24,10 +24,13 @@ import (
 type object = map[string]any
 
 // render runs helm template on the chart with the given fixture values file
-// and returns the rendered objects keyed by "Kind/name".
-func render(t *testing.T, fixture string) map[string]object {
+// and returns the rendered objects keyed by "Kind/name". extraArgs, when
+// given, are appended to the helm template invocation (for example
+// --namespace, to set .Release.Namespace the way ArgoCD's Helm source
+// rendering does from an Application's destination namespace).
+func render(t *testing.T, fixture string, extraArgs ...string) map[string]object {
 	t.Helper()
-	out, err := helmTemplate(t, fixture)
+	out, err := helmTemplate(t, fixture, extraArgs...)
 	if err != nil {
 		t.Fatalf("helm template %s: %v\n%s", fixture, err, out)
 	}
@@ -37,10 +40,11 @@ func render(t *testing.T, fixture string) map[string]object {
 // helmTemplate runs helm template with a fixture values file and returns the
 // combined output and the command's error, so tests can assert on both
 // successful renders and refusals.
-func helmTemplate(t *testing.T, fixture string) (string, error) {
+func helmTemplate(t *testing.T, fixture string, extraArgs ...string) (string, error) {
 	t.Helper()
 	requireTool(t, "helm")
-	cmd := exec.Command("helm", "template", "test-release", ".", "--values", filepath.Join("testdata", fixture))
+	args := append([]string{"template", "test-release", ".", "--values", filepath.Join("testdata", fixture)}, extraArgs...)
+	cmd := exec.Command("helm", args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

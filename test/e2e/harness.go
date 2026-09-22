@@ -46,6 +46,32 @@ const (
 
 	gitServerImage = "iidp-e2e.local/git-server:dev"
 
+	// minioImage and minioClientImage run the harness's own in-cluster
+	// Object Storage stand-in (InstallMinIO), so the final Backup PreDelete
+	// hook (docs/implementation-notes/39-final-backup-predelete-hook.md)
+	// can genuinely complete in kind for the one Environment TestBootstrap
+	// deletes, rather than only being proven to have run. quay.io, not
+	// docker.io: MinIO's Docker Hub images now require an authenticated
+	// account to pull even "latest" (a policy change discovered while
+	// building this harness -- both `minio/minio` and `minio/mc` on
+	// docker.io return "requested access to the resource is denied" for
+	// every tag anonymously); quay.io/minio/minio and quay.io/minio/mc are
+	// MinIO's own alternate registry and pull anonymously. Not something
+	// either the chart or a real bootstrap ever installs.
+	minioImage       = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+	minioClientImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
+	// MinIOAccessKey and MinIOSecretKey are the harness's fixed MinIO root
+	// credentials. Not secret -- this cluster never leaves the machine
+	// running the test -- just long enough for MinIO to accept: it refuses
+	// a secret key under 8 characters, unlike the "dummy"/"dummy" pair
+	// CreateBackupsCredentialsSecret writes for every other namespace,
+	// which nothing ever actually authenticates with.
+	MinIOAccessKey = "iidpe2e"
+	MinIOSecretKey = "iidpe2epassword"
+	// MinIOBucket is the bucket InstallMinIO creates, matching the fixture
+	// Platform repository's platform.backupsBucket.
+	MinIOBucket = "iidp-backups"
+
 	// Traefik's entrypoints are NodePorts in kind (there is no ServiceLB);
 	// the kind config maps them to host ports so a test can curl Traefik
 	// with a Host header.
@@ -236,6 +262,23 @@ nodes:
 	if out, err := c.Kubectl(ctx, "-n", "kube-system", "scale", "deployment/coredns", "--replicas=1"); err != nil {
 		return fmt.Errorf("scale coredns: %w\n%s", err, out)
 	}
+	// kind's own components -- CoreDNS and the local-path provisioner --
+	// request CPU sized for a real cluster's node count, not for sharing a
+	// hosted CI runner's 2 vCPUs with the entire platform stack and both
+	// shop Environments. Neither is the product under test; trimming their
+	// requests to what this single-node, low-traffic cluster actually needs
+	// gives that CPU back to the fixture Applications' own Deployments and
+	// Jobs, which is what a scheduling failure here would otherwise starve
+	// (docs/implementation-notes/39-final-backup-predelete-hook.md). The
+	// static control-plane pods (kube-apiserver, etcd, etc.) are left alone:
+	// they are not Deployments, `kubectl set resources` cannot reach them,
+	// and their requests reflect the control plane's own real needs.
+	if out, err := c.Kubectl(ctx, "-n", "kube-system", "set", "resources", "deployment/coredns", "--requests=cpu=10m"); err != nil {
+		return fmt.Errorf("trim coredns cpu request: %w\n%s", err, out)
+	}
+	if out, err := c.Kubectl(ctx, "-n", "local-path-storage", "set", "resources", "deployment/local-path-provisioner", "--requests=cpu=10m"); err != nil {
+		return fmt.Errorf("trim local-path-provisioner cpu request: %w\n%s", err, out)
+	}
 	return nil
 }
 
@@ -303,6 +346,12 @@ func (c *Cluster) InstallTraefik(ctx context.Context) error {
 		// node IP instead.
 		"--set", "providers.kubernetesIngress.publishedService.enabled=false",
 		"--set", "additionalArguments={--providers.kubernetesingress.ingressendpoint.ip="+nodeIP+"}",
+		// The chart's own default CPU request (100m) is generous for a
+		// kind node that also has to schedule the whole platform stack and
+		// both shop Environments on a hosted CI runner's 2 vCPUs; this
+		// harness only needs Traefik to route a handful of test requests.
+		"--set", "resources.requests.cpu=20m",
+		"--set", "resources.requests.memory=64Mi",
 		"--wait", "--timeout", "5m")
 	if err != nil {
 		return fmt.Errorf("helm install traefik: %w\n%s", err, out)
@@ -402,6 +451,50 @@ func (c *Cluster) CreateBackupsCredentialsSecret(ctx context.Context, namespace 
 	return nil
 }
 
+// CreateMinIOBackupsCredentialsSecret creates the Secret named
+// platform.backupsCredentialsSecret (backups-credentials) with the
+// harness's real MinIO credentials (MinIOAccessKey/MinIOSecretKey) in
+// namespace, the same keys CreateBackupsCredentialsSecret's dummy version
+// uses. Only the one Environment whose final Backup PreDelete hook
+// TestBootstrap proves actually completes (shop-staging) needs this rather
+// than the dummy pair, since only its Cluster's ObjectStore points at a
+// real, reachable endpoint (InstallMinIO).
+func (c *Cluster) CreateMinIOBackupsCredentialsSecret(ctx context.Context, namespace string) error {
+	out, err := c.Kubectl(ctx, "-n", namespace, "create", "secret", "generic", "backups-credentials",
+		"--from-literal=ACCESS_KEY_ID="+MinIOAccessKey, "--from-literal=ACCESS_SECRET_KEY="+MinIOSecretKey)
+	if err != nil {
+		return fmt.Errorf("create backups-credentials secret (MinIO) in %s: %w\n%s", namespace, err, out)
+	}
+	return nil
+}
+
+// InstallMinIO deploys a single-Pod MinIO server in GitServerNamespace,
+// alongside the git server, and creates MinIOBucket: a harness-only
+// component, installed by neither the chart nor a real bootstrap, that
+// lets the final Backup PreDelete hook's Backup genuinely reach phase
+// completed in kind for the one Environment TestBootstrap deletes
+// (docs/implementation-notes/39-final-backup-predelete-hook.md).
+func (c *Cluster) InstallMinIO(ctx context.Context) error {
+	c.Log("installing MinIO (namespace %s, bucket %s)", GitServerNamespace, MinIOBucket)
+	// GitServerNamespace may not exist yet: ServeGitRepositories creates it
+	// too, but does not have to run before this does, and CreateNamespace
+	// is idempotent either way.
+	if err := c.CreateNamespace(ctx, GitServerNamespace); err != nil {
+		return err
+	}
+	if err := c.Apply(ctx, minioManifest()); err != nil {
+		return err
+	}
+	if out, err := c.Kubectl(ctx, "-n", GitServerNamespace, "rollout", "status", "deployment/minio", "--timeout=2m"); err != nil {
+		return fmt.Errorf("wait for minio: %w\n%s", err, out)
+	}
+	if out, err := c.Kubectl(ctx, "-n", GitServerNamespace, "wait", "job/minio-init-bucket", "--for=condition=complete", "--timeout=2m"); err != nil {
+		logs, _ := c.Kubectl(ctx, "-n", GitServerNamespace, "logs", "job/minio-init-bucket")
+		return fmt.Errorf("wait for minio-init-bucket: %w\n%s\n%s", err, out, logs)
+	}
+	return nil
+}
+
 // JobSucceeded reports whether the named Job's status.succeeded is at least
 // one. A Job that does not exist yet, or has not completed, reports false
 // with no error, so a caller can poll it.
@@ -425,6 +518,55 @@ func (c *Cluster) WaitForJobSucceeded(ctx context.Context, namespace, name strin
 		func() error {
 			out, _ := c.Kubectl(ctx, "-n", namespace, "get", "job", name, "-o", "yaml")
 			return fmt.Errorf("job %s/%s did not succeed within %s:\n%s", namespace, name, timeout, out)
+		})
+}
+
+// BackupNames lists the CloudNativePG Backup objects in namespace, or nil
+// if there are none, or the namespace or the CRD does not (or no longer)
+// exist. Used after the final Backup PreDelete hook has run, to confirm its
+// Backup object still exists and to name it
+// (docs/implementation-notes/39-final-backup-predelete-hook.md): it is not
+// owned by ArgoCD (created imperatively by the hook's own script, not
+// declared as a chart-rendered resource), so it outlives the Application
+// that recorded it.
+func (c *Cluster) BackupNames(ctx context.Context, namespace string) ([]string, error) {
+	out, err := c.Kubectl(ctx, "-n", namespace, "get", "backups.postgresql.cnpg.io", "-o", "jsonpath={.items[*].metadata.name}")
+	if err != nil {
+		return nil, nil
+	}
+	fields := strings.Fields(strings.TrimSpace(out))
+	return fields, nil
+}
+
+// ResourceExists reports whether the named resource of kind exists in
+// namespace.
+func (c *Cluster) ResourceExists(ctx context.Context, kind, namespace, name string) (bool, error) {
+	out, err := c.Kubectl(ctx, "-n", namespace, "get", kind, name)
+	if err == nil {
+		return true, nil
+	}
+	if strings.Contains(out, "NotFound") {
+		return false, nil
+	}
+	// Any other error (a transient API server hiccup, a port-forward
+	// blip) is inconclusive, not proof the resource is gone: report it as
+	// still existing, the same safe-by-default polarity JobSucceeded uses
+	// for its own kubectl errors, so a poll-until-gone caller keeps
+	// polling instead of reporting a false pass.
+	return true, nil
+}
+
+// WaitForResourceGone polls until the named resource of kind no longer
+// exists in namespace, or timeout elapses.
+func (c *Cluster) WaitForResourceGone(ctx context.Context, kind, namespace, name string, timeout time.Duration) error {
+	return pollUntil(ctx, timeout, 5*time.Second,
+		func() (bool, error) {
+			exists, err := c.ResourceExists(ctx, kind, namespace, name)
+			return !exists, err
+		},
+		func() error {
+			out, _ := c.Kubectl(ctx, "-n", namespace, "get", kind, name, "-o", "yaml")
+			return fmt.Errorf("%s %s/%s was not deleted within %s:\n%s", kind, namespace, name, timeout, out)
 		})
 }
 
@@ -624,6 +766,15 @@ func (c *Cluster) buildRepository(ctx context.Context, work, bare string, repo R
 	if out, err := c.run(ctx, "git", "init", "-q", "--bare", "-b", "main", bareDir); err != nil {
 		return fmt.Errorf("git init --bare: %w\n%s", err, out)
 	}
+	// git-http-backend refuses receive-pack (push) by default; this is what
+	// lets PushToRepository push a real change into an already-served
+	// repository later, the way a developer's iidp app delete would. The
+	// setting lives in the bare repository's own config, so it is packed
+	// into the ConfigMap tarball along with everything else and survives
+	// into the running server unchanged.
+	if out, err := c.run(ctx, "git", "-C", bareDir, "config", "--bool", "http.receivepack", "true"); err != nil {
+		return fmt.Errorf("git config http.receivepack: %w\n%s", err, out)
+	}
 	if out, err := c.run(ctx, "git", "init", "-q", "-b", "main", workDir); err != nil {
 		return fmt.Errorf("git init: %w\n%s", err, out)
 	}
@@ -660,10 +811,12 @@ func (c *Cluster) buildRepository(ctx context.Context, work, bare string, repo R
 	return nil
 }
 
-// checkRepository port-forwards to the git server and lists the repository
-// with the host's git, so a broken server fails here with a clear message
-// rather than as an ArgoCD condition later.
-func (c *Cluster) checkRepository(ctx context.Context, name string) error {
+// withGitServerPortForward port-forwards the host to the in-cluster git
+// server's Service for the duration of fn, which receives the repository's
+// URL as seen from the host (http://127.0.0.1:<port>/git/<name>.git):
+// checkRepository and PushToRepository both need a real git client to talk
+// to a server only reachable, from the host, through a port-forward.
+func (c *Cluster) withGitServerPortForward(ctx context.Context, name string, fn func(ctx context.Context, url string) error) error {
 	port, err := freePort()
 	if err != nil {
 		return err
@@ -681,20 +834,107 @@ func (c *Cluster) checkRepository(ctx context.Context, name string) error {
 		cancel()
 		forward.Wait()
 	}()
+	// kubectl port-forward's own tunnel setup is asynchronous: Start
+	// returning only means the process was launched, not that the local
+	// port is listening yet. checkRepository tolerated this with its own
+	// retry loop around git ls-remote; callers with no such loop (a single
+	// git clone, in PushToRepository) would otherwise race it and fail on a
+	// connection refused a few milliseconds too early.
+	if err := waitForLocalPort(ctx, port, 10*time.Second); err != nil {
+		return fmt.Errorf("kubectl port-forward to git-server never started listening on 127.0.0.1:%d: %w", port, err)
+	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/git/%s.git", port, name)
-	var lastErr error
-	for attempt := 0; attempt < 30; attempt++ {
-		out, err := c.run(ctx, "git", "ls-remote", "--heads", url)
-		if err == nil && strings.Contains(out, "refs/heads/main") {
-			c.Log("git ls-remote %s: %s", url, strings.TrimSpace(out))
+	return fn(ctx, url)
+}
+
+// waitForLocalPort polls until a TCP connection to 127.0.0.1:port succeeds,
+// or timeout elapses.
+func waitForLocalPort(ctx context.Context, port int, timeout time.Duration) error {
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	return pollUntil(ctx, timeout, 200*time.Millisecond,
+		func() (bool, error) {
+			conn, err := net.DialTimeout("tcp", addr, time.Second)
+			if err != nil {
+				return false, nil
+			}
+			conn.Close()
+			return true, nil
+		},
+		func() error { return fmt.Errorf("no listener on %s within %s", addr, timeout) })
+}
+
+// checkRepository port-forwards to the git server and lists the repository
+// with the host's git, so a broken server fails here with a clear message
+// rather than as an ArgoCD condition later.
+func (c *Cluster) checkRepository(ctx context.Context, name string) error {
+	return c.withGitServerPortForward(ctx, name, func(ctx context.Context, url string) error {
+		var lastErr error
+		for attempt := 0; attempt < 30; attempt++ {
+			out, err := c.run(ctx, "git", "ls-remote", "--heads", url)
+			if err == nil && strings.Contains(out, "refs/heads/main") {
+				c.Log("git ls-remote %s: %s", url, strings.TrimSpace(out))
+				return nil
+			}
+			lastErr = fmt.Errorf("git ls-remote %s: %v\n%s", url, err, out)
+			if sleep(ctx, time.Second) != nil {
+				break
+			}
+		}
+		return lastErr
+	})
+}
+
+// PushToRepository clones the named repository through a port-forward to
+// the in-cluster git server, lets mutate change the working tree (an
+// absolute path to the clone), and commits and pushes the result to main
+// if mutate reports a change was made -- the harness's equivalent of what
+// iidp app delete does to the real Platform repository: a plain commit
+// pushed over HTTP to the repository ArgoCD is already watching, so its
+// next reconcile picks up the change on its own, with nothing re-served or
+// re-packed. mutate returns whether it changed anything; when it reports
+// false, nothing is committed or pushed.
+func (c *Cluster) PushToRepository(ctx context.Context, name, commitMessage string, mutate func(dir string) (changed bool, err error)) error {
+	return c.withGitServerPortForward(ctx, name, func(ctx context.Context, url string) error {
+		work, err := os.MkdirTemp("", "iidp-e2e-push-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(work)
+		dir := filepath.Join(work, "clone")
+		if out, err := c.run(ctx, "git", "clone", "-q", "--branch", "main", url, dir); err != nil {
+			return fmt.Errorf("git clone %s: %w\n%s", url, err, out)
+		}
+		changed, err := mutate(dir)
+		if err != nil {
+			return fmt.Errorf("mutate %s: %w", name, err)
+		}
+		if !changed {
+			c.Log("PushToRepository %s: mutate reported no change; nothing pushed", name)
 			return nil
 		}
-		lastErr = fmt.Errorf("git ls-remote %s: %v\n%s", url, err, out)
-		if sleep(ctx, time.Second) != nil {
-			break
+		git := func(args ...string) (string, error) {
+			args = append([]string{"-C", dir,
+				"-c", "user.name=iidp e2e", "-c", "user.email=e2e@iidp.invalid",
+				"-c", "commit.gpgsign=false"}, args...)
+			out, err := c.run(ctx, "git", args...)
+			if err != nil {
+				return out, fmt.Errorf("git %s: %w\n%s", strings.Join(args, " "), err, out)
+			}
+			return out, nil
 		}
-	}
-	return lastErr
+		if _, err := git("add", "-A"); err != nil {
+			return err
+		}
+		if _, err := git("commit", "-q", "-m", commitMessage); err != nil {
+			return err
+		}
+		if out, err := git("push", "-q", "origin", "HEAD:main"); err != nil {
+			return fmt.Errorf("push to %s failed (is http.receivepack enabled on the served repository?): %w\n%s", name, err, out)
+		}
+		sha, _ := git("rev-parse", "HEAD")
+		c.Log("PushToRepository %s: pushed %q as %s", name, commitMessage, strings.TrimSpace(sha))
+		return nil
+	})
 }
 
 // ApplyRootApplication applies the root Application `platform` with the
@@ -850,6 +1090,14 @@ func (c *Cluster) WaitForApplications(ctx context.Context, want map[string]Expec
 		}
 		if len(unmet) == 0 {
 			c.Log("all %d Applications reached their expected state after %s", len(names), time.Since(start).Round(time.Second))
+			// Logged on every successful wait, not only on the timeout path
+			// below: the node's CPU budget (docs/implementation-notes
+			// /39-final-backup-predelete-hook.md) is worth seeing on a green
+			// run too, both to catch the margin shrinking again before it
+			// starts failing and to give the next person who adds a fixture
+			// Application a number to check their own resource requests
+			// against.
+			c.logNodeAllocatedResources(ctx)
 			return nil
 		}
 		if time.Since(lastSummary) >= 30*time.Second {
@@ -872,6 +1120,25 @@ func (c *Cluster) WaitForApplications(ctx context.Context, want map[string]Expec
 // recent cluster events: everything the takeover race (see
 // docs/implementation-notes/04-bootstrap.md, "The takeover race") needs to
 // be diagnosed from a single failed run's output, without a kept cluster.
+// logNodeAllocatedResources logs kind's single node's "Allocated resources:"
+// table (each resource's total Requests/Limits against the node's
+// Allocatable capacity, including the percentage this harness cares about:
+// how close cpu Requests are to the node's schedulable 2 vCPUs on a hosted
+// CI runner) -- see docs/implementation-notes/39-final-backup-predelete-hook.md
+// for why this budget is worth watching on every run, not only a failed
+// one. Best-effort: errors are swallowed, the same as every other
+// diagnostic in this file, since this only ever runs alongside a test's own
+// pass/fail result, which must not depend on it.
+func (c *Cluster) logNodeAllocatedResources(ctx context.Context) {
+	out, err := c.Kubectl(ctx, "describe", "node")
+	if err != nil {
+		return
+	}
+	if i := strings.Index(out, "Allocated resources:"); i >= 0 {
+		c.Log("node allocated resources:\n%s", out[i:])
+	}
+}
+
 func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]ApplicationStatus, names []string) {
 	for _, name := range names {
 		app, ok := apps[name]
@@ -899,13 +1166,19 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	}
 	// A Pod stuck Pending is almost always the scheduler refusing it (most
 	// often insufficient CPU or memory on kind's single node); the events
-	// and the node's allocated-resources table say which.
+	// and the node's per-pod requests and allocated-resources table say
+	// which pod, and by how much.
 	if out, err := c.Kubectl(ctx, "get", "events", "-A", "--field-selector=reason=FailedScheduling", "--sort-by=.lastTimestamp"); err == nil && strings.TrimSpace(out) != "" {
 		c.Log("FailedScheduling events:\n%s", out)
 	}
+	// From "Non-terminated Pods:" to the end of the output: this covers
+	// both the per-pod CPU/memory requests and limits table and the
+	// "Allocated resources:" totals right after it, so a timed-out run
+	// shows not just how full the node's CPU budget is but which pods are
+	// spending it (docs/implementation-notes/39-final-backup-predelete-hook.md).
 	if out, err := c.Kubectl(ctx, "describe", "node"); err == nil {
-		if i := strings.Index(out, "Allocated resources:"); i >= 0 {
-			c.Log("node allocated resources:\n%s", out[i:])
+		if i := strings.Index(out, "Non-terminated Pods:"); i >= 0 {
+			c.Log("node pods and allocated resources:\n%s", out[i:])
 		}
 	}
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "deployment/argocd-repo-server", "--tail=40"); err == nil {
@@ -1054,6 +1327,107 @@ spec:
     - port: 80
       targetPort: 8080
 `, GitServerNamespace, gitServerImage, checksum)
+}
+
+// minioManifest is InstallMinIO's Deployment, Service and bucket-creation
+// Job: a single MinIO Pod with an emptyDir (kind's disk is thrown away with
+// the cluster regardless, so nothing here needs to survive a restart), and
+// a small mc Job that creates MinIOBucket once the server answers -- run as
+// a Job with retries rather than as an initContainer of the server itself,
+// since it has to wait for the Service, not just the container, to be
+// reachable. CPU requests are pinned to 10m on both: this harness, not the
+// product under test, and a hosted CI runner's node has only 2 vCPUs of
+// schedulable capacity total (see docs/implementation-notes
+// /39-final-backup-predelete-hook.md) -- every millicore claimed here is one
+// the shop-prod/shop-staging fixture's own Deployment and migrate Job
+// cannot get. The mc Job carries no CPU limit at all for the same reason:
+// it runs once, for seconds, and only its request (not its limit) competes
+// for the node's scheduling budget.
+func minioManifest() string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: %[1]s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: %[2]s
+          args: ["server", "/data"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: %[4]s
+            - name: MINIO_ROOT_PASSWORD
+              value: %[5]s
+          ports:
+            - containerPort: 9000
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 1
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: %[1]s
+spec:
+  selector:
+    app: minio
+  ports:
+    - port: 9000
+      targetPort: 9000
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init-bucket
+  namespace: %[1]s
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: %[3]s
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mc alias set local http://minio.%[1]s.svc.cluster.local:9000 %[4]s %[5]s
+              mc mb --ignore-existing local/%[6]s
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "32Mi"
+            limits:
+              memory: "64Mi"
+`, GitServerNamespace, minioImage, minioClientImage, MinIOAccessKey, MinIOSecretKey, MinIOBucket)
 }
 
 func (c *Cluster) env() []string {
