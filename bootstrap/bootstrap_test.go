@@ -33,7 +33,7 @@ func TestRendersOneApplicationPerComponent(t *testing.T) {
 		got = append(got, name)
 	}
 	sort.Strings(got)
-	want := []string{"argocd", "cert-manager", "cloudnative-pg", "cnpg-barman-cloud", "external-dns", "monitoring", "platform-tls"}
+	want := []string{"argocd", "cert-manager", "cloudnative-pg", "cnpg-barman-cloud", "external-dns", "monitoring", "oauth2-proxy", "platform-tls"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("rendered Applications = %v, want %v", got, want)
 	}
@@ -145,6 +145,56 @@ func TestPlatformValuesReachTheComponents(t *testing.T) {
 		if got := get[string](t, monitoring, "destinations", dest, "secret", "name"); got != "grafana-cloud" {
 			t.Errorf("monitoring %s secret = %q", dest, got)
 		}
+	}
+}
+
+func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
+	versions := readYAML(t, "versions.yaml")
+	apps := renderApplications(t, "--values", fixture,
+		"--set", "bootstrap.repoURL=https://example.test/iidp.git",
+		"--set", "bootstrap.targetRevision=v9.9.9")
+	app := apps["oauth2-proxy"]
+	sources := get[[]any](t, app, "spec", "sources")
+	if len(sources) != 2 {
+		t.Fatalf("oauth2-proxy has %d sources, want 2", len(sources))
+	}
+	chartSource := get[object](t, map[string]any{"s": sources[0]}, "s")
+	if got := get[string](t, chartSource, "chart"); got != "oauth2-proxy" {
+		t.Errorf("chart source chart = %q, want oauth2-proxy", got)
+	}
+	want := get[string](t, versions, "oauth2Proxy", "chart")
+	if got := get[string](t, chartSource, "targetRevision"); got != want {
+		t.Errorf("oauth2-proxy targetRevision = %q, want %q from versions.yaml", got, want)
+	}
+
+	middlewareSource := get[object](t, map[string]any{"s": sources[1]}, "s")
+	if got := get[string](t, middlewareSource, "repoURL"); got != "https://example.test/iidp.git" {
+		t.Errorf("middleware source repoURL = %q, want it to follow the bootstrap pin", got)
+	}
+	if got := get[string](t, middlewareSource, "targetRevision"); got != "v9.9.9" {
+		t.Errorf("middleware source targetRevision = %q, want it to follow the bootstrap pin", got)
+	}
+	if got := get[string](t, middlewareSource, "path"); got != "bootstrap/components/oauth2-proxy-login" {
+		t.Errorf("middleware source path = %q", got)
+	}
+
+	values := get[object](t, chartSource, "helm", "valuesObject")
+	if got := get[string](t, values, "extraArgs", "cookie-domain"); got != ".app.example.test" {
+		t.Errorf("cookie-domain = %q, want .app.example.test", got)
+	}
+	if got := get[string](t, values, "extraArgs", "whitelist-domain"); got != ".app.example.test" {
+		t.Errorf("whitelist-domain = %q, want .app.example.test", got)
+	}
+	if got := get[string](t, values, "extraArgs", "redirect-url"); got != "https://auth.app.example.test/oauth2/callback" {
+		t.Errorf("redirect-url = %q", got)
+	}
+	if got := fmt.Sprint(get[[]any](t, values, "ingress", "hosts")); got != "[auth.app.example.test]" {
+		t.Errorf("ingress hosts = %s, want [auth.app.example.test]", got)
+	}
+	provider := get[[]any](t, values, "alphaConfig", "configData", "providers")[0]
+	providerMap := get[object](t, map[string]any{"p": provider}, "p")
+	if got := get[string](t, providerMap, "provider"); got != "entra-id" {
+		t.Errorf("provider = %q, want entra-id", got)
 	}
 }
 

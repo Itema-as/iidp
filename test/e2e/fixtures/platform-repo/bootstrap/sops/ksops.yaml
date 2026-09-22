@@ -14,3 +14,4 @@ files:
   - cloudflare-api-token-cert-manager.enc.yaml
   - cloudflare-api-token-external-dns.enc.yaml
   - grafana-cloud.enc.yaml
+  - oauth2-proxy-entra.enc.yaml

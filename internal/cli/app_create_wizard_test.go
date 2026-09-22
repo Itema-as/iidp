@@ -32,8 +32,8 @@ func TestAppCreateWizardFullRunAnsweringEveryQuestion(t *testing.T) {
 	gh := newFakeGitHub(t)
 
 	// name, path, framework, postgres, migration command, staging, domain,
-	// size, confirm.
-	stdin := "shop\ncreate\nnextjs\ny\n\nn\n\n\ny\n"
+	// login, size, confirm.
+	stdin := "shop\ncreate\nnextjs\ny\n\nn\n\n\n\ny\n"
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin)
 
@@ -62,7 +62,7 @@ func TestAppCreateWizardFullRunAnsweringEveryQuestion(t *testing.T) {
 		t.Errorf("values.yaml domains = %v, want empty", lookup(t, values, "domains"))
 	}
 
-	for _, want := range []string{"Application name", "Create or Adopt", "Framework", "Postgres database", "Migration command", "Staging Environment", "Custom domain", "Size", "Proceed"} {
+	for _, want := range []string{"Application name", "Create or Adopt", "Framework", "Postgres database", "Migration command", "Staging Environment", "Custom domain", "Itema login", "Size", "Proceed"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout lacks the question %q:\n%s", want, stdout)
 		}
@@ -71,7 +71,7 @@ func TestAppCreateWizardFullRunAnsweringEveryQuestion(t *testing.T) {
 	for _, want := range []string{
 		"Summary:", "Name:       shop", "Owner:      " + platform.Org, "Framework:  nextjs",
 		"Visibility: private", "Kind:       web-service", "Size:       small", "Port:       3000",
-		"Probe path: /", "Postgres:   enabled", "Staging:    disabled", "Domains:    none",
+		"Probe path: /", "Postgres:   enabled", "Staging:    disabled", "Login:      disabled", "Domains:    none",
 		"ArgoCD:     https://argocd.platform.itma.no", "Grafana:    https://itema.grafana.net",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -87,9 +87,9 @@ func TestAppCreateWizardFlagsPreAnswerQuestions(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
 
-	// Only postgres, staging, domain, size and the confirmation are asked;
-	// name, path and framework were given as flags.
-	stdin := "n\nn\n\n\ny\n"
+	// Only postgres, staging, domain, login, size and the confirmation are
+	// asked; name, path and framework were given as flags.
+	stdin := "n\nn\n\n\n\ny\n"
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
 		"--name", "shop", "--path", "create", "--framework", "nextjs")
@@ -102,7 +102,7 @@ func TestAppCreateWizardFlagsPreAnswerQuestions(t *testing.T) {
 			t.Errorf("stdout contains the pre-answered question %q, want it skipped:\n%s", notWant, stdout)
 		}
 	}
-	for _, want := range []string{"Postgres database", "Staging Environment", "Custom domain", "Size"} {
+	for _, want := range []string{"Postgres database", "Staging Environment", "Custom domain", "Itema login", "Size"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout lacks the still-open question %q:\n%s", want, stdout)
 		}
@@ -119,7 +119,7 @@ func TestAppCreateWizardDefaultsTakenByEmptyAnswers(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
 
-	stdin := "\n\n\n\n\n" // postgres, staging, domain, size, confirm: all blank
+	stdin := "\n\n\n\n\n\n" // postgres, staging, domain, login, size, confirm: all blank
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
 		"--name", "shop", "--path", "create", "--framework", "nextjs")
@@ -151,7 +151,7 @@ func TestAppCreateWizardInvalidNameIsReAsked(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
 
-	stdin := "Not_Valid!\nshop\ncreate\nnextjs\nn\nn\n\n\ny\n"
+	stdin := "Not_Valid!\nshop\ncreate\nnextjs\nn\nn\n\n\n\ny\n"
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin)
 
@@ -179,8 +179,8 @@ func TestAppCreateWizardMigrationQuestionShowsHelpTextAndDetectedSuggestion(t *t
 	writeFile(t, filepath.Join(dir, "prisma", "schema.prisma"), "// schema\n")
 
 	// postgres=y, migration command blank (accept the suggestion), staging=n,
-	// domain blank, size blank, confirm=y.
-	stdin := "y\n\nn\n\n\ny\n"
+	// domain blank, login blank, size blank, confirm=y.
+	stdin := "y\n\nn\n\n\n\ny\n"
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
 		"--name", "shop", "--path", "create", "--framework", "nextjs", "--app-dir", dir)
@@ -211,9 +211,10 @@ func TestAppCreateWizardDecliningTheSummaryHasNoSideEffects(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
 
-	// Only the migration command, domain, size and confirmation are asked
-	// (name, path, framework, postgres and staging were given as flags).
-	stdin := "\n\n\nn\n"
+	// Only the migration command, domain, login, size and confirmation are
+	// asked (name, path, framework, postgres and staging were given as
+	// flags).
+	stdin := "\n\n\n\nn\n"
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
 		"--name", "shop", "--path", "create", "--framework", "nextjs",

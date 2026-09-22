@@ -295,6 +295,10 @@ if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; the
     GRAFANA_PROM_USER='12345'
     GRAFANA_LOKI_URL='https://loki.example/loki/api/v1/push'
     GRAFANA_LOKI_USER='67890'
+    ENTRA_OAUTH2_PROXY_CLIENT_ID='oauth2-client-id'
+    ENTRA_OAUTH2_PROXY_CLIENT_SECRET='oauth2-client-secret'
+    ENTRA_OAUTH2_PROXY_TENANT='11111111-1111-1111-1111-111111111111'
+    ENTRA_OAUTH2_PROXY_COOKIE_SECRET='cookie-secret-value'
     write_sops_yaml
     write_and_encrypt_secrets
   " 2>&1)
@@ -308,6 +312,17 @@ if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; the
   assert_contains "$decrypted" "access-token: shh-token"
   assert_contains "$decrypted" "prometheus-username:"
   assert_contains "$decrypted" "12345"
+
+  t_start "the written oauth2-proxy Entra secret file is sops ciphertext, not plaintext"
+  oauth2content=$(cat "$d/bootstrap/sops/oauth2-proxy-entra.enc.yaml" 2>/dev/null || echo "MISSING")
+  assert_contains "$oauth2content" "ENC["
+  t_start "sops --decrypt reproduces the original oauth2-proxy Entra values"
+  oauth2decrypted=$(SOPS_AGE_KEY_FILE="$keydir/key.txt" sops --decrypt "$d/bootstrap/sops/oauth2-proxy-entra.enc.yaml" 2>&1)
+  assert_contains "$oauth2decrypted" "clientID: oauth2-client-id"
+  assert_contains "$oauth2decrypted" "clientSecret: oauth2-client-secret"
+  assert_contains "$oauth2decrypted" "tenant: 11111111-1111-1111-1111-111111111111"
+  assert_contains "$oauth2decrypted" "cookieSecret: cookie-secret-value"
+  assert_contains "$oauth2decrypted" "namespace: oauth2-proxy"
 else
   echo "skip - age-keygen or sops not installed, skipping the sops round-trip test"
 fi

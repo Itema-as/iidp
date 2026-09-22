@@ -70,6 +70,7 @@ type createOptions struct {
 	appDir           string
 	staging          bool
 	domains          []string
+	login            bool
 	// interactive forces the wizard even without a terminal on stdin: the
 	// hidden --interactive flag, so tests can drive it with an injected
 	// reader and writer (docs/implementation-notes/14-cli-wizard.md).
@@ -123,6 +124,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	_ = f.MarkHidden("app-dir")
 	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod: its own address, its own database, the same Capabilities")
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to serve besides the Platform address, for prod only (repeatable)")
+	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on the Platform addresses, in every Environment; refused together with --domain")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
 	f.BoolVar(&opts.interactive, "interactive", false, "Run the wizard even without a terminal on stdin")
@@ -207,7 +209,6 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	if image == "" {
 		image = "ghcr.io/" + strings.ToLower(ownerLogin) + "/" + plan.name
 	}
-
 	// kind and migrationCommand are already final for Create and the
 	// legacy bare path (plan.kind is resolved, and detectMigrationCommand
 	// runs against a freshly rendered template or the current directory).
@@ -261,6 +262,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			MigrationCommand: summaryMigration,
 			Staging:          plan.staging,
 			Domains:          plan.domains,
+			Login:            plan.login,
 		}
 		preview, err := platformWriter.PreviewApplication(cmd.Context(), app)
 		if err != nil {
@@ -366,6 +368,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		MigrationCommand: migrationCommand,
 		Staging:          plan.staging,
 		Domains:          plan.domains,
+		Login:            plan.login,
 	}
 
 	fmt.Fprintf(out, "\nWriting the prod Environment to %s...\n", platform.Repository)
@@ -379,6 +382,9 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	}
 	if app.Staging {
 		fmt.Fprintln(out, "  Staging:  a second Environment, its own address and database")
+	}
+	if app.Login {
+		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required on the Platform addresses")
 	}
 
 	res, err := platformWriter.CreateApplication(cmd.Context(), app)
@@ -508,6 +514,7 @@ type createPlan struct {
 	appDir              string
 	staging             bool
 	domains             []string
+	login               bool
 }
 
 // plan validates every flag before anything is cloned or written, and
@@ -611,6 +618,9 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if err := checkPostgresKind(o.postgres, kind); err != nil {
 		return createPlan{}, err
 	}
+	if o.login && len(o.domains) > 0 {
+		return createPlan{}, errors.New(platformrepo.LoginDomainConflictMessage)
+	}
 
 	ownerMode := "org"
 	private := true
@@ -651,6 +661,7 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		appDir:              o.appDir,
 		staging:             o.staging,
 		domains:             o.domains,
+		login:               o.login,
 	}, nil
 }
 
@@ -768,6 +779,9 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 	fmt.Fprintf(out, "\n  prod:     %s\n", res.Address)
 	if res.StagingAddress != "" {
 		fmt.Fprintf(out, "  staging:  %s\n", res.StagingAddress)
+	}
+	if res.Login {
+		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
 	}
 	if res.Config.ArgoCDURL != "" {
 		fmt.Fprintf(out, "  ArgoCD:   %s\n", res.Config.ArgoCDURL)

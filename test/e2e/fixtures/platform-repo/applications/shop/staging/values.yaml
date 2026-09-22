@@ -1,6 +1,7 @@
 # Values for shop's staging Environment. See prod/values.yaml for what each
-# key is for; only the Environment, and the read-write Service the migration
-# checks (shop-staging-db-rw, staging's own CloudNativePG Cluster), differ.
+# key is for; only the Environment, the read-write Service the migration
+# checks (shop-staging-db-rw, staging's own CloudNativePG Cluster), and
+# login.enabled (see below) differ.
 application:
   name: shop
 environment: staging
@@ -21,3 +22,10 @@ postgres:
   enabled: true
   migrationCommand: >-
     test -n "$DATABASE_URL" && nc -z -w 5 shop-staging-db-rw 5432 && echo "migrated: DATABASE_URL set, shop-staging-db-rw:5432 reachable"
+# The Itema login Capability, on staging only: TestBootstrap proves an
+# unauthenticated request to a protected Platform address gets redirected
+# towards oauth2-proxy while the unprotected prod address still answers 200
+# (docs/implementation-notes/18-itema-login.md), reusing this Environment
+# rather than adding a third Application.
+login:
+  enabled: true

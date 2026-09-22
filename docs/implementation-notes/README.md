@@ -20,3 +20,4 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #15 | [15-cli-adopt-path.md](15-cli-adopt-path.md) |
 | #16 | [16-cli-secret-set.md](16-cli-secret-set.md) |
 | #17 | [17-cli-add-capability-delete.md](17-cli-add-capability-delete.md) |
+| #18 | [18-itema-login.md](18-itema-login.md) |

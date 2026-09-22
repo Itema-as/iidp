@@ -88,4 +88,6 @@ func ExampleValues() {
 	//     enabled: false
 	//     migrationCommand: ""
 	//     backupRetention: 30d
+	// login:
+	//     enabled: false
 }

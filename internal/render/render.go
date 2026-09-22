@@ -35,6 +35,10 @@ type Environment struct {
 	MigrationCommand      string
 	BackupsBucket         string
 	ObjectStorageEndpoint string
+	// Login is the Itema login Capability: written the same in every
+	// Environment, since one oauth2-proxy cookie for the Platform base
+	// domain covers both (docs/implementation-notes/18-itema-login.md).
+	Login bool
 }
 
 // Name is the Environment's object name, <application>-<environment>: the
@@ -129,6 +133,7 @@ func Values(env Environment) ([]byte, error) {
 			MigrationCommand: env.MigrationCommand,
 			BackupRetention:  defaultBackupRetention,
 		},
+		Login: loginValues{Enabled: env.Login},
 	}
 	return marshal("Values for the "+env.Environment+" Environment of "+env.Application+". image.tag is written by the deploy workflow.", v)
 }
@@ -206,6 +211,7 @@ type values struct {
 	Env         map[string]string `yaml:"env"`
 	Domains     []string          `yaml:"domains"`
 	Postgres    postgresValues    `yaml:"postgres"`
+	Login       loginValues       `yaml:"login"`
 }
 
 type applicationValues struct {
@@ -231,4 +237,12 @@ type imageValues struct {
 
 type probeValues struct {
 	Path string `yaml:"path"`
+}
+
+// loginValues is the Itema login Capability: one shared oauth2-proxy in
+// front of every Platform-address Ingress. Written in full, even when
+// disabled, the same convention postgres and domains already follow
+// (docs/implementation-notes/13-cli-capabilities.md).
+type loginValues struct {
+	Enabled bool `yaml:"enabled"`
 }

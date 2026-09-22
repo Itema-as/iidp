@@ -83,3 +83,11 @@ postgres:
   # How long backups and WAL are kept in the bucket: a number of days (d),
   # weeks (w) or months (m).
   backupRetention: 30d
+
+login:
+  # The Itema login Capability: the Platform address's Ingress gets the
+  # Traefik ForwardAuth middleware annotation for the bootstrap's shared
+  # oauth2-proxy, so an Entra ID sign-in is required to reach it. Platform
+  # addresses only: fails rendering when domains is non-empty, because the
+  # oauth2-proxy cookie is scoped to the Platform base domain.
+  enabled: false

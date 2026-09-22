@@ -125,6 +125,33 @@ func TestEnablePostgresPreservesExistingSecretsList(t *testing.T) {
 	}
 }
 
+func TestEnableLoginSetsEnabled(t *testing.T) {
+	out, err := render.EnableLogin([]byte(testValuesYAML))
+	if err != nil {
+		t.Fatalf("EnableLogin: %v", err)
+	}
+	if !strings.HasPrefix(string(out), "# Values for the prod Environment of shop") {
+		t.Errorf("the header comment was lost:\n%s", out)
+	}
+	if !strings.Contains(string(out), "login:\n    enabled: true\n") {
+		t.Errorf("login.enabled was not set:\n%s", out)
+	}
+}
+
+func TestEnableLoginPreservesExistingContent(t *testing.T) {
+	withSecret, _, err := render.AddSecretName([]byte(testValuesYAML), "shop-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := render.EnableLogin(withSecret)
+	if err != nil {
+		t.Fatalf("EnableLogin: %v", err)
+	}
+	if !strings.Contains(string(out), "secrets:\n    - shop-api-key\n") {
+		t.Errorf("the secrets list was lost:\n%s", out)
+	}
+}
+
 func TestSetSizeChangesTheSizeKey(t *testing.T) {
 	out, changed, err := render.SetSize([]byte(testValuesYAML), "medium")
 	if err != nil {

@@ -1,0 +1,60 @@
+# The Itema login Capability's Traefik middlewares. The chart annotates a
+# Platform-address Ingress with traefik.ingress.kubernetes.io/router.middlewares
+# naming both, comma-separated (chart/application/templates/ingress.yaml);
+# their names and this namespace must match exactly.
+#
+# This is the documented Traefik + oauth2-proxy pattern for a working
+# unauthenticated redirect, checked against current oauth2-proxy
+# documentation ("Configuration > Integrations > Traefik", "Configure
+# Traefik ForwardAuth with 401 Error Middleware"): itema-login-auth checks
+# every request against oauth2-proxy's dedicated /oauth2/auth endpoint
+# (202 authenticated, 401/403 otherwise) rather than its root address. A
+# root-address forwardAuth (the alternative the docs also show, "redirects
+# all unauthenticated to oauth2 signin" by relying on Traefik forwarding a
+# 3xx from the auth server verbatim) was tried first and rejected: with
+# this component's alpha-config static upstream, an unauthenticated
+# request to the root address came back 403, not a redirect, in a real
+# kind run -- /oauth2/auth's 401/403 is the well-tested, documented
+# contract instead. itema-login-errors then rewrites that into the 302 to
+# /oauth2/sign_in the acceptance criterion needs, the same
+# "errors middleware with statusRewrites" shape the docs use for Traefik
+# (the closest Traefik has to Nginx's error_page/auth_request pattern,
+# which the docs note is "superior to returning a 403 status code" because
+# browsers do not follow redirects on a 403).
+#
+# authResponseHeaders on itema-login-auth copies the headers
+# injectResponseHeaders adds (oauth2-proxy.yaml) onto the request Traefik
+# forwards to the protected Application once oauth2-proxy answers 202;
+# X-Auth-Request-Email is the header carrying the signed-in user's email
+# address.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: itema-login-auth
+  namespace: oauth2-proxy
+spec:
+  forwardAuth:
+    address: http://oauth2-proxy.oauth2-proxy.svc.cluster.local/oauth2/auth
+    trustForwardHeader: true
+    authResponseHeaders:
+      - X-Auth-Request-User
+      - X-Auth-Request-Email
+      - X-Auth-Request-Preferred-Username
+      - X-Auth-Request-Groups
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: itema-login-errors
+  namespace: oauth2-proxy
+spec:
+  errors:
+    status:
+      - "401-403"
+    query: /oauth2/sign_in?rd={url}
+    service:
+      name: oauth2-proxy
+      port: 80
+    statusRewrites:
+      "401": 302
+      "403": 302

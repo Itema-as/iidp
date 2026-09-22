@@ -146,8 +146,12 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) erro
 	}
 
 	// 7. Itema login: docs/design.md's wizard offers this only when no
-	// custom domain was given. Not asked yet — see itemaLoginQuestion.
-	itemaLoginQuestion(opts)
+	// custom domain was given.
+	if !f.Changed("login") && len(opts.domains) == 0 {
+		if err := askItemaLogin(f, p); err != nil {
+			return err
+		}
+	}
 
 	// 8. Size.
 	if !f.Changed("size") {
@@ -230,15 +234,20 @@ func splitDomains(answer string) []string {
 	return hosts
 }
 
-// itemaLoginQuestion is the wizard's hook for the Itema login Capability
-// (issue #18): docs/design.md's question 7, offered only when no custom
-// domain was given. Issue #18 has not landed, so there is no --login flag
-// to wire this question to yet, and it asks nothing.
-//
-// TODO(#18): once a --login flag exists, ask "Itema login? [no]" here
-// (skipped when len(opts.domains) > 0, refused outright the way --postgres
-// on a Static site is) and f.Set("login", ...) with the answer.
-func itemaLoginQuestion(_ *createOptions) {}
+// askItemaLogin asks docs/design.md's wizard question 7, "Itema login?
+// [no]", and sets --login with the answer. runWizard only calls it when no
+// custom domain was given (a custom domain's certificate and DNS are its
+// own, and the login cookie is scoped to the Platform base domain, so the
+// two are mutually exclusive the same way --postgres is refused on a
+// Static site): the wizard does not ask a question whose answer plan()
+// would then refuse.
+func askItemaLogin(f *pflag.FlagSet, p *prompt.Prompter) error {
+	yes, err := p.YesNo("Itema login?", false)
+	if err != nil {
+		return err
+	}
+	return f.Set("login", strconv.FormatBool(yes))
+}
 
 // printSummary lists every choice the developer made — the wizard's
 // question 9 — before asking for confirmation. preview is what
@@ -285,6 +294,11 @@ func printSummary(out io.Writer, plan createPlan, ownerLogin string, app platfor
 		fmt.Fprintln(out, "  Staging:    enabled, its own address and database")
 	} else {
 		fmt.Fprintln(out, "  Staging:    disabled")
+	}
+	if app.Login {
+		fmt.Fprintln(out, "  Login:      Itema (Entra ID) sign-in required")
+	} else {
+		fmt.Fprintln(out, "  Login:      disabled")
 	}
 	fmt.Fprintf(out, "  Address:    %s\n", preview.Address)
 	if preview.StagingAddress != "" {

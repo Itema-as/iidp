@@ -39,3 +39,11 @@ acme:
   server: https://acme-staging-v02.api.letsencrypt.org/directory
 argocdAdminGroup: 00000000-0000-0000-0000-000000000003
 clusterName: iidp-e2e
+
+# kind has no route to login.microsoftonline.com: oauth2-proxy would
+# otherwise fail its startup OIDC discovery call against the dummy tenant in
+# bootstrap/sops/oauth2-proxy-entra.enc.yaml and never become Ready, which
+# would turn Traefik's ForwardAuth into a 5xx instead of the redirect
+# TestBootstrap asserts. See bootstrap/README.md.
+oauth2Proxy:
+  skipOIDCDiscovery: true

@@ -133,6 +133,19 @@ func AddDomain(valuesYAML []byte, host string) (out []byte, changed bool, err er
 	return out, true, err
 }
 
+// EnableLogin edits an Environment's values.yaml in place to turn the Itema
+// login Capability on: login.enabled: true. Callers refuse the Capability
+// when it is already enabled or when a custom domain is present, so this
+// always has something to change.
+func EnableLogin(valuesYAML []byte) ([]byte, error) {
+	root, err := decodeDocument(valuesYAML, "values.yaml")
+	if err != nil {
+		return nil, err
+	}
+	setNestedValue(root, []string{"login", "enabled"}, boolNode(true))
+	return encodeDocument(root)
+}
+
 // CopyValuesForStaging turns a prod Environment's values.yaml (after any
 // Capability edits made in the same iidp app add-capability run) into the
 // starting values.yaml of a new staging Environment: the same Kind, image,

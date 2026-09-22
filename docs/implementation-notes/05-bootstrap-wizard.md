@@ -32,6 +32,8 @@ If `az ad app permission admin-consent` fails (the caller lacks Global/Privilege
 
 **Choice.** Write the tenant id, client id and client secret to a local, git-ignored file, `infra/platform/oauth2-proxy-entra.env` (`chmod 600`, `umask 077`), next to the other tfvars files the wizard already keeps out of git. It is not read by anything yet; #18's component reads it directly, or the admin re-runs this wizard once #18 defines where it belongs (most likely a fifth `bootstrap/sops/*.enc.yaml` file). The closing summary and this note both point at the file path, never at its contents. The oauth2-proxy redirect host, `auth.<baseDomain>`, is logged the same way (in the wizard's own output and here) so #18 does not have to re-derive it: `https://auth.<baseDomain>/oauth2/callback`.
 
+**Superseded by #18.** The fifth `bootstrap/sops/*.enc.yaml` file guessed above is now real: `stage_entra` writes `bootstrap/sops/oauth2-proxy-entra.enc.yaml` directly (plus a generated `cookieSecret`) instead of the local env file; see [`docs/implementation-notes/18-itema-login.md`](18-itema-login.md).
+
 ## `chartVersion` and the bootstrap pin: same tag, different fallback
 
 **Question.** `platform.yaml`'s `chartVersion` (the application chart version) and `bootstrap/platform-components.yaml`'s `targetRevision` (the pin on this repository's `bootstrap/` directory) are both meant to track "the current release", but one is a semver used to resolve an OCI chart and the other is a git ref.

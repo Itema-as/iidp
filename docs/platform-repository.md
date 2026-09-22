@@ -134,9 +134,11 @@ postgres:
   enabled: false
   migrationCommand: ""
   backupRetention: 30d
+login:
+  enabled: false
 ```
 
-`image.tag` is empty when the Application is created: no image exists yet. The deploy workflow's write-back, `iidp ci set-image <app> <environment> <tag>` (see "How the CLI writes" below), sets it in place, every other key and comment untouched: a commit SHA (the full SHA GitHub gives `github.sha`, not a short one) on every push to `main`, a version (the `v*` tag with its leading `v` stripped, for example tag `v1.2.3` writes `1.2.3`) on a `v*` tag. Until the first write, ArgoCD reports the Environment as failing to render because the chart requires a tag. Itema login adds a key to this file in a later ticket; `env` is where plain environment variables go.
+`image.tag` is empty when the Application is created: no image exists yet. The deploy workflow's write-back, `iidp ci set-image <app> <environment> <tag>` (see "How the CLI writes" below), sets it in place, every other key and comment untouched: a commit SHA (the full SHA GitHub gives `github.sha`, not a short one) on every push to `main`, a version (the `v*` tag with its leading `v` stripped, for example tag `v1.2.3` writes `1.2.3`) on a `v*` tag. Until the first write, ArgoCD reports the Environment as failing to render because the chart requires a tag. `env` is where plain environment variables go.
 
 `secrets` (a list of Secret names, empty until `iidp secret set` adds to it) is documented below.
 
@@ -146,6 +148,7 @@ postgres:
 - **`--staging`** writes `applications/<name>/staging/{application.yaml,values.yaml}` next to `prod`, in the same commit: `environment: staging`, the ArgoCD Application `<name>-staging` in namespace `<name>-staging`, and the address `<name>-staging.<baseDomain>` (the chart derives it from `environment`). Every other Capability is the same in both Environments.
 - **`--domain`** (repeatable) validates each host the way the chart does at render time (a lowercase DNS hostname of at least two labels, no duplicates) plus one only the CLI can check: none may equal a Platform address of either Environment. It then classifies each host: one label directly under `baseDomain` is covered by the Platform's wildcard certificate; any host inside `platform.yaml`'s `cloudflareZone` (the wildcard-covered ones included) is fully automatic, since external-dns can create its DNS record; anything else needs a CNAME to the prod address, which the closing summary prints (`CNAME <host> -> <name>.<baseDomain>`). `domains` is written for prod only: custom domains apply there, staging keeps its Platform address.
 - **`--size`** (`small`, `medium` or `large`) applies to every Environment; any other value is refused.
+- **`--login`** sets `login.enabled: true` in every Environment (prod and, with `--staging`, staging too: one oauth2-proxy cookie for the Platform base domain covers both, `docs/implementation-notes/18-itema-login.md`). Refused together with `--domain`: Itema login is for Platform addresses only, since its cookie is scoped to the base domain.
 
 ## `applications/<name>/<environment>/sops/`
 
@@ -210,14 +213,15 @@ The Secret's name (`<fullname>-<key-slug>`: the bare Application name for prod, 
 
 ## `iidp app add-capability`
 
-Edits an Application's existing Environment files in place with the yaml.v3 node helpers `internal/render` already uses for `secret set` (`AddSecretName`, `AddKustomizeSource`), so unrelated keys, comments and `secrets:` survive. It refuses an Application with no directory under `applications/`, and refuses a Capability already present (Postgres already `enabled`, a `staging` directory that already exists, a domain already in `domains`, the requested size equal to the current one), naming it; nothing is written when any check fails.
+Edits an Application's existing Environment files in place with the yaml.v3 node helpers `internal/render` already uses for `secret set` (`AddSecretName`, `AddKustomizeSource`), so unrelated keys, comments and `secrets:` survive. It refuses an Application with no directory under `applications/`, and refuses a Capability already present (Postgres already `enabled`, a `staging` directory that already exists, a domain already in `domains`, the requested size equal to the current one, Itema login already `enabled`), naming it; nothing is written when any check fails.
 
 - **`--postgres`** sets `postgres.enabled: true` (and `postgres.migrationCommand`, when given) and `platform.backupsBucket`/`objectStorageEndpoint` in every Environment the Application already has, exactly the fields `app create` writes.
 - **`--staging`** copies `prod`'s values.yaml into a new `applications/<name>/staging/values.yaml` (`environment: staging`, `image.tag` reset to `""`, `domains: []`, and no `secrets:` list — prod's secrets are not copied, since the CLI cannot decrypt them to move them, and the command logs that) plus the same `application.yaml` shape `app create` writes.
 - **`--domain`** (repeatable) validates and classifies each host exactly as `app create` does (`ValidateDomains`) and appends it to `prod`'s `domains`.
 - **`--size`** rewrites `size` in every Environment the Application already has.
+- **`--login`** sets `login.enabled: true` in every Environment the Application already has. Refused together with `--domain`, and refused when `prod` already lists a custom domain: Itema login is for Platform addresses only.
 
-Committed as `iidp app add-capability <name> <capabilities>` (space-separated Capability names: `postgres`, `staging`, `domain`, `size`), pushed with the same retry-once-on-a-moved-`main` behaviour as `app create`.
+Committed as `iidp app add-capability <name> <capabilities>` (space-separated Capability names: `postgres`, `staging`, `domain`, `size`, `login`), pushed with the same retry-once-on-a-moved-`main` behaviour as `app create`.
 
 ## `iidp app delete`
 

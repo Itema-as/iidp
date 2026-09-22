@@ -57,6 +57,9 @@ Helm renders first. It produces no output.
 {{- if and .Values.postgres.enabled (hasKey (.Values.env | default dict) "DATABASE_URL") -}}
 {{- fail "env must not set DATABASE_URL; the Postgres Capability injects it" -}}
 {{- end -}}
+{{- if and .Values.login.enabled (gt (len .Values.domains) 0) -}}
+{{- fail "login.enabled needs domains to be empty; Itema login is for Platform addresses only, since its cookie is scoped to the base domain" -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
