@@ -1,0 +1,157 @@
+{{- include "application.validate" . -}}
+{{- if include "application.postgres.enabled" . }}
+{{- $name := include "application.postgres.finalBackupName" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    # A PreDelete hook is created only when the Environment's own ArgoCD
+    # Application is deleted (never during a normal sync, even with prune),
+    # and ArgoCD waits for every PreDelete hook to reach Healthy before it
+    # deletes anything else and only then cleans the hooks up; a failing
+    # hook blocks the deletion with a DeletionError condition until it is
+    # fixed in git or removed by hand. So the final Backup Job below is
+    # guaranteed to run, and to finish or fail, before the Cluster it
+    # targets is torn down (docs/implementation-notes/39-final-backup-predelete-hook.md).
+    # This ServiceAccount, the Role and the RoleBinding are PreDelete hooks
+    # too, in sync-wave -1, one wave before the Job's default wave 0, so
+    # they exist by the time the Job's Pod starts.
+    argocd.argoproj.io/hook: PreDelete
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PreDelete
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-1"
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["backups"]
+    verbs: ["create", "get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PreDelete
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+    app.kubernetes.io/component: final-backup
+  annotations:
+    # Runs once, when the Environment's own Application is deleted, before
+    # any of its resources (the Cluster included) are removed: see the
+    # ServiceAccount above. No sync-wave: the default wave (0) already
+    # orders it after the RBAC above (wave -1), and it is the only Job in
+    # the PreDelete phase.
+    argocd.argoproj.io/hook: PreDelete
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  # One attempt: a hook that failed once should be inspected (its logs kept
+  # by BeforeHookCreation/HookSucceeded only removing it after success), not
+  # retried blindly against a database that may be in a bad state.
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "application.name" . }}
+        app.kubernetes.io/component: final-backup
+        iidp.itema.no/application: {{ include "application.name" . }}
+        iidp.itema.no/environment: {{ include "application.environment" . }}
+    spec:
+      serviceAccountName: {{ $name }}
+      restartPolicy: Never
+      containers:
+        - name: final-backup
+          # Pinned to the Kubernetes minor the Platform runs
+          # (bootstrap/versions.yaml's kind node image / infra's k3s pin):
+          # see application.postgres.finalBackupKubectlImage in
+          # _helpers.tpl for why bitnami/kubectl rather than the distroless
+          # registry.k8s.io/kubectl.
+          image: {{ include "application.postgres.finalBackupKubectlImage" . | quote }}
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -eu
+              NAMESPACE={{ .Release.Namespace | quote }}
+              CLUSTER={{ include "application.postgres.cluster" . | quote }}
+              PLUGIN={{ include "application.postgres.backupPlugin" . | quote }}
+              FULLNAME={{ include "application.fullname" . | quote }}
+              TIMEOUT={{ .Values.postgres.finalBackupTimeout | default 1800 }}
+              # A run-time timestamp, not a Helm-render-time one: the Backup
+              # is created imperatively by this script, so BeforeHookCreation
+              # (which only reaches declared hook manifests) cannot dedupe
+              # it, and a retried hook must not collide with a previous
+              # attempt's Backup object.
+              NAME="${FULLNAME}-final-$(date -u +%Y%m%d%H%M%S)"
+              RETAIN_UNTIL="$(date -u -d '+30 days' +%Y-%m-%d)"
+              echo "iidp: taking the final Backup ${NAME} of Cluster ${CLUSTER} in namespace ${NAMESPACE}, retain-until ${RETAIN_UNTIL}"
+              cat <<BACKUPMANIFEST | kubectl apply -f -
+              apiVersion: postgresql.cnpg.io/v1
+              kind: Backup
+              metadata:
+                name: ${NAME}
+                namespace: ${NAMESPACE}
+                annotations:
+                  iidp.itema.no/retain-until: "${RETAIN_UNTIL}"
+              spec:
+                cluster:
+                  name: ${CLUSTER}
+                method: plugin
+                pluginConfiguration:
+                  name: ${PLUGIN}
+              BACKUPMANIFEST
+              echo "iidp: waiting up to ${TIMEOUT}s for Backup ${NAME} to reach phase completed"
+              ELAPSED=0
+              while true; do
+                PHASE="$(kubectl get backup "${NAME}" -n "${NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                echo "iidp: [$(date -u +%H:%M:%S)Z] ${NAME} phase=${PHASE:-<none>} elapsed=${ELAPSED}s/${TIMEOUT}s"
+                if [ "${PHASE}" = "completed" ]; then
+                  echo "iidp: Backup ${NAME} completed"
+                  exit 0
+                fi
+                if [ "${PHASE}" = "failed" ]; then
+                  echo "iidp: Backup ${NAME} failed" >&2
+                  exit 1
+                fi
+                if [ "${ELAPSED}" -ge "${TIMEOUT}" ]; then
+                  echo "iidp: timed out after ${TIMEOUT}s waiting for Backup ${NAME} (last phase: ${PHASE:-<none>})" >&2
+                  exit 1
+                fi
+                sleep 10
+                ELAPSED=$((ELAPSED + 10))
+              done
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+{{- end }}

@@ -60,6 +60,9 @@ Helm renders first. It produces no output.
 {{- if and .Values.login.enabled (gt (len .Values.domains) 0) -}}
 {{- fail "login.enabled needs domains to be empty; Itema login is for Platform addresses only, since its cookie is scoped to the base domain" -}}
 {{- end -}}
+{{- if and .Values.postgres.enabled (hasKey .Values.postgres "finalBackupTimeout") (not (regexMatch "^[1-9][0-9]*$" (.Values.postgres.finalBackupTimeout | toString))) -}}
+{{- fail (printf "postgres.finalBackupTimeout must be a positive whole number of seconds, got %v" .Values.postgres.finalBackupTimeout) -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -120,6 +123,40 @@ The DATABASE_URL env entry, for the Deployment and the migration Job.
     secretKeyRef:
       name: {{ include "application.postgres.appSecret" . }}
       key: uri
+{{- end -}}
+
+{{/*
+The name of the final Backup PreDelete hook's ServiceAccount, Role,
+RoleBinding and Job: <fullname>-final-backup. Stable, not per-attempt, so
+argocd.argoproj.io/hook-delete-policy: BeforeHookCreation can replace a
+previous attempt's hook resources by name; the Backup object itself is
+named with a run-time timestamp inside the Job's own script instead, since
+it is created imperatively by kubectl and BeforeHookCreation only ever
+reaches resources the chart declares (docs/implementation-notes/39-final-backup-predelete-hook.md).
+*/}}
+{{- define "application.postgres.finalBackupName" -}}
+{{- printf "%s-final-backup" (include "application.fullname" .) -}}
+{{- end -}}
+
+{{/*
+The kubectl image the final Backup PreDelete hook Job runs with.
+bitnami/kubectl, not the distroless registry.k8s.io/kubectl: the hook's
+script needs a shell (bash, for GNU date's -d) to build the Backup manifest
+and poll its status, which a distroless image has no room for. Pinned by
+digest, not by a floating version tag: Docker Hub's tag API
+(hub.docker.com/v2/repositories/bitnami/kubectl/tags, checked 2026-09-22)
+shows bitnami/kubectl now publishes only "latest" plus content-addressed
+(sha256-*) attestation and signature tags -- no more per-Kubernetes-minor
+floating tags like the "1.36" this used to read, so a digest is the only
+way left to pin a reproducible build at all. This digest is "latest" as of
+that check (kubectl client v1.37.0, verified locally with `kubectl version
+--client`) and is the multi-arch manifest list, not a single platform's
+image, so it pulls on both amd64 (the Platform's Hetzner node and most CI
+runners) and arm64 (Apple Silicon, kind locally) alike. Bumping it is an
+edit here, the same as any other pinned version in this repository.
+*/}}
+{{- define "application.postgres.finalBackupKubectlImage" -}}
+docker.io/bitnami/kubectl@sha256:6e9c5284a0dac06e84de9f4d97852d2e6513442ee7ec3a66d35009eec86e1e62
 {{- end -}}
 
 {{/*

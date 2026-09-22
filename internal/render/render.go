@@ -159,9 +159,9 @@ type metadata struct {
 	Namespace string            `yaml:"namespace"`
 	Labels    map[string]string `yaml:"labels"`
 	// Finalizers is omitted (rather than rendered as an empty list) when
-	// there are none: the final-backup ArgoCD Application
-	// (render.FinalBackupApplication) deliberately carries no resources
-	// finalizer, unlike every Environment's own Application.
+	// there are none. Every Environment's Application carries the
+	// resources finalizer; nothing in this package renders one without it
+	// today, but the field stays optional rather than hard-coded.
 	Finalizers []string `yaml:"finalizers,omitempty"`
 }
 

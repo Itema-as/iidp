@@ -204,8 +204,17 @@ func TestBackupsGoToTheBucketThroughTheBarmanCloudPlugin(t *testing.T) {
 
 func TestMigrationJobRunsTheCommandBeforeTheRolloutOnlyWhenSet(t *testing.T) {
 	t.Run("absent without a command", func(t *testing.T) {
-		if found := objectsOfKind(render(t, "postgres-staging.yaml"), "Job"); len(found) != 0 {
-			t.Errorf("rendered %v without a migration command", found)
+		// Postgres is on in this fixture, so the final Backup PreDelete
+		// hook's own Job (chart/application/templates/final-backup-job.yaml)
+		// still renders; only the migration Job depends on a command.
+		var migrationJobs []string
+		for _, key := range objectsOfKind(render(t, "postgres-staging.yaml"), "Job") {
+			if strings.HasSuffix(key, "-migrate") {
+				migrationJobs = append(migrationJobs, key)
+			}
+		}
+		if len(migrationJobs) != 0 {
+			t.Errorf("rendered %v without a migration command", migrationJobs)
 		}
 	})
 
@@ -326,6 +335,12 @@ func TestRenderingRefusesPostgresValuesItCannotHonour(t *testing.T) {
 		{"refuse-postgres-missing-bucket.yaml", `platform.backupsBucket is required when postgres.enabled`},
 		{"refuse-env-sets-database-url.yaml", `env must not set DATABASE_URL; the Postgres Capability injects it`},
 		{"refuse-postgres-static-site.yaml", `postgres.enabled needs kind: web-service; a Static site has no server to use a database`},
+		{"refuse-postgres-final-backup-timeout.yaml", `postgres.finalBackupTimeout must be a positive whole number of seconds`},
+		// A code-review finding: `default 1800` in the validation itself
+		// would treat an explicit 0 as "unset" and silently let it through
+		// with the default substituted; the validation must see the real
+		// value.
+		{"refuse-postgres-final-backup-timeout-zero.yaml", `postgres.finalBackupTimeout must be a positive whole number of seconds, got 0`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {

@@ -214,8 +214,18 @@ func (w *Writer) CheckAvailable(ctx context.Context, name string) error {
 }
 
 // checkApplicationAbsent errors if name already has a directory under
-// ApplicationsDir in the clone at dir. retry names the error for the case
-// where the check runs again after a push was rejected because main moved.
+// ApplicationsDir in the clone at dir. This deliberately does not narrow to
+// "a live application.yaml exists": #39's iidp app delete leaves an
+// Environment's values.yaml (and any secrets) behind after removing its
+// application.yaml (see DeleteApplication's own doc comment and
+// docs/implementation-notes/39-final-backup-predelete-hook.md), and #58's
+// tolerance for hand edits means anything a human placed under
+// applications/<name>/, application.yaml or not, must still block a
+// same-named create from clobbering it -- the cost, recorded in the same
+// notes, is that recreating an Application right after deleting it needs
+// the leftover values.yaml removed by hand first. retry names the error for
+// the case where the check runs again after a push was rejected because
+// main moved.
 func checkApplicationAbsent(dir, name string, retry bool) error {
 	switch _, err := os.Stat(filepath.Join(dir, ApplicationsDir, name)); {
 	case err == nil && retry:
