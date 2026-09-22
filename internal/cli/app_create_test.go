@@ -84,6 +84,29 @@ func newPlatformRepository(t *testing.T, platformYAML string) string {
 	return url
 }
 
+// seedApplicationRepository creates a bare repository seeded with files on
+// defaultBranch, the way an existing Application repository the Adopt path
+// reads looks from the outside, and returns its bare directory (so a test
+// can push a branch to it directly, simulating one already present) and
+// its file:// clone URL.
+func seedApplicationRepository(t *testing.T, defaultBranch string, files map[string]string) (bareDir, cloneURL string) {
+	t.Helper()
+	setGitEnv(t)
+	bare := filepath.Join(t.TempDir(), "app-repo.git")
+	gitRun(t, t.TempDir(), "init", "--bare", "--initial-branch="+defaultBranch, bare)
+	url := "file://" + bare
+
+	seed := filepath.Join(t.TempDir(), "seed")
+	gitRun(t, t.TempDir(), "clone", "--quiet", url, seed)
+	for name, content := range files {
+		writeFile(t, filepath.Join(seed, name), content)
+	}
+	gitRun(t, seed, "add", "-A")
+	gitRun(t, seed, "commit", "-m", "Initial commit")
+	gitRun(t, seed, "push", "origin", "HEAD:"+defaultBranch)
+	return bare, url
+}
+
 // cloneMain clones the Platform repository into a fresh directory.
 func cloneMain(t *testing.T, url string) string {
 	t.Helper()

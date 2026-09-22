@@ -34,12 +34,35 @@ type fakeGitHub struct {
 	defaults            map[string]string
 	reposDir            string
 	createDefaultBranch string
+
+	// The following support the Adopt path's endpoints
+	// (docs/implementation-notes/15-cli-adopt-path.md): reading an existing
+	// repository's default branch and push permission, checking whether a
+	// branch already exists (against the real bare repository, so a push
+	// the CLI makes is genuinely observable afterwards), and opening a
+	// pull request.
+	repoDefaultBranch map[string]string // owner/name -> default branch
+	canPush           map[string]bool   // owner/name -> permissions.push
+	bareDir           map[string]string // owner/name -> the bare repository's filesystem path
+	pulls             []fakePullRequest
+	nextPRNumber      int
 }
 
 type fakeRequest struct {
 	Method string
 	Path   string
 	Body   map[string]any
+}
+
+// fakePullRequest is one POST /repos/{owner}/{name}/pulls the fake
+// recorded, for asserting on its base, head, title and body.
+type fakePullRequest struct {
+	Owner, Name string
+	Number      int
+	Title       string
+	Head        string
+	Base        string
+	Body        string
 }
 
 func newFakeGitHub(t *testing.T) *fakeGitHub {
@@ -53,6 +76,9 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		defaults:            map[string]string{},
 		reposDir:            t.TempDir(),
 		createDefaultBranch: "master",
+		repoDefaultBranch:   map[string]string{},
+		canPush:             map[string]bool{},
+		bareDir:             map[string]string{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/user", f.handleUser)
@@ -64,12 +90,54 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 	return f
 }
 
+// seedAdoptRepository seeds a real bare Application repository for
+// owner/name on defaultBranch with files, registers it with the fake as
+// existing with push access, and returns its file:// clone URL and bare
+// directory (for pushExistingBranch, to simulate a pre-existing AdoptBranch).
+func (f *fakeGitHub) seedAdoptRepository(t *testing.T, owner, name, defaultBranch string, files map[string]string) (cloneURL, bareDir string) {
+	t.Helper()
+	bare, url := seedApplicationRepository(t, defaultBranch, files)
+	key := owner + "/" + name
+	f.mu.Lock()
+	f.existing[key] = true
+	f.created[key] = url
+	f.bareDir[key] = bare
+	f.repoDefaultBranch[key] = defaultBranch
+	f.canPush[key] = true
+	f.mu.Unlock()
+	return url, bare
+}
+
+// denyPush makes owner/name (already seeded) report permissions.push:
+// false, the way a repository the developer cannot push to does.
+func (f *fakeGitHub) denyPush(owner, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.canPush[owner+"/"+name] = false
+}
+
+// pullRequestsTo returns the pull requests the fake recorded for
+// owner/name.
+func (f *fakeGitHub) pullRequestsTo(owner, name string) []fakePullRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []fakePullRequest
+	for _, pr := range f.pulls {
+		if pr.Owner == owner && pr.Name == name {
+			out = append(out, pr)
+		}
+	}
+	return out
+}
+
 // markExisting makes owner/name answer 200 to GET /repos/owner/name, the
 // way a repository that already exists does.
 func (f *fakeGitHub) markExisting(owner, name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.existing[owner+"/"+name] = true
+	f.canPush[owner+"/"+name] = true
+	f.repoDefaultBranch[owner+"/"+name] = "main"
 }
 
 // requestsTo reports how many recorded requests match method and a path
@@ -141,7 +209,21 @@ func (f *fakeGitHub) handleUser(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeGitHub) handleRepo(w http.ResponseWriter, r *http.Request) {
 	body := f.record(r)
-	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/repos/"), "/", 2)
+	rest := strings.TrimPrefix(r.URL.Path, "/repos/")
+
+	if r.Method == http.MethodPost && strings.HasSuffix(rest, "/pulls") {
+		owner, name := splitOwnerName(strings.TrimSuffix(rest, "/pulls"))
+		f.createPullRequest(w, owner, name, body)
+		return
+	}
+	if idx := strings.Index(rest, "/branches/"); idx >= 0 {
+		owner, name := splitOwnerName(rest[:idx])
+		branch := rest[idx+len("/branches/"):]
+		f.handleBranchExists(w, owner, name, branch)
+		return
+	}
+
+	parts := strings.SplitN(rest, "/", 2)
 	if len(parts) != 2 {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -151,12 +233,18 @@ func (f *fakeGitHub) handleRepo(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		f.mu.Lock()
 		exists := f.existing[key]
+		resp := map[string]any{
+			"full_name":      key,
+			"default_branch": f.repoDefaultBranch[key],
+			"clone_url":      f.created[key],
+			"permissions":    map[string]any{"push": f.canPush[key]},
+		}
 		f.mu.Unlock()
 		if !exists {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"full_name": key})
+		writeJSON(w, http.StatusOK, resp)
 	case http.MethodPatch:
 		branch, _ := body["default_branch"].(string)
 		f.mu.Lock()
@@ -166,6 +254,52 @@ func (f *fakeGitHub) handleRepo(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// splitOwnerName splits "owner/name" into its two parts.
+func splitOwnerName(s string) (owner, name string) {
+	parts := strings.SplitN(s, "/", 2)
+	if len(parts) != 2 {
+		return s, ""
+	}
+	return parts[0], parts[1]
+}
+
+// handleBranchExists answers GET /repos/{owner}/{name}/branches/{branch}
+// by checking the real bare repository the fake seeded or created for
+// owner/name: a genuine reflection of whatever the CLI has actually pushed,
+// rather than a separately tracked flag.
+func (f *fakeGitHub) handleBranchExists(w http.ResponseWriter, owner, name, branch string) {
+	f.mu.Lock()
+	bareDir := f.bareDir[owner+"/"+name]
+	f.mu.Unlock()
+	if bareDir == "" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	cmd := exec.Command("git", "--git-dir", bareDir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	if err := cmd.Run(); err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": branch})
+}
+
+// createPullRequest answers POST /repos/{owner}/{name}/pulls.
+func (f *fakeGitHub) createPullRequest(w http.ResponseWriter, owner, name string, body map[string]any) {
+	title, _ := body["title"].(string)
+	head, _ := body["head"].(string)
+	base, _ := body["base"].(string)
+	prBody, _ := body["body"].(string)
+
+	f.mu.Lock()
+	f.nextPRNumber++
+	n := f.nextPRNumber
+	f.pulls = append(f.pulls, fakePullRequest{Owner: owner, Name: name, Number: n, Title: title, Head: head, Base: base, Body: prBody})
+	f.mu.Unlock()
+
+	url := fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, name, n)
+	writeJSON(w, http.StatusCreated, map[string]any{"html_url": url, "number": n})
 }
 
 func (f *fakeGitHub) handleOrgRepos(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +333,9 @@ func (f *fakeGitHub) createRepo(w http.ResponseWriter, owner string, body map[st
 	f.mu.Lock()
 	f.created[key] = cloneURL
 	f.existing[key] = true
+	f.bareDir[key] = bare
+	f.repoDefaultBranch[key] = f.createDefaultBranch
+	f.canPush[key] = true
 	f.mu.Unlock()
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"clone_url":      cloneURL,
@@ -531,24 +668,8 @@ func TestAppCreatePathReportsWhatWasCreatedWhenThePlatformPushFails(t *testing.T
 	assertFileExists(t, filepath.Join(clone, "Dockerfile"))
 }
 
-func TestAppCreatePathAdoptIsNotImplementedYet(t *testing.T) {
-	platformURL := newPlatformRepository(t, testPlatformYAML)
-	gh := newFakeGitHub(t)
-
-	_, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
-		"--name", "shop", "--path", "adopt")
-
-	if code == 0 {
-		t.Fatalf("exit code = 0, want non-zero")
-	}
-	if !strings.Contains(stderr, "not implemented") || !strings.Contains(stderr, "15") {
-		t.Errorf("stderr = %q, want it to say Adopt is not implemented and name issue #15", stderr)
-	}
-	if len(gh.requests) != 0 {
-		t.Errorf("the fake GitHub API was called %d times, want 0", len(gh.requests))
-	}
-	assertNoApplications(t, platformURL)
-}
+// The Adopt path itself (--path adopt --repo ...) is covered end to end in
+// app_create_adopt_test.go; it is implemented, not refused, as of #15.
 
 func TestAppCreatePathFrameworkRequiresPathCreate(t *testing.T) {
 	platformURL := newPlatformRepository(t, testPlatformYAML)

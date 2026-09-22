@@ -23,8 +23,8 @@ import (
 const Branch = "main"
 
 // ErrRepositoryExists is wrapped by Create when owner/name already exists.
-// Create always generates a fresh repository; an existing one is what the
-// Adopt path (not yet built, see issue #15) is for.
+// Create always generates a fresh repository; an existing one is what
+// Adopt (--path adopt --repo owner/name) is for.
 var ErrRepositoryExists = errors.New("repository already exists")
 
 // Owner is where the Application repository is created.
@@ -76,7 +76,7 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 		return Result{}, err
 	}
 	if exists {
-		return Result{}, fmt.Errorf("%w: %s/%s; Create always generates a fresh repository, use Adopt (not available yet, see issue #15) for one that already exists", ErrRepositoryExists, app.Owner.Login, app.Name)
+		return Result{}, fmt.Errorf("%w: %s/%s; Create always generates a fresh repository, use --path adopt --repo %s/%s for one that already exists", ErrRepositoryExists, app.Owner.Login, app.Name, app.Owner.Login, app.Name)
 	}
 
 	dir, err := os.MkdirTemp("", "iidp-app-")

@@ -72,6 +72,19 @@ func (r *Repository) Commit(ctx context.Context, message string) error {
 	return nil
 }
 
+// CreateBranch creates and checks out a new local branch named name from
+// the current HEAD. Adopt uses it, after cloning the default branch, to
+// switch to the branch it pushes the pull request from
+// (docs/implementation-notes/15-cli-adopt-path.md), so the local branch
+// name matches what is pushed even though Push itself always targets its
+// branch argument regardless of the current branch.
+func (r *Repository) CreateBranch(ctx context.Context, name string) error {
+	if _, err := r.run(ctx, r.Dir, "checkout", "--quiet", "-b", name); err != nil {
+		return fmt.Errorf("checkout -b %s: %w", name, err)
+	}
+	return nil
+}
+
 // Remove deletes the given paths (files or directories) from the working
 // tree and stages the removal, the way "git rm -r" does. iidp app delete
 // uses it to remove an Environment's whole directory in one step.
