@@ -120,6 +120,80 @@ d=$(scratch_dir)
 " >/dev/null 2>&1 )
 assert_eq "$?" "1"
 
+# ── tfvar_get_multiline / tfvar_set_multiline (the PEM, #41) ────────────
+
+t_start "tfvar_set_multiline writes a heredoc, tfvar_get_multiline reads it back verbatim"
+d=$(scratch_dir)
+out=$(in_wizard "
+  f='$d/terraform.tfvars'
+  key=\$'-----BEGIN RSA PRIVATE KEY-----\nline one\nline two\n-----END RSA PRIVATE KEY-----'
+  tfvar_set_multiline \"\$f\" platform_repo_github_app_private_key \"\$key\" >/dev/null
+  tfvar_get_multiline \"\$f\" platform_repo_github_app_private_key
+")
+assert_contains "$out" "-----BEGIN RSA PRIVATE KEY-----"
+assert_contains "$out" "line one"
+assert_contains "$out" "line two"
+assert_contains "$out" "-----END RSA PRIVATE KEY-----"
+
+t_start "tfvar_set_multiline is an upsert: re-running keeps one block with the new value"
+d=$(scratch_dir)
+out=$(in_wizard "
+  f='$d/terraform.tfvars'
+  tfvar_set_multiline \"\$f\" platform_repo_github_app_private_key \$'first\nkey' >/dev/null
+  tfvar_set_multiline \"\$f\" platform_repo_github_app_private_key \$'second\nkey' >/dev/null
+  grep -c 'platform_repo_github_app_private_key =' \"\$f\"
+")
+assert_eq "$out" "1"
+out=$(in_wizard "
+  f='$d/terraform.tfvars'
+  tfvar_get_multiline \"\$f\" platform_repo_github_app_private_key
+")
+assert_contains "$out" "second"
+assert_not_contains "$out" "first"
+
+t_start "tfvar_set_multiline replaces a single-line tfvar_set value for the same key"
+d=$(scratch_dir)
+out=$(in_wizard "
+  f='$d/terraform.tfvars'
+  tfvar_set \"\$f\" platform_repo_github_app_private_key 'placeholder' >/dev/null
+  tfvar_set_multiline \"\$f\" platform_repo_github_app_private_key \$'-----BEGIN RSA PRIVATE KEY-----\nreal\n-----END RSA PRIVATE KEY-----' >/dev/null
+  grep -c 'platform_repo_github_app_private_key' \"\$f\"
+")
+assert_eq "$out" "1"
+out=$(in_wizard "
+  f='$d/terraform.tfvars'
+  tfvar_get_multiline \"\$f\" platform_repo_github_app_private_key
+")
+assert_contains "$out" "real"
+assert_not_contains "$out" "placeholder"
+
+t_start "tfvar_get_multiline on a missing key fails"
+d=$(scratch_dir)
+( in_wizard "
+  f='$d/terraform.tfvars'
+  touch \"\$f\"
+  tfvar_get_multiline \"\$f\" nope
+" >/dev/null 2>&1 )
+assert_eq "$?" "1"
+
+t_start "tfvar_get_multiline does not mistake a plain tfvar_set line for a heredoc"
+d=$(scratch_dir)
+( in_wizard "
+  f='$d/terraform.tfvars'
+  tfvar_set \"\$f\" hcloud_token 'abc123' >/dev/null
+  tfvar_get_multiline \"\$f\" hcloud_token
+" >/dev/null 2>&1 )
+assert_eq "$?" "1"
+
+t_start "tfvar_set_multiline chmods the file 600, like tfvar_set"
+d=$(scratch_dir)
+out=$(in_wizard "
+  f='$d/terraform.tfvars'
+  tfvar_set_multiline \"\$f\" platform_repo_github_app_private_key 'x' >/dev/null
+  stat -f '%OLp' \"\$f\" 2>/dev/null || stat -c '%a' \"\$f\"
+")
+assert_eq "$out" "600"
+
 # ── platform_yaml_get ────────────────────────────────────────────────────
 
 t_start "platform_yaml_get reads a top-level scalar"
@@ -210,9 +284,9 @@ assert_success "$?"
 
 # ── idempotency: re-running a stage keeps an already-encrypted secret ────
 
-t_start "stage_github_app keeps an existing githubApp.id and never calls gh again"
+t_start "stage_github_app keeps an existing githubApp.id, never calls gh again, and writes the tfvars credential (#41)"
 d=$(scratch_dir)
-mkdir -p "$d/platform-repo"
+mkdir -p "$d/platform-repo" "$d/infra-platform"
 cat > "$d/platform-repo/platform.yaml" <<'EOF'
 githubApp:
   id: 4242
@@ -220,6 +294,8 @@ githubApp:
 EOF
 out=$(in_wizard "
   PLATFORM_REPO='$d/platform-repo'
+  INFRA_PLATFORM_DIR='$d/infra-platform'
+  IIDP_WIZARD_FAKE_APP_PEM=\$'-----BEGIN RSA PRIVATE KEY-----\nfresh-key\n-----END RSA PRIVATE KEY-----'
   stage_github_app
   echo \"id=\$GITHUB_APP_ID installation=\$GITHUB_APP_INSTALLATION_ID\"
 " 2>&1)
@@ -231,6 +307,62 @@ assert_contains "$out" "keeping existing GitHub App id 4242"
 assert_contains "$out" "id=4242 installation=9191"
 assert_not_contains "$out" "set org secret"
 assert_not_contains "$out" "set org variable"
+
+t_start "stage_github_app (keep path, no tfvars yet) writes the three OpenTofu variables"
+tfvars_content=$(cat "$d/infra-platform/terraform.tfvars" 2>/dev/null || echo "MISSING")
+assert_contains "$tfvars_content" 'platform_repo_github_app_id = "4242"'
+assert_contains "$tfvars_content" 'platform_repo_github_app_installation_id = "9191"'
+assert_contains "$tfvars_content" "platform_repo_github_app_private_key = <<"
+assert_contains "$tfvars_content" "-----BEGIN RSA PRIVATE KEY-----"
+assert_contains "$tfvars_content" "fresh-key"
+
+t_start "stage_github_app (keep path, PEM already in tfvars) keeps it without asking again"
+out=$(in_wizard "
+  PLATFORM_REPO='$d/platform-repo'
+  INFRA_PLATFORM_DIR='$d/infra-platform'
+  IIDP_WIZARD_FAKE_APP_PEM=\$'-----BEGIN RSA PRIVATE KEY-----\nshould-not-be-written\n-----END RSA PRIVATE KEY-----'
+  stage_github_app
+" 2>&1)
+rc=$?
+t_start "stage_github_app (keep path, PEM already in tfvars) exits 0"
+assert_success "$rc"
+t_start "stage_github_app (keep path, PEM already in tfvars) keeps it without asking again"
+assert_contains "$out" "kept the existing platform_repo_github_app_private_key"
+tfvars_content=$(cat "$d/infra-platform/terraform.tfvars" 2>/dev/null || echo "MISSING")
+assert_contains "$tfvars_content" "fresh-key"
+assert_not_contains "$tfvars_content" "should-not-be-written"
+
+t_start "stage_github_app (fresh App) creates the App, sets org secret/variable, and writes tfvars"
+d=$(scratch_dir)
+mkdir -p "$d/platform-repo" "$d/infra-platform"
+cat > "$d/platform-repo/platform.yaml" <<'EOF'
+baseDomain: app.itma.no
+EOF
+answers=$(scratch_dir)/answers.env
+cat > "$answers" <<'EOF'
+GITHUB_ORG=itema-as
+GITHUB_APP_ID=5555
+PEM_PATH=/dev/null
+GITHUB_APP_INSTALLATION_ID=7777
+EOF
+out=$(in_wizard "
+  PLATFORM_REPO='$d/platform-repo'
+  INFRA_PLATFORM_DIR='$d/infra-platform'
+  IIDP_WIZARD_ANSWERS='$answers'
+  IIDP_WIZARD_FAKE_APP_PEM=\$'-----BEGIN RSA PRIVATE KEY-----\nbrand-new-key\n-----END RSA PRIVATE KEY-----'
+  stage_github_app
+" 2>&1)
+rc=$?
+t_start "stage_github_app (fresh App) exits 0"
+assert_success "$rc"
+t_start "stage_github_app (fresh App) sets the org secret and variable"
+assert_contains "$out" "(fake) set org secret IIDP_DEPLOY_APP_PRIVATE_KEY"
+assert_contains "$out" "(fake) set org variable IIDP_DEPLOY_APP_ID=5555"
+t_start "stage_github_app (fresh App) writes the tfvars credential for ArgoCD"
+tfvars_content=$(cat "$d/infra-platform/terraform.tfvars" 2>/dev/null || echo "MISSING")
+assert_contains "$tfvars_content" 'platform_repo_github_app_id = "5555"'
+assert_contains "$tfvars_content" 'platform_repo_github_app_installation_id = "7777"'
+assert_contains "$tfvars_content" "brand-new-key"
 
 t_start "stage_cloudflare keeps existing encrypted secrets without asking for a new token"
 d=$(scratch_dir)

@@ -10,7 +10,10 @@
 # Version bumps are applied the same way, by re-running it with K3S_VERSION,
 # ARGOCD_CHART_VERSION, HELM_VERSION and HELM_SHA256_LINUX_AMD64 set in the
 # environment; the values rendered below are the defaults for the first
-# boot.
+# boot. Rotating the Platform repository's GitHub App credential (below)
+# works the same way, with PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64 (and,
+# if they changed too, PLATFORM_REPO_GITHUB_APP_ID and
+# PLATFORM_REPO_GITHUB_APP_INSTALLATION_ID) set in the environment.
 
 write_files:
   - path: /usr/local/sbin/iidp-bootstrap
@@ -18,9 +21,10 @@ write_files:
     owner: root:root
     content: |
       #!/usr/bin/env bash
-      # Installs k3s and ArgoCD, creates the age key once, and applies the
-      # root ArgoCD Application. Everything after that is reconciled by
-      # ArgoCD from the Platform repository.
+      # Installs k3s and ArgoCD, creates the age key once, writes ArgoCD's
+      # credential for the Platform repository, and applies the root
+      # ArgoCD Application. Everything after that is reconciled by ArgoCD
+      # from the Platform repository.
       set -euo pipefail
       exec > >(tee -a /var/log/iidp-bootstrap.log) 2>&1
 
@@ -36,6 +40,12 @@ write_files:
       HELM_SHA256_LINUX_AMD64="$${HELM_SHA256_LINUX_AMD64:-${helm_sha256_linux_amd64}}"
       PLATFORM_REPO_URL="${platform_repo_url}"
       PLATFORM_REPO_PATH="${platform_repo_bootstrap_path}"
+      # The org GitHub App that authenticates ArgoCD to the (private)
+      # Platform repository. The private key travels as base64 (see the
+      # header comment above) and is decoded only where it is used, below.
+      PLATFORM_REPO_GITHUB_APP_ID="$${PLATFORM_REPO_GITHUB_APP_ID:-${platform_repo_github_app_id}}"
+      PLATFORM_REPO_GITHUB_APP_INSTALLATION_ID="$${PLATFORM_REPO_GITHUB_APP_INSTALLATION_ID:-${platform_repo_github_app_installation_id}}"
+      PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64="$${PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64:-${platform_repo_github_app_private_key_b64}}"
 
       export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
       export DEBIAN_FRONTEND=noninteractive
@@ -124,6 +134,39 @@ write_files:
         | base64 -d | age-keygen -y > /root/age.pub
       chmod 644 /root/age.pub
       log "age public key: $(cat /root/age.pub)"
+
+      # ArgoCD's credential for the Platform repository, so the root
+      # Application below can reconcile it from first boot with nobody
+      # touching the cluster (issue #41). Same App as the deploy workflow's
+      # CI write-back (contents: write, which already implies the read
+      # ArgoCD needs); the declarative shape is the one the ArgoCD
+      # documentation gives for GitHub App repository credentials: a Secret
+      # labelled argocd.argoproj.io/secret-type: repository. Re-running
+      # this script re-applies it, so a rotated key or a changed
+      # installation id (both overridable from the environment, see the
+      # header comment above) take effect on the next run. The decoded key
+      # exists only in this shell's memory -- never written to disk, never
+      # passed to log() or echo -- even though this whole script's stdout
+      # and stderr are teed to /var/log/iidp-bootstrap.log.
+      log "writing ArgoCD's Platform-repository credential"
+      GITHUB_APP_PRIVATE_KEY=$(printf '%s' "$PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64" | base64 -d)
+      kubectl apply -n argocd -f - <<EOF
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: platform-repo-github-app
+        namespace: argocd
+        labels:
+          argocd.argoproj.io/secret-type: repository
+      stringData:
+        type: git
+        url: $PLATFORM_REPO_URL
+        githubAppID: "$PLATFORM_REPO_GITHUB_APP_ID"
+        githubAppInstallationID: "$PLATFORM_REPO_GITHUB_APP_INSTALLATION_ID"
+        githubAppPrivateKey: |
+      $(printf '%s\n' "$GITHUB_APP_PRIVATE_KEY" | sed 's/^/    /')
+      EOF
+      unset GITHUB_APP_PRIVATE_KEY
 
       log "applying the root ArgoCD Application"
       kubectl apply -f - <<EOF

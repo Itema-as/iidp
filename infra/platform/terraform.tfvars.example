@@ -5,6 +5,22 @@
 hcloud_token   = "..."
 ssh_public_key = "ssh-ed25519 AAAA... admin@example"
 
+# ArgoCD's credential for the (private) Platform repository: the same org
+# GitHub App the bootstrap wizard's "GitHub App for CI write-back" stage
+# creates (id and installation id also recorded in the Platform
+# repository's platform.yaml). No default -- every Platform has its own
+# App -- and the private key is the App's downloaded PEM, so this file
+# must stay out of git (it already is: infra/platform/.gitignore and the
+# repository root's .gitignore both ignore *.tfvars, keeping only
+# terraform.tfvars.example tracked).
+platform_repo_github_app_id              = 123456
+platform_repo_github_app_installation_id = 78901234
+platform_repo_github_app_private_key     = <<EOT
+-----BEGIN RSA PRIVATE KEY-----
+...
+-----END RSA PRIVATE KEY-----
+EOT
+
 # Everything else has an agreed default in variables.tf; set it here only to
 # override, for example:
 # server_type = "cpx32"
