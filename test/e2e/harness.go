@@ -870,14 +870,34 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	}
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "deployment/argocd-repo-server", "--tail=40"); err == nil {
 		c.Log("argocd-repo-server log tail:\n%s", out)
+	} else {
+		c.Log("argocd-repo-server log tail: kubectl logs failed: %v\n%s", err, out)
 	}
 	// The application controller is what runs every sync, including the
 	// argocd Application's own takeover of itself; its log tail and the
 	// argocd Application's full operation state are the two things that
 	// say whether it stalled waiting on a hook, on another component's
-	// health, or on the repo server (the takeover race).
+	// health, or on the repo server (the takeover race). Logging the error
+	// too (rather than silently skipping) matters here: a StatefulSet
+	// reference resolves no pod, and so fails, exactly when the controller
+	// has been deleted and not yet recreated.
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "statefulset/argocd-application-controller", "--tail=80"); err == nil {
 		c.Log("argocd-application-controller log tail:\n%s", out)
+	} else {
+		c.Log("argocd-application-controller log tail: kubectl logs failed: %v\n%s", err, out)
+	}
+	// The redis-secret-init PreSync hook Job is the resource run 35659518279
+	// stalled on; its own status and pod log say whether the Job itself was
+	// slow to complete or the controller simply stopped reporting it.
+	if out, err := c.Kubectl(ctx, "-n", "argocd", "get", "job", "argocd-redis-secret-init", "-o", "yaml"); err == nil {
+		c.Log("argocd-redis-secret-init Job:\n%s", out)
+	} else {
+		c.Log("argocd-redis-secret-init Job: kubectl get failed: %v\n%s", err, out)
+	}
+	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "-l", "job-name=argocd-redis-secret-init", "--tail=40", "--all-containers"); err == nil {
+		c.Log("argocd-redis-secret-init pod log tail:\n%s", out)
+	} else {
+		c.Log("argocd-redis-secret-init pod log tail: kubectl logs failed: %v\n%s", err, out)
 	}
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "describe", "application", "argocd"); err == nil {
 		c.Log("argocd Application describe:\n%s", out)
