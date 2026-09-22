@@ -262,6 +262,23 @@ nodes:
 	if out, err := c.Kubectl(ctx, "-n", "kube-system", "scale", "deployment/coredns", "--replicas=1"); err != nil {
 		return fmt.Errorf("scale coredns: %w\n%s", err, out)
 	}
+	// kind's own components -- CoreDNS and the local-path provisioner --
+	// request CPU sized for a real cluster's node count, not for sharing a
+	// hosted CI runner's 2 vCPUs with the entire platform stack and both
+	// shop Environments. Neither is the product under test; trimming their
+	// requests to what this single-node, low-traffic cluster actually needs
+	// gives that CPU back to the fixture Applications' own Deployments and
+	// Jobs, which is what a scheduling failure here would otherwise starve
+	// (docs/implementation-notes/39-final-backup-predelete-hook.md). The
+	// static control-plane pods (kube-apiserver, etcd, etc.) are left alone:
+	// they are not Deployments, `kubectl set resources` cannot reach them,
+	// and their requests reflect the control plane's own real needs.
+	if out, err := c.Kubectl(ctx, "-n", "kube-system", "set", "resources", "deployment/coredns", "--requests=cpu=10m"); err != nil {
+		return fmt.Errorf("trim coredns cpu request: %w\n%s", err, out)
+	}
+	if out, err := c.Kubectl(ctx, "-n", "local-path-storage", "set", "resources", "deployment/local-path-provisioner", "--requests=cpu=10m"); err != nil {
+		return fmt.Errorf("trim local-path-provisioner cpu request: %w\n%s", err, out)
+	}
 	return nil
 }
 
@@ -329,6 +346,12 @@ func (c *Cluster) InstallTraefik(ctx context.Context) error {
 		// node IP instead.
 		"--set", "providers.kubernetesIngress.publishedService.enabled=false",
 		"--set", "additionalArguments={--providers.kubernetesingress.ingressendpoint.ip="+nodeIP+"}",
+		// The chart's own default CPU request (100m) is generous for a
+		// kind node that also has to schedule the whole platform stack and
+		// both shop Environments on a hosted CI runner's 2 vCPUs; this
+		// harness only needs Traefik to route a handful of test requests.
+		"--set", "resources.requests.cpu=20m",
+		"--set", "resources.requests.memory=64Mi",
 		"--wait", "--timeout", "5m")
 	if err != nil {
 		return fmt.Errorf("helm install traefik: %w\n%s", err, out)
@@ -1067,6 +1090,14 @@ func (c *Cluster) WaitForApplications(ctx context.Context, want map[string]Expec
 		}
 		if len(unmet) == 0 {
 			c.Log("all %d Applications reached their expected state after %s", len(names), time.Since(start).Round(time.Second))
+			// Logged on every successful wait, not only on the timeout path
+			// below: the node's CPU budget (docs/implementation-notes
+			// /39-final-backup-predelete-hook.md) is worth seeing on a green
+			// run too, both to catch the margin shrinking again before it
+			// starts failing and to give the next person who adds a fixture
+			// Application a number to check their own resource requests
+			// against.
+			c.logNodeAllocatedResources(ctx)
 			return nil
 		}
 		if time.Since(lastSummary) >= 30*time.Second {
@@ -1089,6 +1120,25 @@ func (c *Cluster) WaitForApplications(ctx context.Context, want map[string]Expec
 // recent cluster events: everything the takeover race (see
 // docs/implementation-notes/04-bootstrap.md, "The takeover race") needs to
 // be diagnosed from a single failed run's output, without a kept cluster.
+// logNodeAllocatedResources logs kind's single node's "Allocated resources:"
+// table (each resource's total Requests/Limits against the node's
+// Allocatable capacity, including the percentage this harness cares about:
+// how close cpu Requests are to the node's schedulable 2 vCPUs on a hosted
+// CI runner) -- see docs/implementation-notes/39-final-backup-predelete-hook.md
+// for why this budget is worth watching on every run, not only a failed
+// one. Best-effort: errors are swallowed, the same as every other
+// diagnostic in this file, since this only ever runs alongside a test's own
+// pass/fail result, which must not depend on it.
+func (c *Cluster) logNodeAllocatedResources(ctx context.Context) {
+	out, err := c.Kubectl(ctx, "describe", "node")
+	if err != nil {
+		return
+	}
+	if i := strings.Index(out, "Allocated resources:"); i >= 0 {
+		c.Log("node allocated resources:\n%s", out[i:])
+	}
+}
+
 func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]ApplicationStatus, names []string) {
 	for _, name := range names {
 		app, ok := apps[name]
@@ -1116,13 +1166,19 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	}
 	// A Pod stuck Pending is almost always the scheduler refusing it (most
 	// often insufficient CPU or memory on kind's single node); the events
-	// and the node's allocated-resources table say which.
+	// and the node's per-pod requests and allocated-resources table say
+	// which pod, and by how much.
 	if out, err := c.Kubectl(ctx, "get", "events", "-A", "--field-selector=reason=FailedScheduling", "--sort-by=.lastTimestamp"); err == nil && strings.TrimSpace(out) != "" {
 		c.Log("FailedScheduling events:\n%s", out)
 	}
+	// From "Non-terminated Pods:" to the end of the output: this covers
+	// both the per-pod CPU/memory requests and limits table and the
+	// "Allocated resources:" totals right after it, so a timed-out run
+	// shows not just how full the node's CPU budget is but which pods are
+	// spending it (docs/implementation-notes/39-final-backup-predelete-hook.md).
 	if out, err := c.Kubectl(ctx, "describe", "node"); err == nil {
-		if i := strings.Index(out, "Allocated resources:"); i >= 0 {
-			c.Log("node allocated resources:\n%s", out[i:])
+		if i := strings.Index(out, "Non-terminated Pods:"); i >= 0 {
+			c.Log("node pods and allocated resources:\n%s", out[i:])
 		}
 	}
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "deployment/argocd-repo-server", "--tail=40"); err == nil {
@@ -1279,7 +1335,14 @@ spec:
 // a small mc Job that creates MinIOBucket once the server answers -- run as
 // a Job with retries rather than as an initContainer of the server itself,
 // since it has to wait for the Service, not just the container, to be
-// reachable.
+// reachable. CPU requests are pinned to 10m on both: this harness, not the
+// product under test, and a hosted CI runner's node has only 2 vCPUs of
+// schedulable capacity total (see docs/implementation-notes
+// /39-final-backup-predelete-hook.md) -- every millicore claimed here is one
+// the shop-prod/shop-staging fixture's own Deployment and migrate Job
+// cannot get. The mc Job carries no CPU limit at all for the same reason:
+// it runs once, for seconds, and only its request (not its limit) competes
+// for the node's scheduling budget.
 func minioManifest() string {
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
@@ -1314,7 +1377,7 @@ spec:
             periodSeconds: 2
           resources:
             requests:
-              cpu: "50m"
+              cpu: "10m"
               memory: "128Mi"
             limits:
               cpu: "250m"
@@ -1360,10 +1423,9 @@ spec:
               mc mb --ignore-existing local/%[6]s
           resources:
             requests:
-              cpu: "25m"
+              cpu: "10m"
               memory: "32Mi"
             limits:
-              cpu: "100m"
               memory: "64Mi"
 `, GitServerNamespace, minioImage, minioClientImage, MinIOAccessKey, MinIOSecretKey, MinIOBucket)
 }
