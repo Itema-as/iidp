@@ -66,9 +66,28 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 }
 
 // newPlatformRepository creates a bare repository whose main branch holds
-// platform.yaml and an empty applications/ directory, and returns its
-// file:// URL.
+// platform.yaml, an empty applications/ directory and
+// bootstrap/backups-credentials.enc.yaml (the file the bootstrap wizard
+// writes once for the Platform's age key, docs/implementation-notes/42-backups-credentials.md),
+// all in the one "Seed the Platform repository" commit every existing test
+// already expects: every --postgres test needs something for the CLI to
+// copy, so it is seeded here rather than by each test individually. Tests
+// that exercise its absence use newPlatformRepositoryWithoutBackupsCredentials
+// instead. Returns the repository's file:// URL.
 func newPlatformRepository(t *testing.T, platformYAML string) string {
+	t.Helper()
+	return newSeededPlatformRepository(t, platformYAML, true)
+}
+
+// newPlatformRepositoryWithoutBackupsCredentials is newPlatformRepository
+// without bootstrap/backups-credentials.enc.yaml: only tests asserting the
+// CLI's refusal when the file is missing use this directly.
+func newPlatformRepositoryWithoutBackupsCredentials(t *testing.T, platformYAML string) string {
+	t.Helper()
+	return newSeededPlatformRepository(t, platformYAML, false)
+}
+
+func newSeededPlatformRepository(t *testing.T, platformYAML string, withBackupsCredentials bool) string {
 	t.Helper()
 	setGitEnv(t)
 	bare := filepath.Join(t.TempDir(), "iidp-platform.git")
@@ -78,6 +97,9 @@ func newPlatformRepository(t *testing.T, platformYAML string) string {
 	seed := cloneMain(t, url)
 	writeFile(t, filepath.Join(seed, "platform.yaml"), platformYAML)
 	writeFile(t, filepath.Join(seed, "applications", ".gitkeep"), "")
+	if withBackupsCredentials {
+		writeFile(t, filepath.Join(seed, "bootstrap", "backups-credentials.enc.yaml"), string(readBackupsCredentialsFixture(t)))
+	}
 	gitRun(t, seed, "add", "-A")
 	gitRun(t, seed, "commit", "-m", "Seed the Platform repository")
 	gitRun(t, seed, "push", "origin", "HEAD:main")

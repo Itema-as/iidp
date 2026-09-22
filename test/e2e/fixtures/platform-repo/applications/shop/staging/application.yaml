@@ -3,7 +3,10 @@
 # The one deviation from what the CLI writes: the chart source is this
 # repository's iidp.git served in-cluster (path chart/application) rather
 # than the OCI reference, because kind has no GHCR. See
-# docs/implementation-notes/09-e2e-fixture-application.md.
+# docs/implementation-notes/09-e2e-fixture-application.md. The third source
+# (sops/) is what iidp app create --postgres itself writes once the
+# Postgres Capability copies bootstrap/backups-credentials.enc.yaml into
+# this Environment (docs/implementation-notes/42-backups-credentials.md).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -26,6 +29,9 @@ spec:
     - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
       targetRevision: main
       ref: values
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+      targetRevision: main
+      path: applications/shop/staging/sops
   destination:
     server: https://kubernetes.default.svc
     namespace: shop-staging

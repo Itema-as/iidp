@@ -410,6 +410,95 @@ assert_contains "$out" "token validated against /user/tokens/verify"
 assert_contains "$out" "zone itma.no is readable"
 assert_contains "$out" "token=[fake-token]"
 
+# ── Object Storage location / objectStorageEndpoint derivation ──────────
+
+t_start "stage_hetzner derives objectStorageEndpoint from the default location (hel1)"
+d=$(scratch_dir)
+answers=$(scratch_dir)/answers.env
+cat > "$answers" <<'EOF'
+HCLOUD_TOKEN=fake-token
+OBJECT_STORAGE_ACCESS_KEY=access123
+OBJECT_STORAGE_SECRET_KEY=secret123
+EOF
+out=$(in_wizard "
+  STATE_TFVARS='$d/state.tfvars'
+  PLATFORM_TFVARS='$d/platform.tfvars'
+  IIDP_WIZARD_ANSWERS='$answers'
+  stage_hetzner >/dev/null
+  echo \"location=[\${OBJECT_STORAGE_LOCATION}] endpoint=[\${OBJECT_STORAGE_ENDPOINT}]\"
+" 2>&1)
+rc=$?
+t_start "stage_hetzner (derive endpoint) exits 0"
+assert_success "$rc"
+t_start "stage_hetzner derives objectStorageEndpoint from the default location (hel1)"
+assert_contains "$out" "location=[hel1]"
+assert_contains "$out" "endpoint=[https://hel1.your-objectstorage.com]"
+
+t_start "stage_hetzner derives objectStorageEndpoint from a non-default location"
+d=$(scratch_dir)
+answers=$(scratch_dir)/answers.env
+cat > "$answers" <<'EOF'
+HCLOUD_TOKEN=fake-token
+OBJECT_STORAGE_ACCESS_KEY=access123
+OBJECT_STORAGE_SECRET_KEY=secret123
+OBJECT_STORAGE_LOCATION=fsn1
+EOF
+out=$(in_wizard "
+  STATE_TFVARS='$d/state.tfvars'
+  PLATFORM_TFVARS='$d/platform.tfvars'
+  IIDP_WIZARD_ANSWERS='$answers'
+  stage_hetzner >/dev/null
+  echo \"location=[\${OBJECT_STORAGE_LOCATION}] endpoint=[\${OBJECT_STORAGE_ENDPOINT}]\"
+" 2>&1)
+rc=$?
+t_start "stage_hetzner (non-default location) exits 0"
+assert_success "$rc"
+t_start "stage_hetzner derives objectStorageEndpoint from a non-default location"
+assert_contains "$out" "location=[fsn1]"
+assert_contains "$out" "endpoint=[https://fsn1.your-objectstorage.com]"
+out=$(in_wizard "tfvar_get '$d/state.tfvars' location")
+assert_eq "$out" "fsn1"
+
+t_start "stage_hetzner honours an explicit objectStorageEndpoint override"
+d=$(scratch_dir)
+answers=$(scratch_dir)/answers.env
+cat > "$answers" <<'EOF'
+HCLOUD_TOKEN=fake-token
+OBJECT_STORAGE_ACCESS_KEY=access123
+OBJECT_STORAGE_SECRET_KEY=secret123
+OBJECT_STORAGE_ENDPOINT=https://custom.example.test
+EOF
+out=$(in_wizard "
+  STATE_TFVARS='$d/state.tfvars'
+  PLATFORM_TFVARS='$d/platform.tfvars'
+  IIDP_WIZARD_ANSWERS='$answers'
+  stage_hetzner >/dev/null
+  echo \"endpoint=[\${OBJECT_STORAGE_ENDPOINT}]\"
+" 2>&1)
+rc=$?
+t_start "stage_hetzner (override) exits 0"
+assert_success "$rc"
+t_start "stage_hetzner honours an explicit objectStorageEndpoint override"
+assert_contains "$out" "endpoint=[https://custom.example.test]"
+
+t_start "write_platform_yaml writes objectStorageEndpoint"
+d=$(scratch_dir)
+mkdir -p "$d/platform-repo"
+out=$(in_wizard "
+  PLATFORM_REPO='$d/platform-repo'
+  BASE_DOMAIN=app.itma.no
+  CLOUDFLARE_ZONE=itma.no
+  ARGOCD_URL=https://argocd.app.itma.no
+  GRAFANA_URL=https://itema.grafana.net
+  GITHUB_APP_ID=1
+  GITHUB_APP_INSTALLATION_ID=1
+  AGE_PUBLIC_KEY=age1test
+  ARGOCD_ADMIN_GROUP=00000000-0000-0000-0000-000000000001
+  write_platform_yaml 0.1.0 platform@itma.no https://acme-v02.api.letsencrypt.org/directory iidp itema-iidp-db-backups https://hel1.your-objectstorage.com
+")
+content=$(cat "$d/platform-repo/platform.yaml" 2>/dev/null || echo "MISSING")
+assert_contains "$content" "objectStorageEndpoint: https://hel1.your-objectstorage.com"
+
 # ── sops round-trip: what write_and_encrypt_secrets actually produces ───
 
 if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; then
@@ -455,6 +544,55 @@ if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; the
   assert_contains "$oauth2decrypted" "tenant: 11111111-1111-1111-1111-111111111111"
   assert_contains "$oauth2decrypted" "cookieSecret: cookie-secret-value"
   assert_contains "$oauth2decrypted" "namespace: oauth2-proxy"
+
+  t_start "write_backups_credentials produces a document sops can decrypt back, with no namespace"
+  d2=$(scratch_dir)
+  mkdir -p "$d2/bootstrap"
+  out=$(in_wizard "
+    PLATFORM_REPO='$d2'
+    AGE_PUBLIC_KEY='$pub'
+    OBJECT_STORAGE_ACCESS_KEY='iidpe2e'
+    OBJECT_STORAGE_SECRET_KEY='iidpe2epassword'
+    OBJECT_STORAGE_KEYS_CHANGED=1
+    write_sops_yaml
+    write_backups_credentials
+  " 2>&1)
+  rc=$?
+  assert_success "$rc"
+  t_start "the written backups-credentials file is sops ciphertext, not plaintext"
+  backupscontent=$(cat "$d2/bootstrap/backups-credentials.enc.yaml" 2>/dev/null || echo "MISSING")
+  assert_contains "$backupscontent" "ENC["
+  t_start "the written backups-credentials file carries no namespace"
+  assert_not_contains "$backupscontent" "namespace:"
+  t_start "sops --decrypt reproduces the original Object Storage keys"
+  backupsdecrypted=$(SOPS_AGE_KEY_FILE="$keydir/key.txt" sops --decrypt "$d2/bootstrap/backups-credentials.enc.yaml" 2>&1)
+  assert_contains "$backupsdecrypted" "ACCESS_KEY_ID: iidpe2e"
+  assert_contains "$backupsdecrypted" "ACCESS_SECRET_KEY: iidpe2epassword"
+  assert_contains "$backupsdecrypted" 'kustomize.config.k8s.io/needs-hash: "false"'
+
+  t_start "write_backups_credentials decrypts unchanged after being copied to a different path"
+  mkdir -p "$d2/applications/shop/prod/sops"
+  cp "$d2/bootstrap/backups-credentials.enc.yaml" "$d2/applications/shop/prod/sops/backups-credentials.enc.yaml"
+  copieddecrypted=$(SOPS_AGE_KEY_FILE="$keydir/key.txt" sops --decrypt "$d2/applications/shop/prod/sops/backups-credentials.enc.yaml" 2>&1)
+  assert_eq "$copieddecrypted" "$backupsdecrypted"
+
+  t_start "write_backups_credentials keeps an existing file when the Object Storage keys are unchanged"
+  before=$(cat "$d2/bootstrap/backups-credentials.enc.yaml")
+  out=$(in_wizard "
+    PLATFORM_REPO='$d2'
+    AGE_PUBLIC_KEY='$pub'
+    OBJECT_STORAGE_ACCESS_KEY='iidpe2e'
+    OBJECT_STORAGE_SECRET_KEY='iidpe2epassword'
+    OBJECT_STORAGE_KEYS_CHANGED=0
+    write_backups_credentials
+  " 2>&1)
+  rc=$?
+  t_start "write_backups_credentials (kept path) exits 0"
+  assert_success "$rc"
+  t_start "write_backups_credentials keeps an existing file when the Object Storage keys are unchanged"
+  assert_contains "$out" "keeping existing bootstrap/backups-credentials.enc.yaml"
+  after=$(cat "$d2/bootstrap/backups-credentials.enc.yaml")
+  assert_eq "$after" "$before"
 else
   echo "skip - age-keygen or sops not installed, skipping the sops round-trip test"
 fi

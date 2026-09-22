@@ -117,6 +117,20 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 	if caps.Postgres && (cfg.BackupsBucket == "" || cfg.ObjectStorageEndpoint == "") {
 		return Result{}, fmt.Errorf("%s in %s sets no backupsBucket or objectStorageEndpoint, needed for the Postgres Capability", ConfigFile, platform.Repository)
 	}
+	// postgresEnabledAfter is Postgres's state once this run's edits land:
+	// already on (prod.Postgres.Enabled, read above) or being turned on
+	// now. Postgres is uniform across an Application's Environments by
+	// construction (docs/implementation-notes/17-cli-add-capability-delete.md,
+	// "add-capability's already-present checks read prod only"), so it
+	// decides both whether every existing Environment needs
+	// BackupsCredentialsFile copied and whether a new staging Environment
+	// (below) does too.
+	postgresEnabledAfter := caps.Postgres || prod.Postgres.Enabled
+	if caps.Postgres || (caps.Staging && prod.Postgres.Enabled) {
+		if err := checkBackupsCredentialsPresent(dir); err != nil {
+			return Result{}, err
+		}
+	}
 	if caps.Login && len(caps.Domains) > 0 {
 		return Result{}, errors.New(LoginDomainConflictMessage)
 	}
@@ -145,6 +159,16 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 			return Result{}, err
 		}
 		files = append(files, envFiles...)
+		if caps.Postgres {
+			// Only when Postgres is being newly enabled in this call: an
+			// Environment that already had it enabled already has the file
+			// copied, from whichever run turned it on.
+			credFiles, err := copyBackupsCredentials(dir, application, env)
+			if err != nil {
+				return Result{}, err
+			}
+			files = append(files, credFiles...)
+		}
 		if env == "prod" {
 			prodValuesAfterEdits = newValues
 		}
@@ -160,6 +184,16 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 			return Result{}, err
 		}
 		files = append(files, stagingFiles...)
+		if postgresEnabledAfter {
+			// The new staging Environment never had the file copied
+			// before, regardless of whether Postgres was already on (from
+			// a previous run) or is being turned on in this same one.
+			credFiles, err := copyBackupsCredentials(dir, application, "staging")
+			if err != nil {
+				return Result{}, err
+			}
+			files = append(files, credFiles...)
+		}
 	}
 
 	if err := repo.Add(ctx, files...); err != nil {

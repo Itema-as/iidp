@@ -294,6 +294,11 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 	if app.Postgres && (cfg.BackupsBucket == "" || cfg.ObjectStorageEndpoint == "") {
 		return Result{}, fmt.Errorf("%s in %s sets no backupsBucket or objectStorageEndpoint, needed for the Postgres Capability", ConfigFile, platform.Repository)
 	}
+	if app.Postgres {
+		if err := checkBackupsCredentialsPresent(dir); err != nil {
+			return Result{}, err
+		}
+	}
 	if app.Login && len(app.Domains) > 0 {
 		return Result{}, errors.New(LoginDomainConflictMessage)
 	}
@@ -319,6 +324,10 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 		for _, environment := range environments {
 			envDir := EnvironmentDir(app.Name, environment)
 			files = append(files, path.Join(envDir, "application.yaml"), path.Join(envDir, "values.yaml"))
+			if app.Postgres {
+				sopsDir := path.Join(envDir, "sops")
+				files = append(files, path.Join(sopsDir, "backups-credentials.enc.yaml"), path.Join(sopsDir, "kustomization.yaml"), path.Join(sopsDir, "ksops.yaml"))
+			}
 		}
 	} else {
 		appDir := path.Join(ApplicationsDir, app.Name)
@@ -344,6 +353,13 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 				return Result{}, err
 			}
 			files = append(files, envFiles...)
+			if app.Postgres {
+				credFiles, err := copyBackupsCredentials(dir, app.Name, environment)
+				if err != nil {
+					return Result{}, err
+				}
+				files = append(files, credFiles...)
+			}
 		}
 		if err := repo.Add(ctx, files...); err != nil {
 			return Result{}, err
