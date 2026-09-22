@@ -857,6 +857,16 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	if out, err := c.Kubectl(ctx, "get", "pods", "-A", "--field-selector=status.phase!=Running,status.phase!=Succeeded"); err == nil {
 		c.Log("pods not running:\n%s", out)
 	}
+	// Every pod in argocd, Running or not, with its age and restart count:
+	// whether the application controller currently exists at all, and how
+	// long ago it (or anything else) last restarted, is the single most
+	// direct answer to whether the takeover race (docs/implementation-notes
+	// /04-bootstrap.md) is the controller being mid-replacement right now.
+	if out, err := c.Kubectl(ctx, "-n", "argocd", "get", "pods", "-o", "wide"); err == nil {
+		c.Log("argocd namespace pods:\n%s", out)
+	} else {
+		c.Log("argocd namespace pods: kubectl get failed: %v\n%s", err, out)
+	}
 	// A Pod stuck Pending is almost always the scheduler refusing it (most
 	// often insufficient CPU or memory on kind's single node); the events
 	// and the node's allocated-resources table say which.
