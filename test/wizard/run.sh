@@ -190,7 +190,7 @@ d=$(scratch_dir)
 out=$(in_wizard "
   f='$d/terraform.tfvars'
   tfvar_set_multiline \"\$f\" platform_repo_github_app_private_key 'x' >/dev/null
-  stat -f '%OLp' \"\$f\" 2>/dev/null || stat -c '%a' \"\$f\"
+  stat -c '%a' \"\$f\" 2>/dev/null || stat -f '%OLp' \"\$f\"
 ")
 assert_eq "$out" "600"
 
