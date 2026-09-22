@@ -1,8 +1,8 @@
 // Package e2e stands up a kind cluster the way the Platform node is
-// bootstrapped: Traefik as k3s ships it, ArgoCD from the pinned upstream
-// manifest, the age key Secret, and the root Application `platform`, with
-// the Platform repository and this repository's bootstrap served by a git
-// server inside the cluster. No cloud account is involved.
+// bootstrapped: Traefik as k3s ships it, ArgoCD rendered from the pinned
+// argo-cd Helm chart, the age key Secret, and the root Application
+// `platform`, with the Platform repository and this repository's bootstrap
+// served by a git server inside the cluster. No cloud account is involved.
 //
 // TestBootstrap (bootstrap_test.go, build tag e2e) drives it end to end.
 // The Cluster type is exported so a later test can deploy a fixture
@@ -57,7 +57,8 @@ const (
 // mimic the node.
 type Versions struct {
 	ArgoCD struct {
-		Manifest string `yaml:"manifest"`
+		Chart      string `yaml:"chart"`
+		Repository string `yaml:"repository"`
 	} `yaml:"argocd"`
 	K3s struct {
 		Version string `yaml:"version"`
@@ -85,7 +86,8 @@ func LoadVersions(repoRoot string) (Versions, error) {
 		return v, fmt.Errorf("parse bootstrap/versions.yaml: %w", err)
 	}
 	for name, value := range map[string]string{
-		"argocd.manifest":         v.ArgoCD.Manifest,
+		"argocd.chart":            v.ArgoCD.Chart,
+		"argocd.repository":       v.ArgoCD.Repository,
 		"k3s.traefik.chart":       v.K3s.Traefik.Chart,
 		"k3s.traefik.chartURL":    v.K3s.Traefik.ChartURL,
 		"k3s.traefik.crdChartURL": v.K3s.Traefik.CRDChartURL,
@@ -313,18 +315,31 @@ func (c *Cluster) InstallTraefik(ctx context.Context) error {
 }
 
 // InstallArgoCD installs ArgoCD exactly as cloud-init does
-// (infra/platform/cloud-init/user-data.yaml.tftpl) and waits for it to be
-// up.
+// (infra/platform/cloud-init/user-data.yaml.tftpl): rendering the argo-cd
+// chart with helm template (the local helm on PATH, unlike cloud-init which
+// downloads a pinned one) and applying the output server-side, with the
+// minimum values the argocd bootstrap Application's takeover relies on for
+// the objects' shape (fullnameOverride: argocd, crds.install: true), so
+// that Application's first sync only ever patches what is already running
+// (docs/implementation-notes/04-bootstrap.md, "Installing from the chart,
+// not the upstream manifests"). Then waits for ArgoCD to be up.
 func (c *Cluster) InstallArgoCD(ctx context.Context) error {
-	version := c.Versions.ArgoCD.Manifest
-	c.Log("installing ArgoCD %s from the upstream manifest", version)
+	a := c.Versions.ArgoCD
+	c.Log("installing ArgoCD by rendering the argo-cd chart %s", a.Chart)
 	if err := c.Apply(ctx, "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: argocd\n"); err != nil {
 		return err
 	}
-	manifest := fmt.Sprintf("https://raw.githubusercontent.com/argoproj/argo-cd/%s/manifests/install.yaml", version)
-	out, err := c.Kubectl(ctx, "apply", "-n", "argocd", "--server-side", "--force-conflicts", "-f", manifest)
+	manifest, err := c.HelmTemplate(ctx, "argocd", "argo-cd",
+		"--repo", a.Repository, "--version", a.Chart,
+		"--namespace", "argocd", "--include-crds",
+		"--set", "fullnameOverride=argocd", "--set", "crds.install=true")
 	if err != nil {
-		return fmt.Errorf("kubectl apply argocd: %w\n%s", err, out)
+		return fmt.Errorf("helm template argo-cd: %w", err)
+	}
+	// Server-side apply is required: the ArgoCD CRDs exceed the annotation
+	// size limit of client-side apply.
+	if err := c.Apply(ctx, manifest, "-n", "argocd", "--server-side", "--force-conflicts"); err != nil {
+		return err
 	}
 	if out, err := c.Kubectl(ctx, "wait", "--for=condition=established", "crd/applications.argoproj.io", "--timeout=120s"); err != nil {
 		return fmt.Errorf("wait for Application CRD: %w\n%s", err, out)
@@ -335,6 +350,21 @@ func (c *Cluster) InstallArgoCD(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// HelmTemplate runs helm template and returns just the rendered manifests
+// (stdout kept separate from stderr), so the result is safe to feed to
+// kubectl apply without helm's own log lines corrupting the YAML.
+func (c *Cluster) HelmTemplate(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "helm", append([]string{"template"}, args...)...)
+	cmd.Env = c.env()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("helm template %v: %w\n%s", args, err, stderr.String())
+	}
+	return stdout.String(), nil
 }
 
 // CreateAgeKeySecret creates the Secret argocd/sops-age with the age private

@@ -8,9 +8,14 @@ output "k3s_version" {
   value       = var.k3s_version
 }
 
-output "argocd_version" {
-  description = "ArgoCD version the node is meant to run. Pass it to iidp-bootstrap on the node to apply a bump in place."
-  value       = var.argocd_version
+output "argocd_chart_version" {
+  description = "argo-cd Helm chart version the node is meant to run. Pass it to iidp-bootstrap on the node to apply a bump in place."
+  value       = var.argocd_chart_version
+}
+
+output "helm_version" {
+  description = "Helm release the node is meant to run. Pass it to iidp-bootstrap on the node to apply a bump in place."
+  value       = var.helm_version
 }
 
 output "age_public_key_command" {

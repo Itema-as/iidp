@@ -359,9 +359,9 @@ func requireHelm(t *testing.T) {
 	}
 }
 
-// TestVersionsAgreeWithCloudInit keeps the two places that must name the
-// same ArgoCD and k3s release in step: cloud-init installs from
-// infra/platform/variables.tf, the harness and this chart from
+// TestVersionsAgreeWithCloudInit keeps the places that must name the same
+// ArgoCD chart, Helm release and k3s release in step: cloud-init installs
+// from infra/platform/variables.tf, the harness and this chart from
 // versions.yaml.
 func TestVersionsAgreeWithCloudInit(t *testing.T) {
 	versions := readYAML(t, "versions.yaml")
@@ -370,8 +370,9 @@ func TestVersionsAgreeWithCloudInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, path := range map[string][]string{
-		"argocd_version": {"argocd", "manifest"},
-		"k3s_version":    {"k3s", "version"},
+		"argocd_chart_version": {"argocd", "chart"},
+		"helm_version":         {"helm", "version"},
+		"k3s_version":          {"k3s", "version"},
 	} {
 		want := tfDefault(t, string(variables), name)
 		if got := get[string](t, versions, path...); got != want {

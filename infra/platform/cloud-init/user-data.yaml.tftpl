@@ -7,9 +7,10 @@
 # The bootstrap script is written to disk and then run once by cloud-init.
 # It is safe to re-run by hand (ssh root@<node> iidp-bootstrap) after a
 # failure: every step either converges or is skipped when already done.
-# Version bumps are applied the same way, by re-running it with K3S_VERSION
-# and ARGOCD_VERSION set in the environment; the values rendered below are
-# the defaults for the first boot.
+# Version bumps are applied the same way, by re-running it with K3S_VERSION,
+# ARGOCD_CHART_VERSION, HELM_VERSION and HELM_SHA256_LINUX_AMD64 set in the
+# environment; the values rendered below are the defaults for the first
+# boot.
 
 write_files:
   - path: /usr/local/sbin/iidp-bootstrap
@@ -24,9 +25,15 @@ write_files:
       exec > >(tee -a /var/log/iidp-bootstrap.log) 2>&1
 
       # Overridable from the environment for in-place upgrades:
-      #   K3S_VERSION=vX.Y.Z+k3sN ARGOCD_VERSION=vX.Y.Z iidp-bootstrap
+      #   K3S_VERSION=vX.Y.Z+k3sN ARGOCD_CHART_VERSION=X.Y.Z \
+      #   HELM_VERSION=vX.Y.Z HELM_SHA256_LINUX_AMD64=... iidp-bootstrap
       K3S_VERSION="$${K3S_VERSION:-${k3s_version}}"
-      ARGOCD_VERSION="$${ARGOCD_VERSION:-${argocd_version}}"
+      # The argo-cd Helm chart version: ArgoCD is installed by rendering
+      # this chart, not the upstream install.yaml (see the "installing
+      # ArgoCD" step below).
+      ARGOCD_CHART_VERSION="$${ARGOCD_CHART_VERSION:-${argocd_chart_version}}"
+      HELM_VERSION="$${HELM_VERSION:-${helm_version}}"
+      HELM_SHA256_LINUX_AMD64="$${HELM_SHA256_LINUX_AMD64:-${helm_sha256_linux_amd64}}"
       PLATFORM_REPO_URL="${platform_repo_url}"
       PLATFORM_REPO_PATH="${platform_repo_bootstrap_path}"
 
@@ -64,12 +71,39 @@ write_files:
         sleep 5
       done
 
-      log "installing ArgoCD $ARGOCD_VERSION"
+      # helm renders the argo-cd chart below; it is not on the base image.
+      # Re-run is idempotent: skipped when the pinned version is already
+      # installed, otherwise the binary is replaced in place.
+      installed_helm=$(helm version --template '{{.Version}}' 2>/dev/null || true)
+      if [ "$installed_helm" = "$HELM_VERSION" ]; then
+        log "helm $HELM_VERSION already installed"
+      else
+        log "installing helm $HELM_VERSION"
+        helm_tmp=$(mktemp -d)
+        curl -sfL -o "$helm_tmp/helm.tar.gz" \
+          "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz"
+        echo "$HELM_SHA256_LINUX_AMD64  $helm_tmp/helm.tar.gz" | sha256sum -c -
+        tar -xzf "$helm_tmp/helm.tar.gz" -C "$helm_tmp"
+        install -m 0755 "$helm_tmp/linux-amd64/helm" /usr/local/bin/helm
+        rm -rf "$helm_tmp"
+      fi
+
+      log "installing ArgoCD (argo-cd chart $ARGOCD_CHART_VERSION)"
       kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-      # Server-side apply is required: the ArgoCD CRDs exceed the annotation
-      # size limit of client-side apply.
-      kubectl apply -n argocd --server-side --force-conflicts \
-        -f "https://raw.githubusercontent.com/argoproj/argo-cd/$ARGOCD_VERSION/manifests/install.yaml"
+      # Rendered from the argo-cd chart itself, not the upstream
+      # install.yaml: the objects this creates already have the selectors
+      # the argocd bootstrap Application's chart takeover expects (chart
+      # and cloud-init use the same fullnameOverride and crds.install), so
+      # the first sync only ever patches instead of having to delete and
+      # recreate Deployments and the application controller's StatefulSet
+      # (docs/implementation-notes/04-bootstrap.md, "Installing from the
+      # chart, not the upstream manifests"). Server-side apply is required:
+      # the ArgoCD CRDs exceed the annotation size limit of client-side
+      # apply.
+      helm template argocd argo-cd --repo https://argoproj.github.io/argo-helm \
+        --version "$ARGOCD_CHART_VERSION" --namespace argocd --include-crds \
+        --set fullnameOverride=argocd --set crds.install=true \
+        | kubectl apply -n argocd --server-side --force-conflicts -f -
       kubectl wait --for=condition=established crd/applications.argoproj.io --timeout=120s
 
       # The age private key exists only in this Secret, in the layout KSOPS
