@@ -569,6 +569,11 @@ if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; the
   assert_contains "$backupsdecrypted" "ACCESS_KEY_ID: iidpe2e"
   assert_contains "$backupsdecrypted" "ACCESS_SECRET_KEY: iidpe2epassword"
   assert_contains "$backupsdecrypted" 'kustomize.config.k8s.io/needs-hash: "false"'
+  # A wave before the Cluster: the ScheduledBackup is immediate, so a
+  # Secret in the Cluster's own wave loses the race and the Environment's
+  # first backup fails for good.
+  t_start "the written backups-credentials file syncs a wave before the database"
+  assert_contains "$backupsdecrypted" 'argocd.argoproj.io/sync-wave: "-2"'
 
   t_start "write_backups_credentials decrypts unchanged after being copied to a different path"
   mkdir -p "$d2/applications/shop/prod/sops"

@@ -1341,7 +1341,7 @@ EOF
 # copied -- the ArgoCD Application's own spec.destination.namespace applies
 # instead (docs/implementation-notes/42-backups-credentials.md).
 write_secret_plaintext() {
-  local file="$1" name="$2" namespace="$3" extra_labels="$4" stringdata="$5"
+  local file="$1" name="$2" namespace="$3" extra_labels="$4" stringdata="$5" extra_annotations="${6:-}"
   mkdir -p "$(dirname "$file")"
   {
     echo "apiVersion: v1"
@@ -1357,6 +1357,9 @@ write_secret_plaintext() {
     fi
     echo "  annotations:"
     echo '    kustomize.config.k8s.io/needs-hash: "false"'
+    if [[ -n "$extra_annotations" ]]; then
+      echo "$extra_annotations"
+    fi
     echo "type: Opaque"
     echo "stringData:"
     echo "$stringdata"
@@ -1383,9 +1386,16 @@ write_backups_credentials() {
     note "keeping existing bootstrap/templates/backups-credentials.enc.yaml (Object Storage keys unchanged)"
     return 0
   fi
+  # sync-wave -2, the same wave iidp secret set gives every Secret it
+  # writes (internal/render/secret.go): CloudNativePG's ScheduledBackup is
+  # immediate, so it takes a base backup the moment the Cluster is ready,
+  # and a Secret landing in the Cluster's own wave loses that race -- the
+  # first backup of every new Environment then fails permanently, since a
+  # failed Backup is never retried and the next one is a day away.
   write_secret_plaintext "$file" backups-credentials "" "" \
     "  ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY}
-  ACCESS_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}"
+  ACCESS_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}" \
+    '    argocd.argoproj.io/sync-wave: "-2"'
   sops_encrypt_in_place "bootstrap/templates/backups-credentials.enc.yaml"
   ok "wrote and encrypted bootstrap/templates/backups-credentials.enc.yaml"
 }
