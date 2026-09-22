@@ -252,9 +252,19 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 	// poll does not guarantee catching that window either, but it is the
 	// best this test can do without watching the namespace's events
 	// directly (a bigger lift this ticket does not take on).
+	//
+	// The Backup is observed here, during the deletion, because it does not
+	// survive it: CloudNativePG removes a Backup together with the Cluster
+	// it references, and the Cluster is torn down as soon as the hook
+	// reports Healthy. So the proof that the hook did its job is a Backup
+	// seen reaching phase completed while the Application was still being
+	// deleted, recorded across polls, never a Backup found afterwards.
 	start := time.Now()
 	deadline := start.Add(9 * time.Minute)
 	jobEverObserved := false
+	jobEverSucceeded := false
+	backupsSeen := map[string]string{}
+	completedBackup := ""
 	for {
 		apps, err := cluster.Applications(ctx)
 		if err != nil {
@@ -264,13 +274,23 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 			"-o", "jsonpath={.status.startTime} active={.status.active} succeeded={.status.succeeded} failed={.status.failed}")
 		if jobErr == nil {
 			jobEverObserved = true
+			if strings.Contains(jobOut, "succeeded=1") {
+				jobEverSucceeded = true
+			}
 		}
-		names, _ := cluster.BackupNames(ctx, "shop-staging")
+		phases, _ := cluster.BackupPhases(ctx, "shop-staging")
+		for name, phase := range phases {
+			backupsSeen[name] = phase
+			if phase == "completed" && completedBackup == "" {
+				completedBackup = name
+				t.Logf("[%4.0fs] final Backup %s reached phase completed", time.Since(start).Seconds(), name)
+			}
+		}
 		if app, ok := apps["shop-staging"]; ok {
 			t.Logf("[%4.0fs] shop-staging: sync=%s health=%s | Job shop-staging-final-backup: %s | Backups: %v",
-				time.Since(start).Seconds(), app.Sync, app.Health, strings.TrimSpace(jobOut), names)
+				time.Since(start).Seconds(), app.Sync, app.Health, strings.TrimSpace(jobOut), phases)
 		} else {
-			t.Logf("shop-staging Application is gone (job observed at some point: %v) | Backups: %v", jobEverObserved, names)
+			t.Logf("shop-staging Application is gone (job observed at some point: %v) | Backups seen during deletion: %v", jobEverObserved, backupsSeen)
 			break
 		}
 		if time.Now().After(deadline) {
@@ -282,36 +302,28 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 		}
 	}
 
-	// The Backup itself is not owned by ArgoCD (the hook's script creates
-	// it imperatively with kubectl, not as a chart-rendered, sync-tracked
-	// resource), so nothing ArgoCD does should remove it once the
-	// Environment is gone. Logged, not asserted as a hard failure: two
-	// distinct things observed in testing can make it absent even when the
-	// chart and the hook both worked correctly, neither of which is a
-	// chart or script bug (docs/implementation-notes/39-final-backup-predelete-hook.md
-	// has the full evidence for both). First, the ArgoCD-level race
-	// documented above can take the hook's objects from "just created" to
-	// "cleaned up by HookSucceeded" faster than even this one-second poll
-	// reliably catches, indistinguishable from outside the cluster from
-	// the hook never running. Second, even a run where the Job was
-	// observed running and succeeding (jobEverObserved true) has, at least
-	// once, still shown no Backup afterward -- CloudNativePG's own
-	// controller reconciling a Backup whose Cluster has since been deleted
-	// (the Cluster is torn down immediately once the hook reports Healthy)
-	// is the leading suspect, not yet confirmed against CloudNativePG's own
-	// source or documentation, and out of this ticket's reach to chase
-	// further. What is asserted, unconditionally, below is that the
-	// Environment's resources are actually gone -- which cannot happen
-	// while a PreDelete hook is still pending or failing, so it remains
-	// real proof the hook was not simply skipped.
-	names, err := cluster.BackupNames(ctx, "shop-staging")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(names) == 0 {
-		t.Logf("no Backup object found in shop-staging (hook Job observed running at some point: %v); see the comment above and the implementation notes for why this is logged, not failed", jobEverObserved)
-	} else {
-		t.Logf("final Backup(s) recorded in shop-staging: %v", names)
+	// Three outcomes, told apart by what the polls recorded:
+	//
+	//   - A Backup reached completed: the hook did its job. What this test
+	//     exists to prove.
+	//   - The hook Job succeeded but no Backup ever completed: the Job's
+	//     own script claimed success without the backup finishing, which
+	//     is a bug in this repository's chart. A hard failure.
+	//   - Otherwise the Environment was deleted while the hook was still
+	//     pending, or without the hook running at all: ArgoCD did not wait
+	//     for its own PreDelete hook, argoproj/argo-cd#29100 (a stale-cache
+	//     race in the controller, open upstream, about one local run in
+	//     three). Nothing here can fix that, so it is named loudly rather
+	//     than failing the run on an upstream bug; the resource-gone
+	//     assertions below still hold either way.
+	switch {
+	case completedBackup != "":
+		t.Logf("final Backup %s completed before the Cluster was deleted", completedBackup)
+	case jobEverSucceeded:
+		t.Fatalf("the final backup Job succeeded but no Backup reached phase completed (Backups seen: %v)", backupsSeen)
+	default:
+		t.Logf("ArgoCD deleted shop-staging without waiting for its PreDelete hook (argoproj/argo-cd#29100): hook Job observed: %v, Backups seen: %v; see docs/implementation-notes/39-final-backup-predelete-hook.md",
+			jobEverObserved, backupsSeen)
 	}
 
 	for _, res := range []struct{ kind, name string }{

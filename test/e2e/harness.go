@@ -495,21 +495,30 @@ func (c *Cluster) WaitForJobSucceeded(ctx context.Context, namespace, name strin
 		})
 }
 
-// BackupNames lists the CloudNativePG Backup objects in namespace, or nil
-// if there are none, or the namespace or the CRD does not (or no longer)
-// exist. Used after the final Backup PreDelete hook has run, to confirm its
-// Backup object still exists and to name it
-// (docs/implementation-notes/39-final-backup-predelete-hook.md): it is not
-// owned by ArgoCD (created imperatively by the hook's own script, not
-// declared as a chart-rendered resource), so it outlives the Application
-// that recorded it.
-func (c *Cluster) BackupNames(ctx context.Context, namespace string) ([]string, error) {
-	out, err := c.Kubectl(ctx, "-n", namespace, "get", "backups.postgresql.cnpg.io", "-o", "jsonpath={.items[*].metadata.name}")
+// BackupPhases returns every CloudNativePG Backup in namespace with its
+// status.phase (empty until the operator has picked it up). A namespace
+// without Backups, or one that no longer exists, yields an empty map.
+//
+// Polled while the final backup PreDelete hook runs
+// (docs/implementation-notes/39-final-backup-predelete-hook.md): CloudNativePG
+// removes a Backup along with the Cluster it references, and that Cluster is
+// torn down as soon as the hook reports Healthy, so the Backup has to be
+// observed during the deletion rather than looked for after it.
+func (c *Cluster) BackupPhases(ctx context.Context, namespace string) (map[string]string, error) {
+	out, err := c.Kubectl(ctx, "-n", namespace, "get", "backups.postgresql.cnpg.io", "-o",
+		`jsonpath={range .items[*]}{.metadata.name}={.status.phase}{"\n"}{end}`)
 	if err != nil {
-		return nil, nil
+		return map[string]string{}, nil
 	}
-	fields := strings.Fields(strings.TrimSpace(out))
-	return fields, nil
+	phases := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		name, phase, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || name == "" {
+			continue
+		}
+		phases[name] = phase
+	}
+	return phases, nil
 }
 
 // ResourceExists reports whether the named resource of kind exists in
