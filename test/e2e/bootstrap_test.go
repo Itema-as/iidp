@@ -278,8 +278,17 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 				jobEverSucceeded = true
 			}
 		}
+		// Only the hook's own Backup counts. The Environment's
+		// ScheduledBackup has been creating its own, named after the
+		// Cluster (shop-staging-db-<timestamp>), since the Environment
+		// was created; the hook names its Backup <fullname>-final-<timestamp>
+		// (chart/application/templates/final-backup-job.yaml). Counting
+		// any Backup would let a scheduled one decide this assertion.
 		phases, _ := cluster.BackupPhases(ctx, "shop-staging")
 		for name, phase := range phases {
+			if !strings.HasPrefix(name, "shop-staging-final-") {
+				continue
+			}
 			backupsSeen[name] = phase
 			if phase == "completed" && completedBackup == "" {
 				completedBackup = name
