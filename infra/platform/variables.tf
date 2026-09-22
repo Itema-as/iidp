@@ -99,3 +99,42 @@ variable "platform_repo_bootstrap_path" {
   type        = string
   default     = "bootstrap"
 }
+
+# ArgoCD's credential for the Platform repository. The same org GitHub App
+# the deploy workflow uses for CI write-back (contents: write, which
+# implies the read ArgoCD needs) doubles as this credential: cloud-init
+# writes it into an ArgoCD repository Secret (docs/implementation-notes/
+# 41-argocd-platform-repo-credential.md) so the root Application can
+# reconcile the private Platform repository from first boot with nobody
+# touching the cluster. No default: every Platform has its own App.
+
+variable "platform_repo_github_app_id" {
+  description = "Id of the org GitHub App (bootstrap wizard stage \"GitHub App for CI write-back\") that authenticates ArgoCD to the Platform repository. Matches platform.yaml's githubApp.id in the Platform repository."
+  type        = number
+
+  validation {
+    condition     = var.platform_repo_github_app_id > 0
+    error_message = "platform_repo_github_app_id must be a positive number."
+  }
+}
+
+variable "platform_repo_github_app_installation_id" {
+  description = "Installation id of the App on the org that owns the Platform repository. Matches platform.yaml's githubApp.installationId."
+  type        = number
+
+  validation {
+    condition     = var.platform_repo_github_app_installation_id > 0
+    error_message = "platform_repo_github_app_installation_id must be a positive number."
+  }
+}
+
+variable "platform_repo_github_app_private_key" {
+  description = "PEM private key of the App, downloaded once when the App is created. Sensitive and git-ignored like hcloud_token; rotate by pasting a new PEM here and re-running iidp-bootstrap on the node with the new value (tofu apply alone does nothing because user_data changes are ignored, see infra/README.md)."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = can(regex("BEGIN.*PRIVATE KEY", var.platform_repo_github_app_private_key))
+    error_message = "platform_repo_github_app_private_key must be the PEM contents of the GitHub App's private key (starts with -----BEGIN ... PRIVATE KEY-----)."
+  }
+}

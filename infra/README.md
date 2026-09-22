@@ -35,7 +35,7 @@ The sections below are the same steps done by hand, for when the wizard cannot r
 - A Hetzner Cloud project with an API token that has read and write permission.
 - Hetzner Object Storage credentials for the same project (Cloud Console: Security > S3 credentials). These are S3 access and secret keys, distinct from the API token.
 - An SSH key pair. The public key goes into the node; the private key is the only way onto it.
-- The Platform repository (`Itema-as/iidp-platform` by default) reachable over HTTPS with a `bootstrap/` directory. ArgoCD will report the root Application as missing until it exists; nothing else fails.
+- The Platform repository (`Itema-as/iidp-platform` by default) with a `bootstrap/` directory. It is private (established in `docs/implementation-notes/12-deploy-workflow.md`, from `docs/design.md`'s access model: `gh auth` and direct commits to `main` as the authorisation presuppose the repository is not otherwise open), so cloud-init needs a credential for it: the org GitHub App the bootstrap wizard's "GitHub App for CI write-back" stage creates (`contents: write`, which already implies the read ArgoCD needs). Its id, installation id and private key PEM are `platform_repo_github_app_id`, `platform_repo_github_app_installation_id` and `platform_repo_github_app_private_key` in `infra/platform/terraform.tfvars` (`terraform.tfvars.example` documents them); cloud-init writes them into an ArgoCD repository Secret before it applies the root Application (`docs/implementation-notes/41-argocd-platform-repo-credential.md`). ArgoCD will report the root Application as missing until `bootstrap/` exists in the Platform repository; nothing else fails.
 
 ## First apply
 
@@ -52,7 +52,7 @@ Step 2, the node. The S3 backend reads the same Object Storage keys from the sta
 
 ```sh
 cd infra/platform
-cp terraform.tfvars.example terraform.tfvars   # fill in hcloud_token and ssh_public_key
+cp terraform.tfvars.example terraform.tfvars   # fill in hcloud_token, ssh_public_key and the platform_repo_github_app_* values
 export AWS_ACCESS_KEY_ID=<object storage access key>
 export AWS_SECRET_ACCESS_KEY=<object storage secret key>
 tofu init
@@ -105,6 +105,21 @@ Upgrades are deliberate, manual steps (ADR-0001) and they happen **in place**. T
 
 A first boot uses the versions rendered into the user data at that time. A node that was rebuilt later therefore comes up on whatever the variables said when `tofu apply -replace` ran, which is why step 1 comes first.
 
+## Rotating the Platform repository credential
+
+The same in-place pattern as version bumps, for the same reason: the credential is baked into the user data cloud-init ran once, and `tofu apply` never re-runs it (`ignore_changes = [user_data]`), so a new PEM in `terraform.tfvars` alone changes nothing on the node.
+
+1. Get a new private key for the App (GitHub App settings > "Generate a private key"; the old key keeps working until it is explicitly deleted, so there is no window with no working key) and put its PEM in `platform_repo_github_app_private_key` in `terraform.tfvars` (`platform_repo_github_app_id`/`platform_repo_github_app_installation_id` only change if the App itself was recreated). Commit if `terraform.tfvars` is tracked anywhere outside this machine; `tofu plan` shows no change, by design.
+2. Apply it on the node by re-running the bootstrap with the new key, base64-encoded, in the environment:
+
+   ```sh
+   ssh root@$(tofu output -raw node_public_ipv4) \
+     PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64=$(base64 < new-key.pem | tr -d '\n') \
+     iidp-bootstrap
+   ```
+
+   This re-applies the ArgoCD repository Secret (`argocd/platform-repo-github-app`) with the new key; everything else the script does is a no-op re-check. Delete `new-key.pem` from the admin's machine afterward; it is never written to the node's disk (see `docs/implementation-notes/41-argocd-platform-repo-credential.md` for why cloud-init decodes it only in memory). Once ArgoCD has synced with the new key, delete the old key from the App's settings page.
+
 ## Rebuilding the node
 
 Only for disaster recovery, after confirming the database backups in the backup bucket are current. A rebuild **destroys every local volume, so every Application database on the node, and the age key**:
@@ -134,9 +149,10 @@ If the key is gone, every SOPS-encrypted secret in the Platform repository has t
 tofu fmt -check -recursive infra
 (cd infra/state-bucket && tofu init -backend=false && tofu validate)
 (cd infra/platform && tofu init -backend=false && tofu validate)
+go test ./infra/platform/...
 ```
 
-This is what [`.github/workflows/infra.yaml`](../.github/workflows/infra.yaml) runs on every pull request that touches `infra/`. It needs no secrets. Whether the node actually boots into a healthy cluster can only be seen with a real `tofu apply`.
+This is what [`.github/workflows/infra.yaml`](../.github/workflows/infra.yaml) and the main Go CI job run on every pull request that touches `infra/`. It needs no secrets: `tofu validate` (unlike `plan`/`apply`) does not require variables to have values, even required ones with no default, so `platform_repo_github_app_private_key` and its siblings need nothing here. The `go test` above reads the cloud-init template as text instead of rendering it through OpenTofu, since reproducing `templatefile()`'s own template syntax in Go was judged not worth it for what that test checks (see `docs/implementation-notes/41-argocd-platform-repo-credential.md`). Whether the node actually boots into a healthy cluster, and whether ArgoCD actually reads the Platform repository, can only be seen with a real `tofu apply`.
 
 ## Swapping the hosting provider
 

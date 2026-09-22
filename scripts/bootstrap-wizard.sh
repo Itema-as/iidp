@@ -132,6 +132,10 @@ IIDP_WIZARD_FAKE="${IIDP_WIZARD_FAKE:-0}"
 # Repository root of this iidp clone, from the script's own location, so it
 # works regardless of the caller's working directory.
 IIDP_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Where infra/platform/terraform.tfvars lives: a plain global like
+# PLATFORM_REPO, above, so test/wizard/run.sh can point it at a scratch
+# directory instead of this clone's own infra/platform.
+INFRA_PLATFORM_DIR="$IIDP_REPO_ROOT/infra/platform"
 
 echo "[iidp-wizard] running under bash ${BASH_VERSION}" >&2
 
@@ -264,6 +268,67 @@ tfvar_set() { # tfvar_set FILE KEY VALUE
   grep -vE "^${key}[[:space:]]*=" "$file" > "$tmp" || true
   printf '%s = "%s"\n' "$key" "$value" >> "$tmp"
   mv "$tmp" "$file"
+  chmod 600 "$file"
+  ok "wrote $key to $file"
+}
+
+# tfvar_get_multiline / tfvar_set_multiline: the same upsert as tfvar_get/
+# tfvar_set, but for a value that cannot be a single quoted line -- the
+# GitHub App private key PEM, in particular. Written as an HCL heredoc
+# (`key = <<IIDP_KEY_EOT ... IIDP_KEY_EOT`), valid in a .tfvars file the
+# same as in a .tf file. terraform.tfvars is already git-ignored (see
+# infra/platform/.gitignore and the repository root's), so the heredoc
+# form keeps the key out of git the same way the rest of the file already
+# is, with no second file to lose track of.
+
+tfvar_get_multiline() { # tfvar_get_multiline FILE KEY
+  local file="$1" key="$2"
+  [[ -f "$file" ]] || return 1
+  grep -qE "^${key}[[:space:]]*=[[:space:]]*<<" "$file" || return 1
+  awk -v key="$key" '
+    BEGIN { found = 0 }
+    !found && $0 ~ ("^" key "[[:space:]]*=[[:space:]]*<<") {
+      marker = $0
+      sub(/^.*<<-?/, "", marker)
+      found = 1
+      next
+    }
+    found && $0 == marker { exit }
+    found { print }
+  ' "$file"
+}
+
+tfvar_set_multiline() { # tfvar_set_multiline FILE KEY VALUE
+  local file="$1" key="$2" value="$3" marker tmp
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dry "would write $key (multi-line) to $file"
+    return 0
+  fi
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  marker="IIDP_$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')_EOT"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/iidp-wizard.XXXXXX")
+  # Drops any previous value for this key, whether it was a plain
+  # "key = ..." line (tfvar_set) or an earlier heredoc block of its own
+  # (tfvar_set_multiline), so re-running either helper for the same key is
+  # a clean upsert either way.
+  awk -v key="$key" -v marker="$marker" '
+    BEGIN { skipping = 0 }
+    skipping { if ($0 == marker) { skipping = 0 }; next }
+    $0 ~ ("^" key "[[:space:]]*=") {
+      if ($0 ~ /<<-?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*$/) { skipping = 1 }
+      next
+    }
+    { print }
+  ' "$file" > "$tmp"
+  {
+    cat "$tmp"
+    printf '%s = <<%s\n' "$key" "$marker"
+    printf '%s\n' "$value"
+    printf '%s\n' "$marker"
+  } > "${tmp}.out"
+  mv "${tmp}.out" "$file"
+  rm -f "$tmp"
   chmod 600 "$file"
   ok "wrote $key to $file"
 }
@@ -795,15 +860,71 @@ html_escape() {
   printf '%s' "$s"
 }
 
+# require_pem_file VARNAME -- validates that the path named by VARNAME (a
+# nameref target) looks like a PEM private key, unless --dry-run or
+# IIDP_WIZARD_FAKE, when a placeholder is substituted instead of touching
+# the filesystem. Shared by both places this stage asks for a .pem path.
+require_pem_file() {
+  local -n __path="$1"
+  if [[ "$DRY_RUN" != "1" && "${IIDP_WIZARD_FAKE:-0}" != "1" ]]; then
+    [[ -f "$__path" ]] || die "no such file: $__path"
+    grep -q "BEGIN.*PRIVATE KEY" "$__path" || die "$__path does not look like a PEM private key"
+  else
+    __path="${__path:-/dev/null}"
+  fi
+}
+
+# tfvars_write_github_app FILE APP_ID INSTALLATION_ID PEM_PATH [keep]
+# Writes the three OpenTofu variables ArgoCD's Platform-repository
+# credential needs (infra/platform/variables.tf) into terraform.tfvars.
+# With a fifth argument of "keep", the private key already in the file is
+# left untouched (PEM_PATH is ignored) and only the id/installation id are
+# refreshed -- used when platform.yaml's githubApp.id is kept but the
+# tfvars file already has a key from an earlier run of this stage.
+tfvars_write_github_app() {
+  local file="$1" app_id="$2" installation_id="$3" pem_path="$4" mode="${5:-}"
+  tfvar_set "$file" platform_repo_github_app_id "$app_id"
+  tfvar_set "$file" platform_repo_github_app_installation_id "$installation_id"
+  if [[ "$mode" == "keep" ]]; then
+    note "kept the existing platform_repo_github_app_private_key in $file"
+    return 0
+  fi
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dry "would write platform_repo_github_app_private_key to $file from $pem_path"
+    return 0
+  fi
+  local pem_content
+  if [[ "${IIDP_WIZARD_FAKE:-0}" == "1" ]]; then
+    pem_content="${IIDP_WIZARD_FAKE_APP_PEM:-$'-----BEGIN RSA PRIVATE KEY-----\nfaketestkeymaterial\n-----END RSA PRIVATE KEY-----'}"
+  else
+    pem_content="$(cat "$pem_path")"
+  fi
+  tfvar_set_multiline "$file" platform_repo_github_app_private_key "$pem_content"
+  log_choice "ArgoCD reads the Platform repository with the same App's credential (infra/README.md, docs/implementation-notes/41-argocd-platform-repo-credential.md)"
+}
+
 stage_github_app() {
   stage "GitHub App for CI write-back"
   local platform_yaml="$PLATFORM_REPO/platform.yaml"
-  local existing_id
+  local tfvars="$INFRA_PLATFORM_DIR/terraform.tfvars"
+  local existing_id existing_pem
   existing_id=$(platform_yaml_get "$platform_yaml" githubApp.id || true)
   if [[ -n "$existing_id" ]] && confirm "platform.yaml already has githubApp.id=$existing_id. Keep it and skip creating a new App?"; then
     GITHUB_APP_ID="$existing_id"
     GITHUB_APP_INSTALLATION_ID=$(platform_yaml_get "$platform_yaml" githubApp.installationId || true)
     note "keeping existing GitHub App id $GITHUB_APP_ID / installation $GITHUB_APP_INSTALLATION_ID"
+
+    existing_pem=$(tfvar_get_multiline "$tfvars" platform_repo_github_app_private_key || true)
+    if [[ -n "$existing_pem" ]] && confirm "$tfvars already has this App's private key for ArgoCD. Keep it?"; then
+      tfvars_write_github_app "$tfvars" "$GITHUB_APP_ID" "$GITHUB_APP_INSTALLATION_ID" "" keep
+      return 0
+    fi
+
+    say "ArgoCD also needs this App's private key, to read the Platform repository."
+    say "(No PEM found in $tfvars -- either this is its first run since #41, or the key was never saved there.)"
+    ask PEM_PATH "Path to the App's downloaded private key .pem file:"
+    require_pem_file PEM_PATH
+    tfvars_write_github_app "$tfvars" "$GITHUB_APP_ID" "$GITHUB_APP_INSTALLATION_ID" "$PEM_PATH"
     return 0
   fi
 
@@ -843,16 +964,13 @@ EOF
   step "In the left sidebar, 'Install App', install it on ${GITHUB_ORG}. The resulting URL ends in /installations/<id>."
   ask GITHUB_APP_INSTALLATION_ID "Installation id from that URL:"
 
-  if [[ "$DRY_RUN" != "1" && "${IIDP_WIZARD_FAKE:-0}" != "1" ]]; then
-    [[ -f "$PEM_PATH" ]] || die "no such file: $PEM_PATH"
-    grep -q "BEGIN.*PRIVATE KEY" "$PEM_PATH" || die "$PEM_PATH does not look like a PEM private key"
-  else
-    PEM_PATH="${PEM_PATH:-/dev/null}"
-  fi
+  require_pem_file PEM_PATH
 
   gh_secret_set_org IIDP_DEPLOY_APP_PRIVATE_KEY "$GITHUB_ORG" "$PEM_PATH" --from-file
   gh_variable_set_org IIDP_DEPLOY_APP_ID "$GITHUB_ORG" "$GITHUB_APP_ID"
   log_choice "org secret IIDP_DEPLOY_APP_PRIVATE_KEY and org variable IIDP_DEPLOY_APP_ID are what ticket #12's deploy workflow reads"
+
+  tfvars_write_github_app "$tfvars" "$GITHUB_APP_ID" "$GITHUB_APP_INSTALLATION_ID" "$PEM_PATH"
 }
 
 # ──────────────────────────────────────────────────────────────────────────
