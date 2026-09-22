@@ -158,11 +158,27 @@ func NewCluster(name string, logf func(format string, args ...any)) (*Cluster, e
 	if os.Getenv("KIND_EXPERIMENTAL_PROVIDER") == "podman" {
 		provider = "podman"
 	}
+	httpPort := 18080
+	httpsPort := 18443
+	if v := os.Getenv("IIDP_E2E_HTTP_PORT"); v != "" {
+		p, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("IIDP_E2E_HTTP_PORT: %w", err)
+		}
+		httpPort = p
+	}
+	if v := os.Getenv("IIDP_E2E_HTTPS_PORT"); v != "" {
+		p, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("IIDP_E2E_HTTPS_PORT: %w", err)
+		}
+		httpsPort = p
+	}
 	return &Cluster{
 		Name:       name,
 		Kubeconfig: kubeconfig.Name(),
-		HTTPPort:   18080,
-		HTTPSPort:  18443,
+		HTTPPort:   httpPort,
+		HTTPSPort:  httpsPort,
 		Provider:   provider,
 		RepoRoot:   root,
 		Versions:   versions,
@@ -821,7 +837,11 @@ func (c *Cluster) WaitForApplications(ctx context.Context, want map[string]Expec
 }
 
 // DumpDiagnostics logs what is known about the named Applications, the
-// pods that are not running, and the tail of the repo server log.
+// pods that are not running, the tail of the repo server and application
+// controller logs, the argocd Application's own operation state, and
+// recent cluster events: everything the takeover race (see
+// docs/implementation-notes/04-bootstrap.md, "The takeover race") needs to
+// be diagnosed from a single failed run's output, without a kept cluster.
 func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]ApplicationStatus, names []string) {
 	for _, name := range names {
 		app, ok := apps[name]
@@ -837,6 +857,16 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	if out, err := c.Kubectl(ctx, "get", "pods", "-A", "--field-selector=status.phase!=Running,status.phase!=Succeeded"); err == nil {
 		c.Log("pods not running:\n%s", out)
 	}
+	// Every pod in argocd, Running or not, with its age and restart count:
+	// whether the application controller currently exists at all, and how
+	// long ago it (or anything else) last restarted, is the single most
+	// direct answer to whether the takeover race (docs/implementation-notes
+	// /04-bootstrap.md) is the controller being mid-replacement right now.
+	if out, err := c.Kubectl(ctx, "-n", "argocd", "get", "pods", "-o", "wide"); err == nil {
+		c.Log("argocd namespace pods:\n%s", out)
+	} else {
+		c.Log("argocd namespace pods: kubectl get failed: %v\n%s", err, out)
+	}
 	// A Pod stuck Pending is almost always the scheduler refusing it (most
 	// often insufficient CPU or memory on kind's single node); the events
 	// and the node's allocated-resources table say which.
@@ -850,6 +880,42 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	}
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "deployment/argocd-repo-server", "--tail=40"); err == nil {
 		c.Log("argocd-repo-server log tail:\n%s", out)
+	} else {
+		c.Log("argocd-repo-server log tail: kubectl logs failed: %v\n%s", err, out)
+	}
+	// The application controller is what runs every sync, including the
+	// argocd Application's own takeover of itself; its log tail and the
+	// argocd Application's full operation state are the two things that
+	// say whether it stalled waiting on a hook, on another component's
+	// health, or on the repo server (the takeover race). Logging the error
+	// too (rather than silently skipping) matters here: a StatefulSet
+	// reference resolves no pod, and so fails, exactly when the controller
+	// has been deleted and not yet recreated.
+	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "statefulset/argocd-application-controller", "--tail=80"); err == nil {
+		c.Log("argocd-application-controller log tail:\n%s", out)
+	} else {
+		c.Log("argocd-application-controller log tail: kubectl logs failed: %v\n%s", err, out)
+	}
+	// The redis-secret-init PreSync hook Job is the resource run 35659518279
+	// stalled on; its own status and pod log say whether the Job itself was
+	// slow to complete or the controller simply stopped reporting it.
+	if out, err := c.Kubectl(ctx, "-n", "argocd", "get", "job", "argocd-redis-secret-init", "-o", "yaml"); err == nil {
+		c.Log("argocd-redis-secret-init Job:\n%s", out)
+	} else {
+		c.Log("argocd-redis-secret-init Job: kubectl get failed: %v\n%s", err, out)
+	}
+	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "-l", "job-name=argocd-redis-secret-init", "--tail=40", "--all-containers"); err == nil {
+		c.Log("argocd-redis-secret-init pod log tail:\n%s", out)
+	} else {
+		c.Log("argocd-redis-secret-init pod log tail: kubectl logs failed: %v\n%s", err, out)
+	}
+	if out, err := c.Kubectl(ctx, "-n", "argocd", "describe", "application", "argocd"); err == nil {
+		c.Log("argocd Application describe:\n%s", out)
+	}
+	if out, err := c.Kubectl(ctx, "get", "events", "-A", "--sort-by=.lastTimestamp"); err == nil {
+		// Sorted oldest first: keep the tail, the most recent events, not
+		// the head, when there are more than fit comfortably in the log.
+		c.Log("recent events:\n%s", tailString(out, 6000))
 	}
 }
 
@@ -879,6 +945,16 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// tailString keeps the last n characters of s, the opposite of truncate:
+// useful for output where the newest, most relevant lines are at the end.
+func tailString(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return "..." + s[len(s)-n:]
 }
 
 // gitServerManifest is the git server Deployment and Service. The checksum

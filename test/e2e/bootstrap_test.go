@@ -29,10 +29,18 @@ import (
 // Needs kind, kubectl, helm, git and docker (or podman with
 // KIND_EXPERIMENTAL_PROVIDER=podman). Set IIDP_E2E_KEEP=1 to keep the
 // cluster for inspection; delete it with `kind delete cluster --name
-// iidp-e2e`.
+// iidp-e2e` (or the name IIDP_E2E_CLUSTER set). IIDP_E2E_CLUSTER overrides
+// the kind cluster name, so a machine can run more than one instance of
+// this test at once without one deleting another's cluster; the in-cluster
+// git server's namespace and hostnames are a fixed "iidp-e2e" regardless,
+// since they never leave the cluster they are served from.
 func TestBootstrap(t *testing.T) {
 	ctx := context.Background()
-	cluster, err := NewCluster("iidp-e2e", t.Logf)
+	clusterName := "iidp-e2e"
+	if name := os.Getenv("IIDP_E2E_CLUSTER"); name != "" {
+		clusterName = name
+	}
+	cluster, err := NewCluster(clusterName, t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}
