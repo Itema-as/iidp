@@ -723,7 +723,7 @@ HETZNER_TOKEN=""
 OBJECT_STORAGE_LOCATION="" OBJECT_STORAGE_ENDPOINT=""
 # Whether stage_hetzner collected different Object Storage keys than what
 # was already in STATE_TFVARS this run: write_backups_credentials uses this
-# to decide whether bootstrap/backups-credentials.enc.yaml needs
+# to decide whether bootstrap/templates/backups-credentials.enc.yaml needs
 # re-encrypting, the same "kept means untouched" idempotency the four
 # bootstrap/sops secrets already follow -- there is no way to regenerate
 # and diff a document whose plaintext the wizard cannot read back
@@ -1196,7 +1196,7 @@ write_sops_yaml() {
   if [[ "$DRY_RUN" == "1" ]]; then dry "would write $file"; return 0; fi
   cat > "$file" <<EOF
 # SOPS creation rules for this Platform repository. Every file under
-# bootstrap/sops, and bootstrap/backups-credentials.enc.yaml, is encrypted
+# bootstrap/sops, and bootstrap/templates/backups-credentials.enc.yaml, is encrypted
 # for the Platform's age public key (the one in platform.yaml); only data
 # and stringData are encrypted so names, namespaces and labels stay
 # readable and diffable. Written by scripts/bootstrap-wizard.sh.
@@ -1204,7 +1204,7 @@ creation_rules:
   - path_regex: bootstrap/sops/.*\.enc\.yaml\$
     encrypted_regex: ^(data|stringData)\$
     age: ${AGE_PUBLIC_KEY}
-  - path_regex: bootstrap/backups-credentials\.enc\.yaml\$
+  - path_regex: bootstrap/templates/backups-credentials\.enc\.yaml\$
     encrypted_regex: ^(data|stringData)\$
     age: ${AGE_PUBLIC_KEY}
 EOF
@@ -1364,7 +1364,7 @@ write_secret_plaintext() {
 }
 
 # write_backups_credentials writes and sops-encrypts
-# bootstrap/backups-credentials.enc.yaml: a Secret named backups-credentials,
+# bootstrap/templates/backups-credentials.enc.yaml: a Secret named backups-credentials,
 # no namespace, stringData ACCESS_KEY_ID/ACCESS_SECRET_KEY from the Hetzner
 # stage's Object Storage keys -- the file iidp app create/add-capability
 # --postgres copies byte for byte into every Environment with Postgres
@@ -1374,20 +1374,20 @@ write_secret_plaintext() {
 # bootstrap secrets that cannot be regenerated and diffed because the
 # wizard cannot read their plaintext back.
 write_backups_credentials() {
-  local file="$PLATFORM_REPO/bootstrap/backups-credentials.enc.yaml"
+  local file="$PLATFORM_REPO/bootstrap/templates/backups-credentials.enc.yaml"
   if [[ "$DRY_RUN" == "1" ]]; then
-    dry "would write and sops-encrypt bootstrap/backups-credentials.enc.yaml"
+    dry "would write and sops-encrypt bootstrap/templates/backups-credentials.enc.yaml"
     return 0
   fi
   if [[ -f "$file" && "$OBJECT_STORAGE_KEYS_CHANGED" != "1" ]]; then
-    note "keeping existing bootstrap/backups-credentials.enc.yaml (Object Storage keys unchanged)"
+    note "keeping existing bootstrap/templates/backups-credentials.enc.yaml (Object Storage keys unchanged)"
     return 0
   fi
   write_secret_plaintext "$file" backups-credentials "" "" \
     "  ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY}
   ACCESS_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}"
-  sops_encrypt_in_place "bootstrap/backups-credentials.enc.yaml"
-  ok "wrote and encrypted bootstrap/backups-credentials.enc.yaml"
+  sops_encrypt_in_place "bootstrap/templates/backups-credentials.enc.yaml"
+  ok "wrote and encrypted bootstrap/templates/backups-credentials.enc.yaml"
 }
 
 write_and_encrypt_secrets() {
@@ -1504,7 +1504,7 @@ stage_platform_repo() {
   write_backups_credentials
 
   git_commit_if_changed "Add platform.yaml" platform.yaml .sops.yaml bootstrap/platform-components.yaml bootstrap/platform-secrets.yaml bootstrap/sops/kustomization.yaml bootstrap/sops/ksops.yaml
-  git_commit_if_changed "Add Platform secrets" bootstrap/sops bootstrap/backups-credentials.enc.yaml
+  git_commit_if_changed "Add Platform secrets" bootstrap/sops bootstrap/templates/backups-credentials.enc.yaml
 
   if [[ "$NO_PUSH" == "1" ]]; then
     note "--no-push: leaving the commits unpushed"

@@ -11,14 +11,14 @@ import (
 	"github.com/Itema-as/iidp/internal/cli"
 )
 
-// testBackupsCredentialsPath is the real bootstrap/backups-credentials.enc.yaml
+// testBackupsCredentialsPath is the real bootstrap/templates/backups-credentials.enc.yaml
 // the kind end-to-end fixture carries
-// (test/e2e/fixtures/platform-repo/bootstrap/backups-credentials.enc.yaml),
+// (test/e2e/fixtures/platform-repo/bootstrap/templates/backups-credentials.enc.yaml),
 // the same file a real bootstrap wizard run writes once for the Platform's
 // age key. Tests here reference it directly, rather than duplicating its
 // bytes, so the CLI's byte-for-byte copy is proven against the exact
 // content the e2e fixture (and a real Platform) would carry.
-const testBackupsCredentialsPath = "../../test/e2e/fixtures/platform-repo/bootstrap/backups-credentials.enc.yaml"
+const testBackupsCredentialsPath = "../../test/e2e/fixtures/platform-repo/bootstrap/templates/backups-credentials.enc.yaml"
 
 // readBackupsCredentialsFixture reads testBackupsCredentialsPath.
 func readBackupsCredentialsFixture(t *testing.T) []byte {
@@ -177,8 +177,8 @@ func TestAppCreatePostgresRequiresBackupsCredentialsFile(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "bootstrap/backups-credentials.enc.yaml") {
-		t.Errorf("stderr = %q, want it to name bootstrap/backups-credentials.enc.yaml", stderr)
+	if !strings.Contains(stderr, "bootstrap/templates/backups-credentials.enc.yaml") {
+		t.Errorf("stderr = %q, want it to name bootstrap/templates/backups-credentials.enc.yaml", stderr)
 	}
 	if !strings.Contains(stderr, "wizard") {
 		t.Errorf("stderr = %q, want it to point at the bootstrap wizard", stderr)
@@ -255,8 +255,8 @@ func TestAppAddCapabilityPostgresRequiresBackupsCredentialsFile(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "bootstrap/backups-credentials.enc.yaml") {
-		t.Errorf("stderr = %q, want it to name bootstrap/backups-credentials.enc.yaml", stderr)
+	if !strings.Contains(stderr, "bootstrap/templates/backups-credentials.enc.yaml") {
+		t.Errorf("stderr = %q, want it to name bootstrap/templates/backups-credentials.enc.yaml", stderr)
 	}
 	if !strings.Contains(stderr, "wizard") {
 		t.Errorf("stderr = %q, want it to point at the bootstrap wizard", stderr)

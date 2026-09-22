@@ -22,7 +22,7 @@ import (
 // into every namespace of the Platform's own components: this file is a
 // template the CLI copies, applied only where an Environment copies it
 // (docs/implementation-notes/42-backups-credentials.md).
-const BackupsCredentialsFile = "bootstrap/backups-credentials.enc.yaml"
+const BackupsCredentialsFile = "bootstrap/templates/backups-credentials.enc.yaml"
 
 // ErrBackupsCredentialsMissing is wrapped by checkBackupsCredentialsPresent
 // and copyBackupsCredentials when BackupsCredentialsFile is absent from the

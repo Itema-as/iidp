@@ -74,7 +74,7 @@ iidp app create --name internal-tool --kind web-service --login
 | `--image` | `ghcr.io/<owner lowercased>/<name>` | Image repository |
 | `--port` | `3000` | Port the container listens on |
 | `--probe-path` | `/` | Path the readiness and liveness probes request |
-| `--postgres` | off | Add the Postgres Capability: `DATABASE_URL` injected into every Environment, continuous backups. Needs `platform.yaml`'s `backupsBucket` and `objectStorageEndpoint`, and the bootstrap wizard's `bootstrap/backups-credentials.enc.yaml` in the Platform repository, copied into each Environment (see "Secrets" below) |
+| `--postgres` | off | Add the Postgres Capability: `DATABASE_URL` injected into every Environment, continuous backups. Needs `platform.yaml`'s `backupsBucket` and `objectStorageEndpoint`, and the bootstrap wizard's `bootstrap/templates/backups-credentials.enc.yaml` in the Platform repository, copied into each Environment (see "Secrets" below) |
 | `--migration-command` | detected, or none | Shell command run before every rollout with `DATABASE_URL` set. Requires `--postgres`; without it, detected from Prisma, Drizzle or an npm `migrate` script |
 | `--staging` | off | Add a `staging` Environment next to `prod`: its own address, its own database, the same Capabilities |
 | `--domain` | none | Custom domain to serve besides the Platform address, for `prod` only (repeatable). Automatic inside `platform.yaml`'s `cloudflareZone`; otherwise the closing summary prints a CNAME to create |
@@ -116,7 +116,7 @@ printf '%s' "$SOME_TOKEN" | iidp secret set shop staging --stdin API_TOKEN
 
 At least one `KEY` is required, from any mix of a `KEY=value` argument, `--from-file` and `--stdin`; `<env>` must be `prod` or `staging` and must already exist (`iidp app create` first). Setting a `KEY` that is already set replaces it. `iidp secret set` needs `sops` on `PATH`, in addition to `git` and `gh`. The layout is described in [`docs/platform-repository.md`](docs/platform-repository.md).
 
-The Postgres Capability's own credentials (the Platform's Object Storage keys CloudNativePG backs databases up with) are not set with `iidp secret set`: the bootstrap wizard writes them once, encrypted, to `bootstrap/backups-credentials.enc.yaml` in the Platform repository, and `--postgres` (on `app create` or `app add-capability`) copies that file byte for byte into every Environment that needs it — the CLI never decrypts it and needs no private key. A Platform repository without that file refuses `--postgres` before writing anything, naming the file and the wizard.
+The Postgres Capability's own credentials (the Platform's Object Storage keys CloudNativePG backs databases up with) are not set with `iidp secret set`: the bootstrap wizard writes them once, encrypted, to `bootstrap/templates/backups-credentials.enc.yaml` in the Platform repository, and `--postgres` (on `app create` or `app add-capability`) copies that file byte for byte into every Environment that needs it — the CLI never decrypts it and needs no private key. A Platform repository without that file refuses `--postgres` before writing anything, naming the file and the wizard.
 
 Add a Capability to an Application that already exists, reusing the same writers as `iidp app create`. At least one flag is required; a Capability already present (Postgres already enabled, a `staging` Environment that already exists, a domain already listed, the same size, Itema login already enabled) is refused, naming it, and nothing is written:
 

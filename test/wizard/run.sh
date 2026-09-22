@@ -560,24 +560,24 @@ if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; the
   rc=$?
   assert_success "$rc"
   t_start "the written backups-credentials file is sops ciphertext, not plaintext"
-  backupscontent=$(cat "$d2/bootstrap/backups-credentials.enc.yaml" 2>/dev/null || echo "MISSING")
+  backupscontent=$(cat "$d2/bootstrap/templates/backups-credentials.enc.yaml" 2>/dev/null || echo "MISSING")
   assert_contains "$backupscontent" "ENC["
   t_start "the written backups-credentials file carries no namespace"
   assert_not_contains "$backupscontent" "namespace:"
   t_start "sops --decrypt reproduces the original Object Storage keys"
-  backupsdecrypted=$(SOPS_AGE_KEY_FILE="$keydir/key.txt" sops --decrypt "$d2/bootstrap/backups-credentials.enc.yaml" 2>&1)
+  backupsdecrypted=$(SOPS_AGE_KEY_FILE="$keydir/key.txt" sops --decrypt "$d2/bootstrap/templates/backups-credentials.enc.yaml" 2>&1)
   assert_contains "$backupsdecrypted" "ACCESS_KEY_ID: iidpe2e"
   assert_contains "$backupsdecrypted" "ACCESS_SECRET_KEY: iidpe2epassword"
   assert_contains "$backupsdecrypted" 'kustomize.config.k8s.io/needs-hash: "false"'
 
   t_start "write_backups_credentials decrypts unchanged after being copied to a different path"
   mkdir -p "$d2/applications/shop/prod/sops"
-  cp "$d2/bootstrap/backups-credentials.enc.yaml" "$d2/applications/shop/prod/sops/backups-credentials.enc.yaml"
+  cp "$d2/bootstrap/templates/backups-credentials.enc.yaml" "$d2/applications/shop/prod/sops/backups-credentials.enc.yaml"
   copieddecrypted=$(SOPS_AGE_KEY_FILE="$keydir/key.txt" sops --decrypt "$d2/applications/shop/prod/sops/backups-credentials.enc.yaml" 2>&1)
   assert_eq "$copieddecrypted" "$backupsdecrypted"
 
   t_start "write_backups_credentials keeps an existing file when the Object Storage keys are unchanged"
-  before=$(cat "$d2/bootstrap/backups-credentials.enc.yaml")
+  before=$(cat "$d2/bootstrap/templates/backups-credentials.enc.yaml")
   out=$(in_wizard "
     PLATFORM_REPO='$d2'
     AGE_PUBLIC_KEY='$pub'
@@ -590,8 +590,8 @@ if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; the
   t_start "write_backups_credentials (kept path) exits 0"
   assert_success "$rc"
   t_start "write_backups_credentials keeps an existing file when the Object Storage keys are unchanged"
-  assert_contains "$out" "keeping existing bootstrap/backups-credentials.enc.yaml"
-  after=$(cat "$d2/bootstrap/backups-credentials.enc.yaml")
+  assert_contains "$out" "keeping existing bootstrap/templates/backups-credentials.enc.yaml"
+  after=$(cat "$d2/bootstrap/templates/backups-credentials.enc.yaml")
   assert_eq "$after" "$before"
 else
   echo "skip - age-keygen or sops not installed, skipping the sops round-trip test"

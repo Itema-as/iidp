@@ -5,7 +5,7 @@
 # than the OCI reference, because kind has no GHCR. See
 # docs/implementation-notes/09-e2e-fixture-application.md. The third source
 # (sops/) is what iidp app create --postgres itself writes once the
-# Postgres Capability copies bootstrap/backups-credentials.enc.yaml into
+# Postgres Capability copies bootstrap/templates/backups-credentials.enc.yaml into
 # this Environment (docs/implementation-notes/42-backups-credentials.md).
 apiVersion: argoproj.io/v1alpha1
 kind: Application

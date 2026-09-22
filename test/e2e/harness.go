@@ -64,7 +64,7 @@ const (
 	// credentials. Not secret -- this cluster never leaves the machine
 	// running the test -- just long enough for MinIO to accept: it refuses
 	// a secret key under 8 characters. These must match the plaintext
-	// bootstrap/backups-credentials.enc.yaml decrypts to in the fixture
+	// bootstrap/templates/backups-credentials.enc.yaml decrypts to in the fixture
 	// Platform repository (test/e2e/fixtures/platform-repo), the same
 	// values every Environment's copy of that file carries
 	// (docs/implementation-notes/42-backups-credentials.md); the harness no

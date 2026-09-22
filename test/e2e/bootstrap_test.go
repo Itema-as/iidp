@@ -109,7 +109,7 @@ func TestBootstrap(t *testing.T) {
 	// longer creates the backups-credentials Secret by hand in either of
 	// the fixture Application's Environment namespaces. Both Environments'
 	// own applications/shop/<environment>/sops/backups-credentials.enc.yaml
-	// (a byte-for-byte copy of bootstrap/backups-credentials.enc.yaml, the
+	// (a byte-for-byte copy of bootstrap/templates/backups-credentials.enc.yaml, the
 	// same file iidp app create --postgres itself copies) is applied by
 	// their own ArgoCD Application, at the same sync-wave as the Cluster
 	// and ObjectStore that reference it. prod's endpoint stays unreachable
