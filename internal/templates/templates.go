@@ -55,9 +55,11 @@ func (f Framework) Kind() string {
 //go:embed all:nextjs all:vite-react all:other
 var files embed.FS
 
-// deployWorkflowPath is where every framework's rendered template gets the
-// shared deploy workflow, relative to the template's root.
-const deployWorkflowPath = ".github/workflows/deploy.yaml"
+// DeployWorkflowPath is where every framework's rendered template gets the
+// shared deploy workflow, relative to the template's root. Exported so the
+// Adopt path (internal/apprepo) can compare a target repository's existing
+// workflow, if any, at the same path Create writes it to.
+const DeployWorkflowPath = ".github/workflows/deploy.yaml"
 
 //go:embed deploy-workflow.yaml
 var deployWorkflowSource []byte
@@ -123,17 +125,59 @@ func Render(framework Framework, data Data, dir string) ([]string, error) {
 	// whatever Dockerfile the template shipped and never inspects the
 	// framework itself), so it lives once, here, rather than once per
 	// framework directory under nextjs/vite-react/other.
-	dest := filepath.Join(dir, filepath.FromSlash(deployWorkflowPath))
+	dest := filepath.Join(dir, filepath.FromSlash(DeployWorkflowPath))
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return nil, err
 	}
 	if err := os.WriteFile(dest, renderWorkflow(deployWorkflowSource, data), 0o644); err != nil {
 		return nil, err
 	}
-	written = append(written, deployWorkflowPath)
+	written = append(written, DeployWorkflowPath)
 
 	sort.Strings(written)
 	return written, nil
+}
+
+// RenderDockerfile writes only framework's Dockerfile and .dockerignore
+// into dir (which must already exist) and returns their paths relative to
+// dir, sorted. The Adopt path (internal/apprepo) uses this instead of
+// Render when the target repository has no Dockerfile of its own: unlike
+// Create, which generates a whole fresh repository, Adopt must not write
+// the rest of the framework's template (package.json, source files,
+// READMEs, .gitignore) into a repository that already has its own
+// (docs/implementation-notes/15-cli-adopt-path.md).
+func RenderDockerfile(framework Framework, data Data, dir string) ([]string, error) {
+	if !framework.Valid() {
+		return nil, fmt.Errorf("no built-in template for framework %q", framework)
+	}
+	root := string(framework)
+	var written []string
+	for _, rel := range []string{"Dockerfile", ".dockerignore"} {
+		content, err := fs.ReadFile(files, root+"/"+rel)
+		if err != nil {
+			return nil, fmt.Errorf("reading the %s template's %s: %w", framework, rel, err)
+		}
+		rendered, err := renderFile(rel, content, data)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(dir, rel), rendered, 0o644); err != nil {
+			return nil, err
+		}
+		written = append(written, rel)
+	}
+	sort.Strings(written)
+	return written, nil
+}
+
+// RenderDeployWorkflow returns the deploy workflow's rendered bytes for
+// data, without writing anything. The Adopt path only calls this after
+// checking that the target repository has no file at DeployWorkflowPath
+// yet (a plain existence check, not a content comparison): an existing
+// workflow there, identical or not, is left untouched rather than
+// overwritten.
+func RenderDeployWorkflow(data Data) []byte {
+	return renderWorkflow(deployWorkflowSource, data)
 }
 
 func renderFile(name string, content []byte, data Data) ([]byte, error) {

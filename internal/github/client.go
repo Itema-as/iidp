@@ -118,6 +118,83 @@ func (c *Client) SetDefaultBranch(ctx context.Context, owner, name, branch strin
 	return nil
 }
 
+// Repository is what GetRepository reads about an existing repository: the
+// fields the Adopt path needs (docs/implementation-notes/15-cli-adopt-path.md).
+// CanPush is GitHub's own view of the authenticated token's permission,
+// present in the response only because the request is authenticated.
+type Repository struct {
+	DefaultBranch string
+	CloneURL      string
+	CanPush       bool
+}
+
+// GetRepository reads owner/name (GET /repos/{owner}/{name}): its default
+// branch, its clone URL, and whether the authenticated developer has push
+// access to it. Adopt uses this both to validate --repo (existence,
+// permission) and to know which branch to clone.
+func (c *Client) GetRepository(ctx context.Context, owner, name string) (Repository, error) {
+	var repo struct {
+		DefaultBranch string `json:"default_branch"`
+		CloneURL      string `json:"clone_url"`
+		Permissions   struct {
+			Push bool `json:"push"`
+		} `json:"permissions"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/repos/"+owner+"/"+name, nil, &repo); err != nil {
+		return Repository{}, fmt.Errorf("reading %s/%s: %w", owner, name, err)
+	}
+	return Repository{
+		DefaultBranch: repo.DefaultBranch,
+		CloneURL:      repo.CloneURL,
+		CanPush:       repo.Permissions.Push,
+	}, nil
+}
+
+// BranchExists reports whether branch already exists on owner/name
+// (GET /repos/{owner}/{name}/branches/{branch}). Adopt uses this to refuse
+// rather than push over a branch a previous run (or anything else) left
+// behind.
+func (c *Client) BranchExists(ctx context.Context, owner, name, branch string) (bool, error) {
+	err := c.do(ctx, http.MethodGet, "/repos/"+owner+"/"+name+"/branches/"+branch, nil, nil)
+	switch {
+	case err == nil:
+		return true, nil
+	case IsNotFound(err):
+		return false, nil
+	default:
+		return false, fmt.Errorf("checking whether branch %s exists on %s/%s: %w", branch, owner, name, err)
+	}
+}
+
+// PullRequest is what CreatePullRequest needs to open one.
+type PullRequest struct {
+	Title string
+	Head  string
+	Base  string
+	Body  string
+}
+
+// CreatePullRequest opens a pull request on owner/name
+// (POST /repos/{owner}/{name}/pulls) and returns its web ("html") URL.
+func (c *Client) CreatePullRequest(ctx context.Context, owner, name string, pr PullRequest) (string, error) {
+	body := map[string]any{
+		"title": pr.Title,
+		"head":  pr.Head,
+		"base":  pr.Base,
+		"body":  pr.Body,
+	}
+	var resp struct {
+		HTMLURL string `json:"html_url"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/repos/"+owner+"/"+name+"/pulls", body, &resp); err != nil {
+		return "", fmt.Errorf("opening a pull request on %s/%s: %w", owner, name, err)
+	}
+	if resp.HTMLURL == "" {
+		return "", fmt.Errorf("opening a pull request on %s/%s: GitHub returned no html_url", owner, name)
+	}
+	return resp.HTMLURL, nil
+}
+
 // Installation is one GitHub App installation, as returned by
 // GET /app/installations: only the fields iidp ci set-image needs to find
 // the org's installation.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,10 +25,11 @@ import (
 	"github.com/Itema-as/iidp/internal/templates"
 )
 
-// The two values --path accepts today. Adopt is refused with a clear
-// message: issue #15 builds it. The zero value (no --path) is the legacy
-// bare behaviour of app create before this ticket: it writes only the
-// Platform repository and creates no Application repository.
+// The two values --path accepts: create generates a new Application
+// repository (issue #11), adopt opens a pull request on an existing one
+// (issue #15). The zero value (no --path) is the legacy bare behaviour of
+// app create from before either existed: it writes only the Platform
+// repository and creates no Application repository.
 const (
 	pathCreate = "create"
 	pathAdopt  = "adopt"
@@ -60,6 +62,7 @@ type createOptions struct {
 	port             int
 	probePath        string
 	path             string
+	repo             string
 	platformRepo     string
 	yes              bool
 	postgres         bool
@@ -83,6 +86,9 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 			"the org by default or, with --owner user, under the developer's personal\n" +
 			"account, generated from a built-in framework template (or a commented\n" +
 			"Dockerfile stub for --framework other), and pushes the first commit.\n" +
+			"With --path adopt --repo <owner>/<name>, it instead opens a pull request\n" +
+			"on that existing repository, adding only a Dockerfile (when it has none,\n" +
+			"generated from its detected framework) and the deploy workflow.\n" +
 			"Without --path, it writes only the prod Environment to the Platform\n" +
 			"repository (" + platform.Repository + "): an ArgoCD Application pinned\n" +
 			"to the chart version in platform.yaml and the values file that defines\n" +
@@ -90,16 +96,18 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 			"Kubernetes.\n\n" +
 			"Every question has a flag, so the command runs in scripts. Authentication is\n" +
 			"the gh CLI's login (gh auth login); write access to the Platform repository\n" +
-			"(and, with --path create, to the Application's owner) is the authorisation.",
+			"(and, with --path create or adopt, to the Application's repository) is the\n" +
+			"authorisation.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runAppCreate(cmd, &opts, deps)
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.name, "name", "", "Application name: lowercase letters, digits and dashes, starting with a letter, at most 40 characters, unique on the Platform")
-	f.StringVar(&opts.kind, "kind", "", "Kind of Application: web-service or static-site (derived from --framework with --path create, unless --framework other)")
-	f.StringVar(&opts.path, "path", "", "How the Application repository comes to be: create (generate one) or adopt (not available yet, see issue #15). Omit to write only the Platform repository, as before this flag existed")
+	f.StringVar(&opts.name, "name", "", "Application name: lowercase letters, digits and dashes, starting with a letter, at most 40 characters, unique on the Platform (defaults to the repository name with --path adopt)")
+	f.StringVar(&opts.kind, "kind", "", "Kind of Application: web-service or static-site (derived from --framework with --path create, unless --framework other; required with --path adopt when the repository already has a Dockerfile or no known framework is detected)")
+	f.StringVar(&opts.path, "path", "", "How the Application repository comes to be: create (generate one) or adopt (open a pull request on an existing one). Omit to write only the Platform repository, as before this flag existed")
+	f.StringVar(&opts.repo, "repo", "", "Existing Application repository to adopt: owner/name or a URL (--path adopt only)")
 	f.StringVar(&opts.framework, "framework", "", "Framework to generate the Application repository from (--path create only): nextjs, vite-react or other")
 	f.StringVar(&opts.owner, "owner", "org", "Where to create the Application repository (--path create only): org (the compiled-in "+platform.Org+") or user (your personal GitHub account)")
 	f.BoolVar(&opts.private, "private", true, "Create the Application repository as private (--path create only; default)")
@@ -161,10 +169,6 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	if err != nil {
 		return err
 	}
-	migrationCommand, err := detectMigrationCommand(plan, out)
-	if err != nil {
-		return err
-	}
 
 	token, err := deps.TokenSource.Token()
 	if err != nil {
@@ -174,16 +178,15 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	auth := git.Auth{Token: token}
 	platformWriter := &platformrepo.Writer{URL: opts.platformRepo, Auth: auth, BeforePush: deps.BeforePush}
 
+	ghClient := &github.Client{Token: token}
+	if deps.GitHubAPI != "" {
+		ghClient.BaseURL = deps.GitHubAPI
+	}
+
 	ownerLogin := platform.Org
 	ownerIsOrg := true
-	var appRepo apprepo.Result
-	var ghClient *github.Client
-
-	if plan.path == pathCreate {
-		ghClient = &github.Client{Token: token}
-		if deps.GitHubAPI != "" {
-			ghClient.BaseURL = deps.GitHubAPI
-		}
+	switch plan.path {
+	case pathCreate:
 		if plan.ownerMode == "user" {
 			login, err := ghClient.CurrentUser(cmd.Context())
 			if err != nil {
@@ -191,31 +194,79 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			}
 			ownerLogin, ownerIsOrg = login, false
 		}
+	case pathAdopt:
+		// The Application repository's own owner, not a choice: Adopt
+		// reads an existing repository rather than creating one under the
+		// org or the developer's account
+		// (docs/implementation-notes/15-cli-adopt-path.md).
+		ownerLogin = plan.repoOwner
+		ownerIsOrg = strings.EqualFold(plan.repoOwner, platform.Org)
 	}
 
 	image := plan.imageOverride
 	if image == "" {
 		image = "ghcr.io/" + strings.ToLower(ownerLogin) + "/" + plan.name
 	}
-	app := platformrepo.Application{
-		Name:             plan.name,
-		Kind:             plan.kind,
-		Size:             plan.size,
-		ImageRepository:  image,
-		Port:             plan.port,
-		ProbePath:        plan.probePath,
-		Postgres:         plan.postgres,
-		MigrationCommand: migrationCommand,
-		Staging:          plan.staging,
-		Domains:          plan.domains,
+
+	// kind and migrationCommand are already final for Create and the
+	// legacy bare path (plan.kind is resolved, and detectMigrationCommand
+	// runs against a freshly rendered template or the current directory).
+	// For Adopt, both depend on cloning the target repository, which the
+	// Create/legacy paths never do: they are resolved below, either during
+	// the interactive preview (to show real values in the summary) or,
+	// definitively, once Adopter.Adopt itself has cloned the repository.
+	kind := plan.kind
+	migrationCommand := plan.migrationCommand
+	if plan.path != pathAdopt {
+		migrationCommand, err = detectMigrationCommand(plan, out)
+		if err != nil {
+			return err
+		}
 	}
 
+	adopter := &apprepo.Adopter{Client: ghClient, Auth: auth}
+
 	if interactive && !opts.yes {
+		summaryKind := kind
+		summaryMigration := migrationCommand
+		var adoptFiles []string
+		if plan.path == pathAdopt {
+			preview, err := adopter.Preview(cmd.Context(), plan.repoOwner, plan.repoName)
+			if err != nil {
+				return err
+			}
+			if err := checkAdoptPreview(preview, plan.repoOwner, plan.repoName); err != nil {
+				return err
+			}
+			summaryKind, err = apprepo.ResolveKind(plan.kind, preview.Detection)
+			if err != nil {
+				return fmt.Errorf("%s/%s: %w", plan.repoOwner, plan.repoName, err)
+			}
+			if plan.postgres && !plan.migrationCommandSet && preview.MigrationOK {
+				summaryMigration = preview.Migration.Command
+			}
+			adoptFiles = preview.Detection.Files()
+		}
+		if err := checkPostgresKind(plan.postgres, summaryKind); err != nil {
+			return err
+		}
+		app := platformrepo.Application{
+			Name:             plan.name,
+			Kind:             summaryKind,
+			Size:             plan.size,
+			ImageRepository:  image,
+			Port:             plan.port,
+			ProbePath:        plan.probePath,
+			Postgres:         plan.postgres,
+			MigrationCommand: summaryMigration,
+			Staging:          plan.staging,
+			Domains:          plan.domains,
+		}
 		preview, err := platformWriter.PreviewApplication(cmd.Context(), app)
 		if err != nil {
 			return err
 		}
-		printSummary(out, plan, ownerLogin, app, preview)
+		printSummary(out, plan, ownerLogin, app, preview, adoptFiles)
 		proceed, err := p.YesNo("Proceed?", true)
 		if err != nil {
 			return err
@@ -226,6 +277,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		}
 	}
 
+	var appRepo apprepo.Result
 	if plan.path == pathCreate {
 		fmt.Fprintf(out, "Creating Application %s on the Platform (Create path):\n", plan.name)
 		fmt.Fprintf(out, "  Framework: %s\n", plan.framework)
@@ -256,8 +308,64 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		}
 		fmt.Fprintf(out, "\nThe deploy workflow (.github/workflows/deploy.yaml) is pinned to iidp %s.\n", appRepo.IidpVersion)
 		if !ownerIsOrg {
-			fmt.Fprintf(out, "IIDP_DEPLOY_APP_PRIVATE_KEY (a secret) and IIDP_DEPLOY_APP_ID (a variable) are org-level; a personal-account repository does not receive either automatically. Add both by hand: %s/settings/secrets/actions/new (secret IIDP_DEPLOY_APP_PRIVATE_KEY, the org GitHub App's private key PEM) and %s/settings/variables/actions/new (variable IIDP_DEPLOY_APP_ID, the org GitHub App's id).\n", appRepo.URL, appRepo.URL)
+			printPersonalOwnerNote(out, appRepo.URL)
 		}
+	}
+
+	var adoptResult apprepo.AdoptResult
+	if plan.path == pathAdopt {
+		fmt.Fprintf(out, "Adopting %s/%s onto the Platform:\n", plan.repoOwner, plan.repoName)
+
+		// Postgres-vs-Kind is validated inside Adopter.Adopt itself, right
+		// after Kind is resolved and before anything is written, committed
+		// or pushed: unlike the interactive summary's preview (which can
+		// check this before the developer even confirms), a flag-driven
+		// run does not know the final Kind until the repository has been
+		// cloned, and a refusal must never come after the pull request
+		// already exists (docs/implementation-notes/15-cli-adopt-path.md).
+		adoptResult, err = adopter.Adopt(cmd.Context(), apprepo.AdoptRequest{
+			Owner:    plan.repoOwner,
+			Name:     plan.repoName,
+			AppName:  plan.name,
+			Kind:     kind,
+			Postgres: plan.postgres,
+		})
+		if err != nil {
+			return err
+		}
+		kind = adoptResult.Kind
+		if !plan.migrationCommandSet {
+			switch {
+			case plan.postgres && adoptResult.MigrationOK:
+				migrationCommand = adoptResult.Migration.Command
+				fmt.Fprintf(out, "Detected %s in %s/%s; migration command: %s\n", adoptResult.Migration.Tool, plan.repoOwner, plan.repoName, migrationCommand)
+			case plan.postgres:
+				fmt.Fprintln(out, "No migration tooling detected; postgres.migrationCommand is left empty. Set --migration-command if the Application has migrations.")
+			}
+		}
+
+		fmt.Fprintf(out, "\nOpened a pull request on %s, branch %s: %s\n", adoptResult.RepoURL, adoptResult.Branch, adoptResult.PullRequestURL)
+		fmt.Fprintln(out, "It adds:")
+		for _, f := range adoptResult.Files {
+			fmt.Fprintf(out, "  %s\n", f)
+		}
+		fmt.Fprintln(out, "The first merged run of its deploy workflow deploys the Application.")
+		if !ownerIsOrg {
+			printPersonalOwnerNote(out, adoptResult.RepoURL)
+		}
+	}
+
+	app := platformrepo.Application{
+		Name:             plan.name,
+		Kind:             kind,
+		Size:             plan.size,
+		ImageRepository:  image,
+		Port:             plan.port,
+		ProbePath:        plan.probePath,
+		Postgres:         plan.postgres,
+		MigrationCommand: migrationCommand,
+		Staging:          plan.staging,
+		Domains:          plan.domains,
 	}
 
 	fmt.Fprintf(out, "\nWriting the prod Environment to %s...\n", platform.Repository)
@@ -275,18 +383,60 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 
 	res, err := platformWriter.CreateApplication(cmd.Context(), app)
 	if err != nil {
-		if plan.path == pathCreate {
+		switch plan.path {
+		case pathCreate:
 			fmt.Fprintf(out, "\nThe Application repository %s was created and pushed.\n", appRepo.URL)
 			fmt.Fprintf(out, "Writing %s failed: %v\n", platform.Repository, err)
 			fmt.Fprintf(out, "Finish by hand: clone %s, add applications/%s/prod/{application.yaml,values.yaml} (see docs/platform-repository.md), commit and push to main. The Application repository is untouched; nothing is deleted.\n", platform.RepositoryURL, plan.name)
+		case pathAdopt:
+			fmt.Fprintf(out, "\nThe pull request %s was opened.\n", adoptResult.PullRequestURL)
+			fmt.Fprintf(out, "Writing %s failed: %v\n", platform.Repository, err)
+			fmt.Fprintf(out, "Finish by hand: clone %s, add applications/%s/prod/{application.yaml,values.yaml} (see docs/platform-repository.md), commit and push to main. The pull request is untouched; nothing is deleted.\n", platform.RepositoryURL, plan.name)
 		}
 		return err
 	}
-	if plan.path == pathCreate {
+	switch plan.path {
+	case pathCreate:
 		fmt.Fprintf(out, "\nApplication repository: %s\n", appRepo.URL)
+	case pathAdopt:
+		fmt.Fprintf(out, "\nPull request: %s\n", adoptResult.PullRequestURL)
 	}
 	printCreated(out, plan.name, res)
 	return nil
+}
+
+// checkAdoptPreview turns an AdoptPreview's two refusal conditions into the
+// same errors Adopter.Adopt itself would return, so the interactive wizard
+// refuses before the summary rather than after a developer confirms.
+// checkPostgresKind refuses --postgres against a Static site Kind: a
+// Static site has no server to run a database against. A no-op when kind
+// is "" (Adopt, before it is resolved): the same check runs again once
+// Kind is known, inside Adopter.Adopt and the interactive summary's
+// preview.
+func checkPostgresKind(postgres bool, kind string) error {
+	if postgres && kind == platformrepo.KindStaticSite {
+		return errors.New("--postgres needs --kind web-service (or a framework/detected framework that derives it); a Static site has no server to use a database")
+	}
+	return nil
+}
+
+func checkAdoptPreview(preview apprepo.AdoptPreview, owner, name string) error {
+	if !preview.CanPush {
+		return fmt.Errorf("%w: you do not have write access to %s/%s; Adopt needs it to open a pull request", apprepo.ErrNoPushAccess, owner, name)
+	}
+	if preview.BranchExists {
+		return fmt.Errorf("%w: %s already exists on %s/%s; merge or delete it before adopting again", apprepo.ErrBranchExists, apprepo.AdoptBranch, owner, name)
+	}
+	return nil
+}
+
+// printPersonalOwnerNote is the by-hand secret-and-variable note for an
+// Application repository under a personal account rather than the org
+// (docs/implementation-notes/12-deploy-workflow.md): neither the deploy
+// App's private key nor its id reaches a personal-account repository
+// automatically.
+func printPersonalOwnerNote(out io.Writer, repoURL string) {
+	fmt.Fprintf(out, "IIDP_DEPLOY_APP_PRIVATE_KEY (a secret) and IIDP_DEPLOY_APP_ID (a variable) are org-level; a personal-account repository does not receive either automatically. Add both by hand: %s/settings/secrets/actions/new (secret IIDP_DEPLOY_APP_PRIVATE_KEY, the org GitHub App's private key PEM) and %s/settings/variables/actions/new (variable IIDP_DEPLOY_APP_ID, the org GitHub App's id).\n", repoURL, repoURL)
 }
 
 // checkRequiredFlags reports flags missing for the chosen --path, in the
@@ -296,17 +446,26 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 func (o createOptions) checkRequiredFlags(cmd *cobra.Command) error {
 	f := cmd.Flags()
 	var missing []string
-	if !f.Changed("name") {
-		missing = append(missing, "name")
-	}
 	switch o.path {
 	case pathCreate:
+		if !f.Changed("name") {
+			missing = append(missing, "name")
+		}
 		if !f.Changed("framework") {
 			missing = append(missing, "framework")
 		}
 	case pathAdopt:
-		// Refused with its own message once flags are otherwise valid.
+		// --name is not required for Adopt: it defaults to the repository
+		// name (createOptions.plan). --kind's requirement depends on
+		// detection, which needs the repository cloned, so it cannot be
+		// checked here; Adopter.Adopt refuses clearly once it knows.
+		if !f.Changed("repo") {
+			missing = append(missing, "repo")
+		}
 	default:
+		if !f.Changed("name") {
+			missing = append(missing, "name")
+		}
 		if !f.Changed("kind") {
 			missing = append(missing, "kind")
 		}
@@ -326,14 +485,17 @@ func (o createOptions) checkRequiredFlags(cmd *cobra.Command) error {
 // build both the Application repository (when path is pathCreate) and the
 // Platform repository's Environment.
 type createPlan struct {
-	name             string
-	kind             string
-	framework        templates.Framework
-	size             string
-	imageOverride    string
-	port             int
-	probePath        string
-	path             string
+	name          string
+	kind          string
+	framework     templates.Framework
+	size          string
+	imageOverride string
+	port          int
+	probePath     string
+	path          string
+	// repoOwner and repoName are --repo, parsed (--path adopt only).
+	repoOwner        string
+	repoName         string
 	ownerMode        string
 	private          bool
 	postgres         bool
@@ -351,14 +513,8 @@ type createPlan struct {
 // plan validates every flag before anything is cloned or written, and
 // turns them into the plan for the chosen --path.
 func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
-	if err := platformrepo.ValidateName(o.name); err != nil {
-		return createPlan{}, err
-	}
-
 	switch o.path {
-	case "", pathCreate:
-	case pathAdopt:
-		return createPlan{}, errors.New("the Adopt path (--path adopt) is not implemented yet; see issue #15")
+	case "", pathCreate, pathAdopt:
 	default:
 		return createPlan{}, fmt.Errorf("unknown --path %q: must be create or adopt", o.path)
 	}
@@ -370,10 +526,33 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 			}
 		}
 	}
+	if o.path != pathAdopt && cmd.Flags().Changed("repo") {
+		return createPlan{}, errors.New("--repo requires --path adopt")
+	}
+
+	name := o.name
+	var repoOwner, repoName string
+	if o.path == pathAdopt {
+		if o.repo == "" {
+			return createPlan{}, errors.New("--repo is required with --path adopt: the existing Application repository to open a pull request on, owner/name or a URL")
+		}
+		var err error
+		repoOwner, repoName, err = parseRepoFlag(o.repo)
+		if err != nil {
+			return createPlan{}, err
+		}
+		if name == "" {
+			name = repoName
+		}
+	}
+	if err := platformrepo.ValidateName(name); err != nil {
+		return createPlan{}, err
+	}
 
 	kind := o.kind
 	var framework templates.Framework
-	if o.path == pathCreate {
+	switch o.path {
+	case pathCreate:
 		framework = templates.Framework(o.framework)
 		if !framework.Valid() {
 			return createPlan{}, fmt.Errorf("unknown --framework %q: must be nextjs, vite-react or other", o.framework)
@@ -388,11 +567,30 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 			}
 			kind = framework.Kind()
 		}
+		if !platformrepo.ValidKind(kind) {
+			return createPlan{}, fmt.Errorf("unknown Kind %q: --kind must be %s or %s", kind, platformrepo.KindWebService, platformrepo.KindStaticSite)
+		}
+	case pathAdopt:
+		// Whether Kind is required at all depends on what Adopt finds when
+		// it clones the repository (an existing Dockerfile, or no known
+		// framework), which needs network access plan() never does; the
+		// eventual refusal is apprepo.ResolveKind's job, run once the
+		// repository has actually been read
+		// (docs/implementation-notes/15-cli-adopt-path.md). An explicit
+		// --kind is validated here and used unconditionally later.
+		if cmd.Flags().Changed("kind") {
+			if !platformrepo.ValidKind(kind) {
+				return createPlan{}, fmt.Errorf("unknown Kind %q: --kind must be %s or %s", kind, platformrepo.KindWebService, platformrepo.KindStaticSite)
+			}
+		} else {
+			kind = ""
+		}
+	default:
+		if !platformrepo.ValidKind(kind) {
+			return createPlan{}, fmt.Errorf("unknown Kind %q: --kind must be %s or %s", kind, platformrepo.KindWebService, platformrepo.KindStaticSite)
+		}
 	}
 
-	if !platformrepo.ValidKind(kind) {
-		return createPlan{}, fmt.Errorf("unknown Kind %q: --kind must be %s or %s", kind, platformrepo.KindWebService, platformrepo.KindStaticSite)
-	}
 	if !slices.Contains(sizes, o.size) {
 		return createPlan{}, fmt.Errorf("unknown size %q: --size must be %s", o.size, strings.Join(sizes, ", "))
 	}
@@ -405,8 +603,13 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if o.migrationCommand != "" && !o.postgres {
 		return createPlan{}, errors.New("--migration-command requires --postgres: there is no database to migrate")
 	}
-	if o.postgres && kind == platformrepo.KindStaticSite {
-		return createPlan{}, errors.New("--postgres needs --kind web-service (or a framework that derives it); a Static site has no server to use a database")
+	// For Adopt, kind can still be "" here (it must be derived from
+	// detection, which needs the repository cloned); checkPostgresKind is a
+	// no-op against an empty Kind, and this check runs again, with the
+	// real Kind, inside Adopter.Adopt and the interactive summary's
+	// preview, both before anything is written.
+	if err := checkPostgresKind(o.postgres, kind); err != nil {
+		return createPlan{}, err
 	}
 
 	ownerMode := "org"
@@ -430,7 +633,7 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	}
 
 	return createPlan{
-		name:                o.name,
+		name:                name,
 		kind:                kind,
 		framework:           framework,
 		size:                o.size,
@@ -438,6 +641,8 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		port:                o.port,
 		probePath:           o.probePath,
 		path:                o.path,
+		repoOwner:           repoOwner,
+		repoName:            repoName,
 		ownerMode:           ownerMode,
 		private:             private,
 		postgres:            o.postgres,
@@ -447,6 +652,27 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		staging:             o.staging,
 		domains:             o.domains,
 	}, nil
+}
+
+// parseRepoFlag splits --repo into an owner and a repository name: either
+// the short form owner/name, or a GitHub URL such as
+// https://github.com/owner/name, with or without a trailing .git or slash.
+func parseRepoFlag(s string) (owner, name string, err error) {
+	trimmed := strings.TrimSpace(s)
+	p := trimmed
+	if strings.Contains(trimmed, "://") {
+		u, err := url.Parse(trimmed)
+		if err != nil {
+			return "", "", fmt.Errorf("--repo %q is not a valid URL: %w", s, err)
+		}
+		p = strings.Trim(u.Path, "/")
+	}
+	p = strings.TrimSuffix(p, ".git")
+	parts := strings.Split(p, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("--repo %q must be owner/name or a GitHub URL such as https://github.com/owner/name", s)
+	}
+	return parts[0], parts[1], nil
 }
 
 // resolveMigrationDir picks the directory detection should look in for

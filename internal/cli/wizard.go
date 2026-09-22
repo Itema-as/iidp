@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -52,22 +53,29 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) erro
 			return err
 		}
 	}
-	if opts.path == pathAdopt {
-		// Adopt (#15) does not exist yet; opts.plan will refuse it with its
-		// own message. Nothing more to ask: every later question either
-		// does not apply to Adopt or (Kind/framework) would be answered by
-		// detecting the target repository's Dockerfile once #15 lands.
-		fmt.Fprintln(out, "Adopt is not available yet (see issue #15).")
-		return nil
+	// 2b. Adopt asks for the repository to open a pull request on.
+	if opts.path == pathAdopt && !f.Changed("repo") {
+		repo, err := p.Text("Application repository (owner/name or a URL)", "", func(s string) error {
+			if s == "" {
+				return errors.New("a repository is required")
+			}
+			_, _, err := parseRepoFlag(s)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		if err := f.Set("repo", repo); err != nil {
+			return err
+		}
 	}
 
 	// 3. Kind and framework. On the Create path the framework decides the
-	// Kind, except "other", which asks for it directly.
-	//
-	// TODO(#15): when Adopt exists, skip this block entirely when it finds
-	// an existing Dockerfile in the target repository (the Dockerfile is
-	// deployed as-is, and its Kind is whatever the developer already
-	// chose when the repository was created).
+	// Kind, except "other", which asks for it directly. Adopt asks
+	// neither: an existing Dockerfile's Kind cannot be derived at all (it
+	// is required as a flag, checked once the repository is cloned), and
+	// without one the framework is detected from the repository itself,
+	// not chosen (docs/implementation-notes/15-cli-adopt-path.md).
 	if opts.path == pathCreate {
 		if !f.Changed("framework") {
 			fw, err := p.Choice("Framework", []string{
@@ -85,12 +93,13 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) erro
 				return err
 			}
 		}
-	} else if !f.Changed("kind") {
+	} else if opts.path == "" && !f.Changed("kind") {
 		// The legacy bare path (no --path, kept for compatibility per
 		// docs/implementation-notes/11-cli-create-path.md): the wizard
 		// never chooses it itself (question 2 only offers Create or
 		// Adopt), but a flag combination can still reach here, so the
-		// question is asked all the same.
+		// question is asked all the same. Adopt (opts.path == pathAdopt)
+		// asks nothing here, per the comment above.
 		if err := askKind(f, p); err != nil {
 			return err
 		}
@@ -236,10 +245,11 @@ func itemaLoginQuestion(_ *createOptions) {}
 // platformrepo.Writer.PreviewApplication reports for app: real addresses
 // and domain classification read from platform.yaml, without writing
 // anything.
-func printSummary(out io.Writer, plan createPlan, ownerLogin string, app platformrepo.Application, preview platformrepo.Result) {
+func printSummary(out io.Writer, plan createPlan, ownerLogin string, app platformrepo.Application, preview platformrepo.Result, adoptFiles []string) {
 	fmt.Fprintln(out, "\nSummary:")
 	fmt.Fprintf(out, "  Name:       %s\n", plan.name)
-	if plan.path == pathCreate {
+	switch plan.path {
+	case pathCreate:
 		visibility := "private"
 		if !plan.private {
 			visibility = "public"
@@ -248,7 +258,18 @@ func printSummary(out io.Writer, plan createPlan, ownerLogin string, app platfor
 		fmt.Fprintf(out, "  Owner:      %s (%s)\n", ownerLogin, plan.ownerMode)
 		fmt.Fprintf(out, "  Framework:  %s\n", plan.framework)
 		fmt.Fprintf(out, "  Visibility: %s\n", visibility)
-	} else {
+	case pathAdopt:
+		fmt.Fprintf(out, "  Path:       Adopt\n")
+		fmt.Fprintf(out, "  Repository: %s/%s\n", plan.repoOwner, plan.repoName)
+		if len(adoptFiles) == 0 {
+			fmt.Fprintln(out, "  Pull request adds: nothing (a Dockerfile and a deploy workflow already exist)")
+		} else {
+			fmt.Fprintln(out, "  Pull request adds:")
+			for _, f := range adoptFiles {
+				fmt.Fprintf(out, "    %s\n", f)
+			}
+		}
+	default:
 		fmt.Fprintf(out, "  Path:       writes only %s\n", platform.Repository)
 	}
 	fmt.Fprintf(out, "  Kind:       %s\n", app.Kind)

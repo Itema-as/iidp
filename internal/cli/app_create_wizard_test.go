@@ -231,32 +231,9 @@ func TestAppCreateWizardDecliningTheSummaryHasNoSideEffects(t *testing.T) {
 	assertNoApplications(t, url)
 }
 
-// TestAppCreateWizardAdoptIsNotImplementedYet checks the wizard's hook for
-// the Adopt path (#15): choosing it stops asking further questions and
-// fails with the pre-existing "not implemented" message, with no GitHub
-// request made and nothing written to the Platform repository.
-func TestAppCreateWizardAdoptIsNotImplementedYet(t *testing.T) {
-	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
-	gh := newFakeGitHub(t)
-
-	stdin := "shop\nadopt\n"
-
-	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin)
-
-	if code == 0 {
-		t.Fatalf("exit code = 0, want non-zero")
-	}
-	if !strings.Contains(stderr, "not implemented") || !strings.Contains(stderr, "15") {
-		t.Errorf("stderr = %q, want it to say Adopt is not implemented and name issue #15", stderr)
-	}
-	if !strings.Contains(stdout, "not available yet") {
-		t.Errorf("stdout = %q, want the wizard's own notice", stdout)
-	}
-	if len(gh.requests) != 0 {
-		t.Errorf("the fake GitHub API was called %d times, want 0", len(gh.requests))
-	}
-	assertNoApplications(t, url)
-}
+// The wizard's Adopt path (question 2 asking for --repo, skipping Kind and
+// framework) is covered end to end in app_create_adopt_test.go; it is
+// implemented, not refused, as of #15.
 
 func TestAppCreateWizardWithoutTTYAndWithoutInteractiveFlagBehavesAsBefore(t *testing.T) {
 	url := newPlatformRepository(t, testPlatformYAML)
