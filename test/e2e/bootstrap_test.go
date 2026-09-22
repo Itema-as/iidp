@@ -105,26 +105,19 @@ func TestBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// kind has no cloud Object Storage: create the Secret the Postgres
-	// Capability needs before its Cluster and ObjectStore render, in both of
-	// the fixture Application's Environment namespaces, ahead of ArgoCD's
-	// own CreateNamespace=true. prod's endpoint stays unreachable (dummy
-	// credentials, nothing ever authenticates with them); staging's points
-	// at the harness's own MinIO, so it needs MinIO's real credentials
-	// instead.
-	if err := cluster.CreateNamespace(ctx, "shop-prod"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cluster.CreateBackupsCredentialsSecret(ctx, "shop-prod"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cluster.CreateNamespace(ctx, "shop-staging"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cluster.CreateMinIOBackupsCredentialsSecret(ctx, "shop-staging"); err != nil {
-		t.Fatal(err)
-	}
-
+	// kind has no cloud Object Storage: unlike before #42, the harness no
+	// longer creates the backups-credentials Secret by hand in either of
+	// the fixture Application's Environment namespaces. Both Environments'
+	// own applications/shop/<environment>/sops/backups-credentials.enc.yaml
+	// (a byte-for-byte copy of bootstrap/templates/backups-credentials.enc.yaml, the
+	// same file iidp app create --postgres itself copies) is applied by
+	// their own ArgoCD Application, at the same sync-wave as the Cluster
+	// and ObjectStore that reference it. prod's endpoint stays unreachable
+	// (objectstorage.invalid; nothing ever authenticates with these
+	// credentials there); staging's points at the harness's own MinIO,
+	// whose root credentials (MinIOAccessKey/MinIOSecretKey) are exactly
+	// what that file decrypts to. See
+	// docs/implementation-notes/42-backups-credentials.md.
 	want := map[string]Expectation{
 		"platform":            Healthy,
 		"platform-components": Healthy,

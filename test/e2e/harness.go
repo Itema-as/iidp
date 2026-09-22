@@ -63,9 +63,12 @@ const (
 	// MinIOAccessKey and MinIOSecretKey are the harness's fixed MinIO root
 	// credentials. Not secret -- this cluster never leaves the machine
 	// running the test -- just long enough for MinIO to accept: it refuses
-	// a secret key under 8 characters, unlike the "dummy"/"dummy" pair
-	// CreateBackupsCredentialsSecret writes for every other namespace,
-	// which nothing ever actually authenticates with.
+	// a secret key under 8 characters. These must match the plaintext
+	// bootstrap/templates/backups-credentials.enc.yaml decrypts to in the fixture
+	// Platform repository (test/e2e/fixtures/platform-repo), the same
+	// values every Environment's copy of that file carries
+	// (docs/implementation-notes/42-backups-credentials.md); the harness no
+	// longer creates the backups-credentials Secret itself.
 	MinIOAccessKey = "iidpe2e"
 	MinIOSecretKey = "iidpe2epassword"
 	// MinIOBucket is the bucket InstallMinIO creates, matching the fixture
@@ -428,44 +431,15 @@ func (c *Cluster) CreateAgeKeySecret(ctx context.Context, keyFile string) error 
 }
 
 // CreateNamespace creates a namespace, doing nothing if it already exists
-// (kubectl apply is idempotent): the fixture Application's Environments need
-// theirs to exist before their ObjectStore and Cluster reconcile, ahead of
-// ArgoCD's own CreateNamespace=true, which would otherwise create it later.
+// (kubectl apply is idempotent). Used for namespaces something needs to
+// exist ahead of ArgoCD's own CreateNamespace=true (GitServerNamespace,
+// below); the fixture Application's own Environment namespaces no longer
+// need this -- the backups-credentials Secret they need arrives through
+// their own Application's sops/ source, at the same sync-wave as the
+// Cluster and ObjectStore that reference it, not ahead of it
+// (docs/implementation-notes/42-backups-credentials.md).
 func (c *Cluster) CreateNamespace(ctx context.Context, name string) error {
 	return c.Apply(ctx, fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n", name))
-}
-
-// CreateBackupsCredentialsSecret creates the Secret named
-// platform.backupsCredentialsSecret (chart/application's default
-// backups-credentials) with dummy Object Storage keys, in the given
-// namespace. kind has no Object Storage: this is enough for the chart's
-// ObjectStore and CloudNativePG Cluster to render and reach Healthy; the
-// scheduled backup itself fails against the unreachable endpoint, which is
-// expected (docs/implementation-notes/09-e2e-fixture-application.md).
-func (c *Cluster) CreateBackupsCredentialsSecret(ctx context.Context, namespace string) error {
-	out, err := c.Kubectl(ctx, "-n", namespace, "create", "secret", "generic", "backups-credentials",
-		"--from-literal=ACCESS_KEY_ID=dummy", "--from-literal=ACCESS_SECRET_KEY=dummy")
-	if err != nil {
-		return fmt.Errorf("create backups-credentials secret in %s: %w\n%s", namespace, err, out)
-	}
-	return nil
-}
-
-// CreateMinIOBackupsCredentialsSecret creates the Secret named
-// platform.backupsCredentialsSecret (backups-credentials) with the
-// harness's real MinIO credentials (MinIOAccessKey/MinIOSecretKey) in
-// namespace, the same keys CreateBackupsCredentialsSecret's dummy version
-// uses. Only the one Environment whose final Backup PreDelete hook
-// TestBootstrap proves actually completes (shop-staging) needs this rather
-// than the dummy pair, since only its Cluster's ObjectStore points at a
-// real, reachable endpoint (InstallMinIO).
-func (c *Cluster) CreateMinIOBackupsCredentialsSecret(ctx context.Context, namespace string) error {
-	out, err := c.Kubectl(ctx, "-n", namespace, "create", "secret", "generic", "backups-credentials",
-		"--from-literal=ACCESS_KEY_ID="+MinIOAccessKey, "--from-literal=ACCESS_SECRET_KEY="+MinIOSecretKey)
-	if err != nil {
-		return fmt.Errorf("create backups-credentials secret (MinIO) in %s: %w\n%s", namespace, err, out)
-	}
-	return nil
 }
 
 // InstallMinIO deploys a single-Pod MinIO server in GitServerNamespace,

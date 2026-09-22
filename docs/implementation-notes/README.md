@@ -23,3 +23,4 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #18 | [18-itema-login.md](18-itema-login.md) |
 | #39 | [39-final-backup-predelete-hook.md](39-final-backup-predelete-hook.md) |
 | #41 | [41-argocd-platform-repo-credential.md](41-argocd-platform-repo-credential.md) |
+| #42 | [42-backups-credentials.md](42-backups-credentials.md) |

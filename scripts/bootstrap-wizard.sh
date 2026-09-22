@@ -720,6 +720,16 @@ STATE_TFVARS="$IIDP_REPO_ROOT/infra/state-bucket/terraform.tfvars"
 PLATFORM_TFVARS="$IIDP_REPO_ROOT/infra/platform/terraform.tfvars"
 HCLOUD_TOKEN="" OBJECT_STORAGE_ACCESS_KEY="" OBJECT_STORAGE_SECRET_KEY="" SSH_PUBLIC_KEY_PATH=""
 HETZNER_TOKEN=""
+OBJECT_STORAGE_LOCATION="" OBJECT_STORAGE_ENDPOINT=""
+# Whether stage_hetzner collected different Object Storage keys than what
+# was already in STATE_TFVARS this run: write_backups_credentials uses this
+# to decide whether bootstrap/templates/backups-credentials.enc.yaml needs
+# re-encrypting, the same "kept means untouched" idempotency the four
+# bootstrap/sops secrets already follow -- there is no way to regenerate
+# and diff a document whose plaintext the wizard cannot read back
+# (docs/implementation-notes/05-bootstrap-wizard.md, "Idempotency: whole-file
+# rewrite, not patching").
+OBJECT_STORAGE_KEYS_CHANGED=0
 
 stage_hetzner() {
   stage "Hetzner"
@@ -746,16 +756,34 @@ stage_hetzner() {
   fi
   tfvar_set "$PLATFORM_TFVARS" hcloud_token "$HCLOUD_TOKEN"
 
-  local existing_access
+  local existing_access existing_secret
   existing_access=$(tfvar_get "$STATE_TFVARS" object_storage_access_key || true)
+  existing_secret=$(tfvar_get "$STATE_TFVARS" object_storage_secret_key || true)
   if [[ -n "$existing_access" ]]; then
     note "existing Object Storage access key found: $(mask "$existing_access")"
   fi
   step "Same project > Security > S3 credentials > Generate credentials."
   ask_secret OBJECT_STORAGE_ACCESS_KEY "Paste the Object Storage access key:" "$existing_access"
-  ask_secret OBJECT_STORAGE_SECRET_KEY "Paste the Object Storage secret key:" "$(tfvar_get "$STATE_TFVARS" object_storage_secret_key || true)"
+  ask_secret OBJECT_STORAGE_SECRET_KEY "Paste the Object Storage secret key:" "$existing_secret"
   tfvar_set "$STATE_TFVARS" object_storage_access_key "$OBJECT_STORAGE_ACCESS_KEY"
   tfvar_set "$STATE_TFVARS" object_storage_secret_key "$OBJECT_STORAGE_SECRET_KEY"
+  if [[ "$OBJECT_STORAGE_ACCESS_KEY" != "$existing_access" || "$OBJECT_STORAGE_SECRET_KEY" != "$existing_secret" ]]; then
+    OBJECT_STORAGE_KEYS_CHANGED=1
+  fi
+
+  # infra/state-bucket's own location variable (default hel1) is where the
+  # buckets, including backupsBucket, actually live; the S3 endpoint every
+  # Environment's ObjectStore needs is a fixed shape of that same location
+  # (infra/state-bucket/terraform.tfvars.example, infra/README.md), so it is
+  # derived here rather than asked for outright -- with a prompt to
+  # override it, since a Platform admin who already knows the endpoint
+  # differs (a non-default Hetzner region naming scheme, say) must still be
+  # able to say so.
+  local existing_location
+  existing_location=$(tfvar_get "$STATE_TFVARS" location || echo hel1)
+  ask OBJECT_STORAGE_LOCATION "Hetzner Object Storage location (fsn1, nbg1 or hel1):" "$existing_location"
+  tfvar_set "$STATE_TFVARS" location "$OBJECT_STORAGE_LOCATION"
+  ask OBJECT_STORAGE_ENDPOINT "Object Storage endpoint (objectStorageEndpoint):" "https://${OBJECT_STORAGE_LOCATION}.your-objectstorage.com"
 
   local existing_ssh
   existing_ssh=$(tfvar_get "$PLATFORM_TFVARS" ssh_public_key || true)
@@ -1113,7 +1141,7 @@ stage_opentofu() {
 
 write_platform_yaml() {
   local file="$PLATFORM_REPO/platform.yaml"
-  local chart_version="$1" acme_email="$2" acme_server="$3" cluster_name="$4" backups_bucket="$5"
+  local chart_version="$1" acme_email="$2" acme_server="$3" cluster_name="$4" backups_bucket="$5" object_storage_endpoint="$6"
 
   if [[ "$DRY_RUN" == "1" ]]; then
     dry "would write $file"
@@ -1148,8 +1176,10 @@ githubApp:
 # only in the cluster (Secret argocd/sops-age).
 agePublicKey: ${AGE_PUBLIC_KEY}
 
-# The Object Storage bucket CloudNativePG backups go to.
+# The Object Storage bucket CloudNativePG backups go to, and the S3 endpoint
+# of its location.
 backupsBucket: ${backups_bucket}
+objectStorageEndpoint: ${object_storage_endpoint}
 
 # Bootstrap-only settings.
 acme:
@@ -1166,12 +1196,15 @@ write_sops_yaml() {
   if [[ "$DRY_RUN" == "1" ]]; then dry "would write $file"; return 0; fi
   cat > "$file" <<EOF
 # SOPS creation rules for this Platform repository. Every file under
-# bootstrap/sops is encrypted for the Platform's age public key (the one
-# in platform.yaml); only data and stringData are encrypted so names,
-# namespaces and labels stay readable and diffable. Written by
-# scripts/bootstrap-wizard.sh.
+# bootstrap/sops, and bootstrap/templates/backups-credentials.enc.yaml, is encrypted
+# for the Platform's age public key (the one in platform.yaml); only data
+# and stringData are encrypted so names, namespaces and labels stay
+# readable and diffable. Written by scripts/bootstrap-wizard.sh.
 creation_rules:
   - path_regex: bootstrap/sops/.*\.enc\.yaml\$
+    encrypted_regex: ^(data|stringData)\$
+    age: ${AGE_PUBLIC_KEY}
+  - path_regex: bootstrap/templates/backups-credentials\.enc\.yaml\$
     encrypted_regex: ^(data|stringData)\$
     age: ${AGE_PUBLIC_KEY}
 EOF
@@ -1302,6 +1335,11 @@ EOF
 }
 
 # write_secret FILE NAME NAMESPACE EXTRA_LABEL_LINE STRINGDATA_LINES
+# NAMESPACE empty omits the namespace line entirely: a Secret meant to be
+# copied into more than one Environment's namespace (backups-credentials,
+# below) must carry none, so the encrypted document is valid wherever it is
+# copied -- the ArgoCD Application's own spec.destination.namespace applies
+# instead (docs/implementation-notes/42-backups-credentials.md).
 write_secret_plaintext() {
   local file="$1" name="$2" namespace="$3" extra_labels="$4" stringdata="$5"
   mkdir -p "$(dirname "$file")"
@@ -1310,7 +1348,9 @@ write_secret_plaintext() {
     echo "kind: Secret"
     echo "metadata:"
     echo "  name: ${name}"
-    echo "  namespace: ${namespace}"
+    if [[ -n "$namespace" ]]; then
+      echo "  namespace: ${namespace}"
+    fi
     if [[ -n "$extra_labels" ]]; then
       echo "  labels:"
       echo "$extra_labels"
@@ -1321,6 +1361,33 @@ write_secret_plaintext() {
     echo "stringData:"
     echo "$stringdata"
   } > "$file"
+}
+
+# write_backups_credentials writes and sops-encrypts
+# bootstrap/templates/backups-credentials.enc.yaml: a Secret named backups-credentials,
+# no namespace, stringData ACCESS_KEY_ID/ACCESS_SECRET_KEY from the Hetzner
+# stage's Object Storage keys -- the file iidp app create/add-capability
+# --postgres copies byte for byte into every Environment with Postgres
+# (docs/implementation-notes/42-backups-credentials.md). Idempotent: kept
+# untouched when the Object Storage keys were kept too (nothing in
+# stage_hetzner changed OBJECT_STORAGE_KEYS_CHANGED), the same as the other
+# bootstrap secrets that cannot be regenerated and diffed because the
+# wizard cannot read their plaintext back.
+write_backups_credentials() {
+  local file="$PLATFORM_REPO/bootstrap/templates/backups-credentials.enc.yaml"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dry "would write and sops-encrypt bootstrap/templates/backups-credentials.enc.yaml"
+    return 0
+  fi
+  if [[ -f "$file" && "$OBJECT_STORAGE_KEYS_CHANGED" != "1" ]]; then
+    note "keeping existing bootstrap/templates/backups-credentials.enc.yaml (Object Storage keys unchanged)"
+    return 0
+  fi
+  write_secret_plaintext "$file" backups-credentials "" "" \
+    "  ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY}
+  ACCESS_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}"
+  sops_encrypt_in_place "bootstrap/templates/backups-credentials.enc.yaml"
+  ok "wrote and encrypted bootstrap/templates/backups-credentials.enc.yaml"
 }
 
 write_and_encrypt_secrets() {
@@ -1428,15 +1495,16 @@ stage_platform_repo() {
   ask CLUSTER_NAME "Cluster label for Grafana Cloud (clusterName):" "${CLUSTER_NAME:-iidp}"
   ask BACKUPS_BUCKET "Object Storage bucket for database backups (backupsBucket):" "${BACKUPS_BUCKET:-$(tfvar_get "$STATE_TFVARS" backup_bucket_name || echo itema-iidp-db-backups)}"
 
-  write_platform_yaml "$chart_version" "$ACME_EMAIL" "$ACME_SERVER" "$CLUSTER_NAME" "$BACKUPS_BUCKET"
+  write_platform_yaml "$chart_version" "$ACME_EMAIL" "$ACME_SERVER" "$CLUSTER_NAME" "$BACKUPS_BUCKET" "$OBJECT_STORAGE_ENDPOINT"
   write_sops_yaml
   write_bootstrap_components "$iidp_url" "$bootstrap_rev" "$platform_url"
   write_bootstrap_secrets "$platform_url"
   write_sops_kustomization
   write_and_encrypt_secrets
+  write_backups_credentials
 
   git_commit_if_changed "Add platform.yaml" platform.yaml .sops.yaml bootstrap/platform-components.yaml bootstrap/platform-secrets.yaml bootstrap/sops/kustomization.yaml bootstrap/sops/ksops.yaml
-  git_commit_if_changed "Add Platform secrets" bootstrap/sops
+  git_commit_if_changed "Add Platform secrets" bootstrap/sops bootstrap/templates/backups-credentials.enc.yaml
 
   if [[ "$NO_PUSH" == "1" ]]; then
     note "--no-push: leaving the commits unpushed"

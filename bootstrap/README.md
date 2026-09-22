@@ -28,6 +28,13 @@ bootstrap/
   platform-components.yaml             Application pinning this directory, values from platform.yaml
   platform-secrets.yaml                Application for bootstrap/sops, decrypted by KSOPS
   applications.yaml                    Application discovering every Environment's own Application, below
+  templates/
+    backups-credentials.enc.yaml       Secret backups-credentials (no namespace): ACCESS_KEY_ID,
+                                       ACCESS_SECRET_KEY -- copied, byte for byte, into every Environment
+                                       with Postgres by iidp app create/add-capability --postgres. Not a
+                                       sibling of the files above: the root Application reads every file
+                                       directly under bootstrap/ and applies it as a manifest, which this
+                                       SOPS document is not (see docs/platform-repository.md)
   sops/
     kustomization.yaml                 generators: [ksops.yaml]
     ksops.yaml                         the KSOPS generator listing the files below
@@ -58,6 +65,12 @@ Until the `argocd` Application has completed its first sync, `platform-secrets` 
 ### `applications.yaml`
 
 An Application with a plain directory source on the Platform repository itself, path `applications`, `directory.recurse: true` and `directory.include: '*/*/application.yaml'`: it picks up exactly the files `docs/platform-repository.md` says the CLI writes, `applications/<name>/<environment>/application.yaml`, and applies each as a plain ArgoCD Application manifest. Every Environment's Application is a child of it, the same app-of-apps shape as `platform-components.yaml` one level up; nothing else made ArgoCD notice a new Application directory, because the root `platform` Application only reads `bootstrap/`, not `applications/`. The `default` AppProject (created by ArgoCD's own install manifest, not overridden by anything the bootstrap adds) is fully permissive out of the box, so it already allows every Environment's two sources (the chart repository and the Platform repository) and any destination namespace; there is nothing to widen. See [`docs/implementation-notes/09-e2e-fixture-application.md`](../docs/implementation-notes/09-e2e-fixture-application.md) for the alternatives considered (an ApplicationSet git directory generator, in particular) and why this was simpler.
+
+### `templates/backups-credentials.enc.yaml`
+
+The Platform's Object Storage access and secret key, encrypted once by the bootstrap wizard for the Platform's age key: a Kubernetes Secret named `backups-credentials` (`chart/application`'s `platform.backupsCredentialsSecret` default), `stringData` `ACCESS_KEY_ID` and `ACCESS_SECRET_KEY`, no `namespace`. It lives in its own `templates/` subdirectory rather than directly under `bootstrap/` or under `bootstrap/sops/`, deliberately: the root Application `platform` reads every file directly under `bootstrap/` and applies each one as a plain manifest (this is how `platform-components.yaml`/`platform-secrets.yaml`/`applications.yaml` themselves reach the cluster) -- a SOPS-encrypted document placed there is applied too, as ciphertext, and fails (`.sops: field not declared in schema`); `bootstrap/sops/`, meanwhile, is applied by `platform-secrets.yaml` into the Platform's own component namespaces, which is not what this file is for either. `bootstrap/templates/` is invisible to both. `iidp app create --postgres` and `iidp app add-capability --postgres` copy it byte for byte into `applications/<name>/<environment>/sops/backups-credentials.enc.yaml` for every Environment that gets Postgres, where that Environment's own ArgoCD Application applies it into its own namespace through the same KSOPS mechanism `platform-secrets.yaml` uses. The copy is never decrypted: SOPS's MAC covers the values, not the file's path, so it decrypts correctly wherever it is copied. See [`docs/platform-repository.md`](../docs/platform-repository.md#bootstraptemplatesbackups-credentialsencyaml-and-the-postgres-capabilitys-own-secret) for the full flow and [`docs/implementation-notes/42-backups-credentials.md`](../docs/implementation-notes/42-backups-credentials.md) for the decisions behind it, including how this location was found.
+
+To add or change it by hand: write the Secret in the clear at `bootstrap/templates/backups-credentials.enc.yaml`, run `sops --encrypt --in-place bootstrap/templates/backups-credentials.enc.yaml` in the Platform repository (`.sops.yaml` there names the key and encrypts only `data`/`stringData`), commit. The bootstrap wizard does this for you (`scripts/bootstrap-wizard.sh`'s `stage_hetzner`/`stage_platform_repo`), keeping the existing file untouched on a re-run unless the Object Storage keys it collects actually changed.
 
 ### `platform.yaml`
 

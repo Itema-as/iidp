@@ -9,3 +9,6 @@ creation_rules:
   - path_regex: bootstrap/sops/.*\.enc\.yaml$
     encrypted_regex: ^(data|stringData)$
     age: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
+  - path_regex: bootstrap/templates/backups-credentials\.enc\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
