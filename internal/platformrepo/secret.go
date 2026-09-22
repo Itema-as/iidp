@@ -195,27 +195,11 @@ func (w *Writer) writeSecrets(ctx context.Context, dir, application, environment
 		secretNames = append(secretNames, secretName)
 	}
 
-	kustRelPath := path.Join(sopsDir, "kustomization.yaml")
-	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(kustRelPath)), render.SopsKustomization(), 0o644); err != nil {
-		return nil, err
-	}
-	files = append(files, kustRelPath)
-
-	entries, err := os.ReadDir(sopsAbs)
+	sopsFiles, err := registerSopsDirectory(dir, sopsDir, sopsAbs, fullname)
 	if err != nil {
 		return nil, err
 	}
-	var encFiles []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".enc.yaml") {
-			encFiles = append(encFiles, e.Name())
-		}
-	}
-	ksopsRelPath := path.Join(sopsDir, "ksops.yaml")
-	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(ksopsRelPath)), render.KsopsGenerator(fullname+"-secrets", encFiles), 0o644); err != nil {
-		return nil, err
-	}
-	files = append(files, ksopsRelPath)
+	files = append(files, sopsFiles...)
 
 	valuesRelPath := path.Join(envDir, "values.yaml")
 	valuesAbs := filepath.Join(dir, filepath.FromSlash(valuesRelPath))
@@ -257,4 +241,39 @@ func (w *Writer) writeSecrets(ctx context.Context, dir, application, environment
 	}
 
 	return files, nil
+}
+
+// registerSopsDirectory rewrites an Environment's sops/ directory
+// kustomization.yaml (always generators: [ksops.yaml]) and ksops.yaml (the
+// KSOPS generator, from a fresh listing of every *.enc.yaml file present),
+// the bookkeeping every writer of that directory needs after adding or
+// changing a file in it: writeSecrets (iidp secret set, one file per key)
+// and copyBackupsCredentials (the Postgres Capability's single, shared
+// file, docs/implementation-notes/42-backups-credentials.md) both call
+// this rather than duplicating it. Returns the two paths written, in a
+// fixed order; both are written unconditionally, the same "let git diff
+// decide" idempotency #16's notes describe, since re-encoding unchanged
+// content produces identical bytes.
+func registerSopsDirectory(dir, sopsDir, sopsAbs, fullname string) ([]string, error) {
+	kustRelPath := path.Join(sopsDir, "kustomization.yaml")
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(kustRelPath)), render.SopsKustomization(), 0o644); err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(sopsAbs)
+	if err != nil {
+		return nil, err
+	}
+	var encFiles []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".enc.yaml") {
+			encFiles = append(encFiles, e.Name())
+		}
+	}
+	ksopsRelPath := path.Join(sopsDir, "ksops.yaml")
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(ksopsRelPath)), render.KsopsGenerator(fullname+"-secrets", encFiles), 0o644); err != nil {
+		return nil, err
+	}
+
+	return []string{kustRelPath, ksopsRelPath}, nil
 }

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/render"
@@ -58,11 +57,11 @@ func checkBackupsCredentialsPresent(dir string) error {
 // a document to the path it was encrypted for -- its MAC covers the
 // (decrypted) values, not the file name or location, confirmed by
 // decrypting a copy of the file from a different path in
-// internal/cli/app_create_capabilities_test.go and
-// internal/cli/app_add_capability_test.go -- and because the destination
-// namespace comes from the Environment's own ArgoCD Application
-// destination (spec.destination.namespace), never from anything inside the
-// Secret document itself, the same reasoning already applies to every
+// internal/cli/app_postgres_backups_credentials_test.go and in
+// test/wizard/run.sh -- and because the destination namespace comes from
+// the Environment's own ArgoCD Application destination
+// (spec.destination.namespace), never from anything inside the Secret
+// document itself, the same reasoning already applies to every
 // SOPS-encrypted Secret this repository writes (docs/platform-repository.md,
 // "No namespace: the ArgoCD Application's spec.destination.namespace
 // applies").
@@ -86,33 +85,16 @@ func copyBackupsCredentials(dir, application, environment string) ([]string, err
 	}
 	files := []string{destRelPath}
 
-	// kustomization.yaml and ksops.yaml are rewritten unconditionally, the
-	// same as iidp secret set's writeSecrets: cheap, idempotent (the same
-	// content re-encodes identically when nothing changed), and it means a
+	// kustomization.yaml and ksops.yaml are rewritten from a fresh
+	// directory listing, the same bookkeeping iidp secret set's
+	// writeSecrets does after adding or changing a file here: it means a
 	// directory that had neither yet (Postgres enabled before any
 	// iidp secret set) gets them created here.
-	kustRelPath := path.Join(sopsDir, "kustomization.yaml")
-	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(kustRelPath)), render.SopsKustomization(), 0o644); err != nil {
-		return nil, err
-	}
-	files = append(files, kustRelPath)
-
-	entries, err := os.ReadDir(sopsAbs)
+	sopsFiles, err := registerSopsDirectory(dir, sopsDir, sopsAbs, chartFullname(application, environment))
 	if err != nil {
 		return nil, err
 	}
-	var encFiles []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".enc.yaml") {
-			encFiles = append(encFiles, e.Name())
-		}
-	}
-	fullname := chartFullname(application, environment)
-	ksopsRelPath := path.Join(sopsDir, "ksops.yaml")
-	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(ksopsRelPath)), render.KsopsGenerator(fullname+"-secrets", encFiles), 0o644); err != nil {
-		return nil, err
-	}
-	files = append(files, ksopsRelPath)
+	files = append(files, sopsFiles...)
 
 	// Deliberately not render.AddSecretName: the chart references this
 	// Secret through platform.backupsCredentialsSecret
