@@ -53,14 +53,36 @@ variable "k3s_version" {
   }
 }
 
-variable "argocd_version" {
-  description = "ArgoCD release whose manifests/install.yaml is applied, in the form vX.Y.Z. Default is the latest stable release as of 2026-09-21."
+variable "argocd_chart_version" {
+  description = "argo-cd Helm chart version cloud-init renders with helm template and applies; the argocd bootstrap Application then manages ArgoCD with the same chart and version. Must match bootstrap/versions.yaml argocd.chart. Default is the newest stable release as of 2026-09-21."
   type        = string
-  default     = "v3.5.3"
+  default     = "10.9.2"
 
   validation {
-    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.argocd_version))
-    error_message = "argocd_version must look like v3.5.3."
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.argocd_chart_version))
+    error_message = "argocd_chart_version must look like 10.9.2."
+  }
+}
+
+variable "helm_version" {
+  description = "Helm release cloud-init downloads (linux amd64) to render the argo-cd chart, in the form vX.Y.Z. Must match bootstrap/versions.yaml helm.version. Default is the newest stable v3 release as of 2026-09-21."
+  type        = string
+  default     = "v3.22.0"
+
+  validation {
+    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.helm_version))
+    error_message = "helm_version must look like v3.22.0."
+  }
+}
+
+variable "helm_sha256_linux_amd64" {
+  description = "sha256 checksum of the linux amd64 release tarball named by helm_version, published at https://get.helm.sh/helm-<version>-linux-amd64.tar.gz.sha256sum. Must match bootstrap/versions.yaml helm.sha256.linuxAmd64. Verified before the binary is installed."
+  type        = string
+  default     = "1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.helm_sha256_linux_amd64))
+    error_message = "helm_sha256_linux_amd64 must be a 64-character lowercase hex sha256 checksum."
   }
 }
 

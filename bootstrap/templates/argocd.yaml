@@ -1,28 +1,23 @@
 {{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
 {{- $host := include "iidp-bootstrap.argocdHost" . }}
-# ArgoCD managing itself. cloud-init installs ArgoCD from the upstream
-# manifests once; from the first sync of this Application the argo-cd chart
-# owns every ArgoCD resource: Dex with the Entra ID connector, RBAC, the
-# ingress, and the KSOPS tooling in the repo server.
+# ArgoCD managing itself. cloud-init installs ArgoCD by rendering this same
+# argo-cd chart with helm template (fullnameOverride: argocd, crds.install:
+# true, the same minimum values as below) and applying the output
+# server-side; from the first sync of this Application the chart just keeps
+# managing what it already stood up: Dex with the Entra ID connector, RBAC,
+# the ingress, and the KSOPS tooling in the repo server.
 #
-# The upstream manifests and the chart differ in the pod selectors of the
-# Deployments and the StatefulSet, and a selector is immutable, so those
-# workloads are recreated (Replace=true,Force=true) instead of patched.
-# ApplyOutOfSyncOnly limits that to workloads that actually changed, so an
-# ordinary sync does not restart ArgoCD.
-#
-# The takeover race (docs/implementation-notes/04-bootstrap.md, "The takeover
-# race"): with every workload in the default sync wave, the chart replaces
-# redis, the repo server, the server, dex and the application controller
-# all at once, including the controller that is running this very sync. A
-# sync-wave annotation (merged with the Replace/Force ones above, not
-# replacing them) on the controller's StatefulSet alone moves it to the last
-# wave: every other workload (redis, the repo server, the server, dex)
-# stays in the default wave 0 and is replaced together, as before, but the
-# controller only replaces itself once all of them are already synced and
-# healthy. One extra wave boundary (0 -> 10), not two, keeps the added
-# reconcile cost to a minimum: only the controller's own replacement is
-# deferred, not reordered relative to everything else.
+# This used to install from the upstream install.yaml instead, whose
+# Deployments and StatefulSet select pods differently from the chart's (a
+# selector is immutable), so the first sync had to delete and recreate them
+# (Replace=true,Force=true), including the application controller's own
+# StatefulSet. That takeover raced the controller's replacement of itself
+# against the repo server's, and lost often enough on a 2-vCPU runner to
+# make `kind bootstrap` flaky even with the controller deferred to its own
+# sync wave (docs/implementation-notes/04-bootstrap.md, "The takeover race"
+# and "Installing from the chart, not the upstream manifests"). Installing
+# from the chart from the start means every object already has the shape
+# the chart expects, so a sync only ever patches: no Replace, no sync wave.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -37,21 +32,13 @@ spec:
     helm:
       releaseName: argocd
       valuesObject:
-        # Name resources argocd-<component>, as the upstream manifests do.
+        # Name resources argocd-<component>, matching the initial install
+        # (both cloud-init and the harness render this same chart with
+        # fullnameOverride: argocd), so the selectors this sync sees are the
+        # ones already running and it only ever patches.
         fullnameOverride: argocd
         global:
           domain: {{ $host }}
-          deploymentAnnotations:
-            argocd.argoproj.io/sync-options: Replace=true,Force=true
-          statefulsetAnnotations:
-            argocd.argoproj.io/sync-options: Replace=true,Force=true
-        # The takeover race: the controller (which is running this sync)
-        # replaces itself last, once redis, the repo server, the server and
-        # dex (still all in the default wave 0) are already synced and
-        # healthy.
-        controller:
-          statefulsetAnnotations:
-            argocd.argoproj.io/sync-wave: "10"
         crds:
           install: true
           keep: true

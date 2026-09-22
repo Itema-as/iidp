@@ -8,14 +8,26 @@
 # reaches the Platform when that pin moves.
 
 argocd:
-  # The ArgoCD release cloud-init installs from manifests/install.yaml before
-  # the bootstrap takes over. Must match argocd_version in
-  # infra/platform/variables.tf; the harness installs exactly this.
-  manifest: v3.5.3
-  # The argo-cd Helm chart that then manages ArgoCD. Its appVersion is the
-  # release above, so the takeover changes configuration, not the binaries.
+  # The argo-cd Helm chart. cloud-init installs ArgoCD by rendering this
+  # chart with helm template and applying the output server-side; the
+  # argocd bootstrap Application then manages it with the same chart and
+  # version, so the takeover only ever patches what is already running
+  # (docs/implementation-notes/04-bootstrap.md, "Installing from the chart,
+  # not the upstream manifests"). Must match argocd_chart_version in
+  # infra/platform/variables.tf; the harness renders exactly this.
   chart: 10.9.2
   repository: https://argoproj.github.io/argo-helm
+
+# The Helm release cloud-init downloads to render the argo-cd chart above
+# before ArgoCD exists to do anything (infra/platform/cloud-init/user-data
+# .yaml.tftpl); the kind harness instead uses whatever helm is already on
+# the machine's PATH. sha256 is the published checksum of the linux amd64
+# release tarball (https://get.helm.sh/helm-<version>-linux-amd64.tar.gz
+# .sha256sum), verified before install.
+helm:
+  version: v3.22.0
+  sha256:
+    linuxAmd64: 1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb
 
 certManager:
   chart: v1.21.2

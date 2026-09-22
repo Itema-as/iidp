@@ -90,17 +90,18 @@ ssh root@<ip> cat /etc/rancher/k3s/k3s.yaml | sed "s/127.0.0.1/<ip>/" > ~/.kube/
 
 Upgrades are deliberate, manual steps (ADR-0001) and they happen **in place**. The node is never recreated for a version bump: its disk holds every Application's Postgres volume (CloudNativePG uses the node's local storage) and the age key, so replacing the server would be a data-loss event. The server resource therefore ignores changes to its user data.
 
-1. Change `k3s_version` or `argocd_version` in OpenTofu (in `terraform.tfvars`, or the default in [`platform/variables.tf`](platform/variables.tf)) and commit. The variables are the record of what is meant to be running; `tofu plan` shows no change, by design.
+1. Change `k3s_version`, `argocd_chart_version` or `helm_version` in OpenTofu (in `terraform.tfvars`, or the defaults in [`platform/variables.tf`](platform/variables.tf); a `helm_version` bump also needs its `helm_sha256_linux_amd64` checksum, from `https://get.helm.sh/helm-<version>-linux-amd64.tar.gz.sha256sum`) and commit. The variables are the record of what is meant to be running; `tofu plan` shows no change, by design.
 2. Apply the same versions on the node by re-running the bootstrap with them in the environment:
 
    ```sh
    ssh root@$(tofu output -raw node_public_ipv4) \
      K3S_VERSION=$(tofu output -raw k3s_version) \
-     ARGOCD_VERSION=$(tofu output -raw argocd_version) \
+     ARGOCD_CHART_VERSION=$(tofu output -raw argocd_chart_version) \
+     HELM_VERSION=$(tofu output -raw helm_version) \
      iidp-bootstrap
    ```
 
-   Either variable can be left out to keep that component as it is. The k3s installer upgrades the existing installation when the requested version differs from the installed one (the control plane restarts, about a minute; workloads keep running) and is skipped when it does not; the ArgoCD manifests of the requested version are re-applied server-side; the age key is left alone because its Secret exists; the root Application is re-applied unchanged. Databases and volumes are untouched.
+   Any variable can be left out to keep that component as it is (`HELM_SHA256_LINUX_AMD64` only matters together with a `HELM_VERSION` bump). The k3s installer upgrades the existing installation when the requested version differs from the installed one (the control plane restarts, about a minute; workloads keep running) and is skipped when it does not; helm is replaced in place the same way when its version differs; ArgoCD is installed by rendering the argo-cd chart at the requested version with `helm template` and applying the output server-side (`bootstrap/README.md`, "ArgoCD"), so the argocd bootstrap Application's next sync only ever patches; the age key is left alone because its Secret exists; the root Application is re-applied unchanged. Databases and volumes are untouched.
 
 A first boot uses the versions rendered into the user data at that time. A node that was rebuilt later therefore comes up on whatever the variables said when `tofu apply -replace` ran, which is why step 1 comes first.
 
@@ -125,7 +126,7 @@ If the key is gone, every SOPS-encrypted secret in the Platform repository has t
 
 ## Re-running the bootstrap
 
-`/usr/local/sbin/iidp-bootstrap` on the node is the script cloud-init ran; its log is `/var/log/iidp-bootstrap.log`. It can be run again by hand after a transient failure (a download that timed out, say), with or without `K3S_VERSION` and `ARGOCD_VERSION` in the environment. Every step converges: the k3s installer is skipped when the requested version is already installed, the manifests are applied server-side, the age key is only generated when the Secret is absent, and the root Application is re-applied unchanged. If the node does not become Ready within ten minutes the script exits non-zero and points at `journalctl -u k3s`.
+`/usr/local/sbin/iidp-bootstrap` on the node is the script cloud-init ran; its log is `/var/log/iidp-bootstrap.log`. It can be run again by hand after a transient failure (a download that timed out, say), with or without `K3S_VERSION`, `ARGOCD_CHART_VERSION`, `HELM_VERSION` and `HELM_SHA256_LINUX_AMD64` in the environment. Every step converges: the k3s and helm installers are skipped when the requested version is already installed, the argo-cd chart is re-rendered and applied server-side, the age key is only generated when the Secret is absent, and the root Application is re-applied unchanged. If the node does not become Ready within ten minutes the script exits non-zero and points at `journalctl -u k3s`.
 
 ## Verification without a Hetzner account
 
