@@ -126,13 +126,16 @@ The DATABASE_URL env entry, for the Deployment and the migration Job.
 {{- end -}}
 
 {{/*
-The name of the final Backup PreDelete hook's ServiceAccount, Role,
-RoleBinding and Job: <fullname>-final-backup. Stable, not per-attempt, so
-argocd.argoproj.io/hook-delete-policy: BeforeHookCreation can replace a
-previous attempt's hook resources by name; the Backup object itself is
-named with a run-time timestamp inside the Job's own script instead, since
-it is created imperatively by kubectl and BeforeHookCreation only ever
-reaches resources the chart declares (docs/implementation-notes/39-final-backup-predelete-hook.md).
+The name shared by the final Backup PreDelete hook's ServiceAccount, Role,
+RoleBinding and Job: <fullname>-final-backup. Only the Job carries the
+PreDelete hook annotation; the RBAC are ordinary chart resources, present
+whenever postgres.enabled and pruned with everything else
+(docs/implementation-notes/39-final-backup-predelete-hook.md). The name is
+stable, not per-attempt, so argocd.argoproj.io/hook-delete-policy:
+BeforeHookCreation can replace a previous attempt's Job by name; the
+Backup object itself is named with a run-time timestamp inside the Job's
+own script instead, since it is created imperatively by kubectl and
+BeforeHookCreation only ever reaches resources the chart declares.
 */}}
 {{- define "application.postgres.finalBackupName" -}}
 {{- printf "%s-final-backup" (include "application.fullname" .) -}}

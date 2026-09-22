@@ -441,10 +441,17 @@ func TestAppCreateAcceptsStaticSiteKind(t *testing.T) {
 	}
 }
 
+// TestAppCreateRefusesAnExistingApplication covers a live Environment: a
+// prod/ (or staging/) with its own application.yaml, the file ArgoCD's own
+// bootstrap/applications.yaml glob and checkApplicationAbsent both treat as
+// "this Environment exists". A directory with values.yaml but no
+// application.yaml is the different, leftover case
+// TestAppCreateAfterDeleteReusesTheNameAndClearsTheLeftover covers.
 func TestAppCreateRefusesAnExistingApplication(t *testing.T) {
 	url := newPlatformRepository(t, testPlatformYAML)
 	pushCommit(t, url, "Add shop by hand", map[string]string{
-		"applications/shop/prod/values.yaml": "application:\n  name: shop\n",
+		"applications/shop/prod/application.yaml": "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: shop\n",
+		"applications/shop/prod/values.yaml":      "application:\n  name: shop\n",
 	})
 
 	_, stderr, code := createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
@@ -535,8 +542,14 @@ func TestAppCreateFailsWhenTheApplicationAppearedWhileRunning(t *testing.T) {
 	deps := cli.Dependencies{BeforePush: func() error {
 		pushes++
 		if pushes == 1 {
+			// A live Environment, application.yaml included -- the same
+			// files a real, concurrently-successful iidp app create shop
+			// would have pushed. Seeding values.yaml alone would look like
+			// a leftover from iidp app delete instead, which the retry is
+			// meant to reuse, not refuse.
 			pushCommit(t, url, "iidp app create shop", map[string]string{
-				"applications/shop/prod/values.yaml": "application:\n  name: shop\n",
+				"applications/shop/prod/application.yaml": "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: shop\n",
+				"applications/shop/prod/values.yaml":      "application:\n  name: shop\n",
 			})
 		}
 		return nil

@@ -61,13 +61,13 @@ type DeleteResult struct {
 // nothing for that render to succeed against -- confirmed against a real
 // kind cluster, where the resulting DeletionError condition blocks
 // deletion forever; ArgoCD's own FAQ names exactly this class of problem,
-// "I've deleted/corrupted my repo and can't delete my app"). This is a
-// deliberate trade-off, not an oversight: checkApplicationAbsent in
-// writer.go still refuses iidp app create on any existing directory under
-// applications/<name>/, application.yaml or not (#58's tolerance for hand
-// edits means anything a human placed there must still block an
-// accidental overwrite), so recreating an Application right after deleting
-// it needs its leftover values.yaml removed by hand first. See
+// "I've deleted/corrupted my repo and can't delete my app"). Developers
+// never edit the Platform repository by hand
+// (docs/platform-repository.md), so this leftover directory must not need
+// one either: checkApplicationAbsent in writer.go treats it as available
+// (only a live application.yaml blocks a create), and attemptCreate clears
+// it itself, in the same commit as the new Environment's files, if the
+// same Application name is used again. See
 // docs/implementation-notes/39-final-backup-predelete-hook.md for the full
 // reasoning and docs/implementation-notes/17-cli-add-capability-delete.md
 // for the two-commit design this replaced. A push refused because main

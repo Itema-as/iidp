@@ -34,9 +34,9 @@ func newAppDeleteCommand(deps Dependencies) *cobra.Command {
 			"takes a final Backup of the database, kept 30 days, and the deletion waits\n" +
 			"for it to complete before anything is torn down. values.yaml (and any\n" +
 			"secrets) are left in the Platform repository -- ArgoCD needs them to render\n" +
-			"the PreDelete hook at deletion time -- inert once application.yaml is gone,\n" +
-			"but still blocking iidp app create under the same name until removed by\n" +
-			"hand. The Application repository is never touched.\n\n" +
+			"the PreDelete hook at deletion time -- inert once application.yaml is gone;\n" +
+			"iidp app create notices and clears it automatically if this Application's\n" +
+			"name is used again. The Application repository is never touched.\n\n" +
 			"On a terminal, this asks for the Application name typed back and refuses on\n" +
 			"a mismatch. --force skips the confirmation for non-interactive use; without\n" +
 			"a terminal and without --force, the command refuses outright.",

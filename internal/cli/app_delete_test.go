@@ -176,34 +176,56 @@ func TestAppDeleteIsOneCommitRemovingEveryEnvironment(t *testing.T) {
 	}
 }
 
-// TestAppDeleteThenCreateAgainIsBlockedByTheLeftoverValues documents a
-// deliberate trade-off (internal/platformrepo/delete.go's own doc comment,
-// docs/implementation-notes/39-final-backup-predelete-hook.md): since
-// values.yaml is left behind so the final Backup PreDelete hook can still
-// render at deletion time, and since checkApplicationAbsent
-// (internal/platformrepo/writer.go) refuses iidp app create on any existing
-// directory under applications/<name>/ (not only a live application.yaml,
-// so a human's own hand-placed files are never silently clobbered, #58),
-// recreating an Application right after deleting it is refused until the
-// leftover values.yaml is removed by hand.
-func TestAppDeleteThenCreateAgainIsBlockedByTheLeftoverValues(t *testing.T) {
+// TestAppCreateAfterDeleteReusesTheNameAndClearsTheLeftover documents the
+// resolution of what was originally a deliberate trade-off: developers
+// never edit the Platform repository by hand
+// (docs/platform-repository.md), so recreating an Application right after
+// deleting it must not need one either. iidp app delete removes only
+// application.yaml (internal/platformrepo/delete.go's own doc comment,
+// docs/implementation-notes/39-final-backup-predelete-hook.md), leaving
+// values.yaml (and any secrets) behind so the ArgoCD PreDelete hook can
+// still render at deletion time; iidp app create notices a directory under
+// applications/<name>/ with no live application.yaml anywhere in it,
+// names it, removes it, and creates the Application as normal, in the
+// same commit as the new Environment's files. A directory that does have a
+// live application.yaml is still refused
+// (TestAppCreateRefusesAnExistingApplication).
+func TestAppCreateAfterDeleteReusesTheNameAndClearsTheLeftover(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
-	seedApplication(t, url)
+	seedApplication(t, url, "--staging")
 
 	_, stderr, code := deleteApplication(t, url, "shop", "", cli.Dependencies{}, "--force")
 	if code != 0 {
 		t.Fatalf("delete: exit code = %d, want 0\nstderr: %s", code, stderr)
 	}
+	for _, env := range []string{"prod", "staging"} {
+		if _, err := os.Stat(filepath.Join(cloneMain(t, url), "applications/shop", env, "values.yaml")); err != nil {
+			t.Fatalf("applications/shop/%s/values.yaml should exist after delete, stat err = %v", env, err)
+		}
+	}
 
-	_, stderr, code = createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
-	if code == 0 {
-		t.Fatalf("re-create: exit code = 0, want non-zero (the leftover values.yaml should still block it)")
+	stdout, stderr, code := createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
+	if code != 0 {
+		t.Fatalf("re-create: exit code = %d, want 0\nstderr: %s", code, stderr)
 	}
-	if !strings.Contains(stderr, "shop") || !strings.Contains(stderr, "already") {
-		t.Errorf("stderr = %q, want it to say shop already has a directory", stderr)
+	if !strings.Contains(stdout, "leftover") {
+		t.Errorf("stdout = %q, want it to mention the leftover directory it found and cleared", stdout)
 	}
-	if _, err := os.Stat(filepath.Join(cloneMain(t, url), "applications/shop/prod/application.yaml")); !os.IsNotExist(err) {
-		t.Errorf("applications/shop/prod/application.yaml should still be gone, stat err = %v", err)
+
+	clone := cloneMain(t, url)
+	if _, err := os.Stat(filepath.Join(clone, "applications/shop/prod/application.yaml")); err != nil {
+		t.Errorf("applications/shop/prod/application.yaml should exist again, stat err = %v", err)
+	}
+	// The re-create above did not ask for --staging: the deleted
+	// Application's leftover staging/ must be cleared along with prod's,
+	// not left behind as an orphan.
+	if _, err := os.Stat(filepath.Join(clone, "applications/shop/staging")); !os.IsNotExist(err) {
+		t.Errorf("applications/shop/staging should be gone (re-create had no --staging), stat err = %v", err)
+	}
+
+	subjects := strings.Split(strings.TrimSpace(gitRun(t, clone, "log", "--format=%s")), "\n")
+	if subjects[0] != "iidp app create shop" {
+		t.Errorf("newest commit = %q, want the re-create commit", subjects[0])
 	}
 }
 

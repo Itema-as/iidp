@@ -7,21 +7,6 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "application.labels" . | nindent 4 }}
-  annotations:
-    # A PreDelete hook is created only when the Environment's own ArgoCD
-    # Application is deleted (never during a normal sync, even with prune),
-    # and ArgoCD waits for every PreDelete hook to reach Healthy before it
-    # deletes anything else and only then cleans the hooks up; a failing
-    # hook blocks the deletion with a DeletionError condition until it is
-    # fixed in git or removed by hand. So the final Backup Job below is
-    # guaranteed to run, and to finish or fail, before the Cluster it
-    # targets is torn down (docs/implementation-notes/39-final-backup-predelete-hook.md).
-    # This ServiceAccount, the Role and the RoleBinding are PreDelete hooks
-    # too, in sync-wave -1, one wave before the Job's default wave 0, so
-    # they exist by the time the Job's Pod starts.
-    argocd.argoproj.io/hook: PreDelete
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
-    argocd.argoproj.io/sync-wave: "-1"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -29,10 +14,6 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "application.labels" . | nindent 4 }}
-  annotations:
-    argocd.argoproj.io/hook: PreDelete
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
-    argocd.argoproj.io/sync-wave: "-1"
 rules:
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["backups"]
@@ -44,10 +25,6 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "application.labels" . | nindent 4 }}
-  annotations:
-    argocd.argoproj.io/hook: PreDelete
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
-    argocd.argoproj.io/sync-wave: "-1"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -65,11 +42,29 @@ metadata:
     {{- include "application.labels" . | nindent 4 }}
     app.kubernetes.io/component: final-backup
   annotations:
-    # Runs once, when the Environment's own Application is deleted, before
-    # any of its resources (the Cluster included) are removed: see the
-    # ServiceAccount above. No sync-wave: the default wave (0) already
-    # orders it after the RBAC above (wave -1), and it is the only Job in
-    # the PreDelete phase.
+    # Only the Job is a PreDelete hook. The ServiceAccount, Role and
+    # RoleBinding above are ordinary chart resources instead: they exist
+    # continuously while postgres.enabled, applied and pruned in the
+    # Application's normal sync waves the same as the Cluster or the
+    # Deployment, not created fresh at deletion time. This deliberately
+    # narrows the surface from #39's original four PreDelete hook objects
+    # to one: creating several hook resources together, each one's own
+    # creation event asking ArgoCD to refresh the Application again, was
+    # found (docs/implementation-notes/39-final-backup-predelete-hook.md)
+    # to trigger a real ArgoCD race under concurrent reconciles, where
+    # deletion proceeded without ever waiting for the hook Job's health.
+    # With one hook object there is nothing left to create a flood of
+    # refreshes, and no RBAC-before-Job ordering to get wrong: the
+    # ServiceAccount the Job's Pod mounts already exists, the same way the
+    # Cluster the Job's script talks to already exists.
+    #
+    # A PreDelete hook is created only when the Environment's own ArgoCD
+    # Application is deleted (never during a normal sync, even with
+    # prune), and ArgoCD waits for it to reach Healthy before it deletes
+    # anything else and only then cleans it up; a failing hook blocks the
+    # deletion with a DeletionError condition until it is fixed in git or
+    # removed by hand. So this Job is guaranteed to run, and to finish or
+    # fail, before the Cluster it targets is torn down.
     argocd.argoproj.io/hook: PreDelete
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:

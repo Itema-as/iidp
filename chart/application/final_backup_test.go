@@ -22,23 +22,30 @@ func TestFinalBackupHookRendersOnlyWithPostgres(t *testing.T) {
 	}
 }
 
-func TestFinalBackupHookAnnotationsAndOrdering(t *testing.T) {
+// TestFinalBackupOnlyTheJobIsAPreDeleteHook covers a deliberate design
+// choice (docs/implementation-notes/39-final-backup-predelete-hook.md):
+// only the Job carries a PreDelete hook annotation. The ServiceAccount,
+// Role and RoleBinding are ordinary chart resources -- no hook annotation,
+// no sync-wave -- present whenever postgres.enabled and pruned with the
+// rest of the Environment's resources, the same as the Cluster or the
+// Deployment. Having four hook objects instead of one, each one's own
+// creation event asking ArgoCD to refresh the Application again, was found
+// to trigger a real ArgoCD race under concurrent reconciles; with the RBAC
+// no longer hooks, deletion creates exactly one hook object.
+func TestFinalBackupOnlyTheJobIsAPreDeleteHook(t *testing.T) {
 	objects := render(t, "postgres-prod.yaml")
 
-	// The ServiceAccount, Role and RoleBinding are PreDelete hooks in
-	// sync-wave -1, one wave before the Job's default wave (unset), so they
-	// exist by the time the Job's Pod starts.
 	for _, key := range []string{"ServiceAccount/shop-final-backup", "Role/shop-final-backup", "RoleBinding/shop-final-backup"} {
 		obj := mustObject(t, objects, key)
 		annotations := annotationsOf(t, obj)
-		if hook := annotations["argocd.argoproj.io/hook"]; hook != "PreDelete" {
-			t.Errorf("%s hook = %v, want PreDelete", key, hook)
+		if hook, set := annotations["argocd.argoproj.io/hook"]; set {
+			t.Errorf("%s sets argocd.argoproj.io/hook = %v; it must be an ordinary resource, not a hook", key, hook)
 		}
-		if policy := annotations["argocd.argoproj.io/hook-delete-policy"]; policy != "BeforeHookCreation,HookSucceeded" {
-			t.Errorf("%s hook-delete-policy = %v, want BeforeHookCreation,HookSucceeded", key, policy)
+		if _, set := annotations["argocd.argoproj.io/hook-delete-policy"]; set {
+			t.Errorf("%s sets a hook-delete-policy; it must be an ordinary resource, not a hook", key)
 		}
-		if wave := annotations["argocd.argoproj.io/sync-wave"]; wave != "-1" {
-			t.Errorf("%s sync-wave = %v, want -1", key, wave)
+		if _, set := annotations["argocd.argoproj.io/sync-wave"]; set {
+			t.Errorf("%s sets a sync-wave; ordinary resources need no wave relative to the hook Job", key)
 		}
 	}
 
@@ -49,9 +56,6 @@ func TestFinalBackupHookAnnotationsAndOrdering(t *testing.T) {
 	}
 	if policy := annotations["argocd.argoproj.io/hook-delete-policy"]; policy != "BeforeHookCreation,HookSucceeded" {
 		t.Errorf("Job hook-delete-policy = %v, want BeforeHookCreation,HookSucceeded", policy)
-	}
-	if wave, set := annotations["argocd.argoproj.io/sync-wave"]; set {
-		t.Errorf("Job sets sync-wave %v; it must stay in the default wave, after the RBAC's -1", wave)
 	}
 }
 

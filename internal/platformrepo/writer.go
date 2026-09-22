@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -158,12 +159,16 @@ func (w *Writer) encryptor() sops.Encryptor {
 
 // CreateApplication adds the prod Environment of app to the Platform
 // repository: it clones main, validates that the Application does not
-// exist, writes the Environment's files, commits and pushes. A push refused
-// because main moved is retried once from a fresh clone; if the Application
-// appeared in the meantime, the retry fails with ErrApplicationExists.
-func (w *Writer) CreateApplication(ctx context.Context, app Application) (Result, error) {
+// already have a live Environment, writes the Environment's files, commits
+// and pushes. A push refused because main moved is retried once from a
+// fresh clone; if the Application appeared in the meantime, the retry fails
+// with ErrApplicationExists. out receives one line naming a leftover
+// directory from a previous iidp app delete (DeleteApplication's own doc
+// comment) if creating app finds and clears one; nothing is written to it
+// otherwise.
+func (w *Writer) CreateApplication(ctx context.Context, app Application, out io.Writer) (Result, error) {
 	return runWithRetry(ctx, func(ctx context.Context, retry bool) (Result, error) {
-		return w.attemptCreate(ctx, app, retry, false)
+		return w.attemptCreate(ctx, app, retry, false, out)
 	})
 }
 
@@ -173,9 +178,11 @@ func (w *Writer) CreateApplication(ctx context.Context, app Application) (Result
 // screen (docs/implementation-notes/14-cli-wizard.md) uses it so that
 // declining the confirmation leaves no trace: platform.yaml is read from a
 // clone that is removed before this method returns, and nothing is ever
-// added, committed or pushed.
+// added, committed or pushed -- so a leftover directory, if any, is left
+// exactly as it is rather than cleared (attemptCreate only clears one when
+// it is about to write, never during a preview).
 func (w *Writer) PreviewApplication(ctx context.Context, app Application) (Result, error) {
-	return w.attemptCreate(ctx, app, false, true)
+	return w.attemptCreate(ctx, app, false, true, io.Discard)
 }
 
 // runWithRetry runs attempt once, retrying it once after a fresh clone if
@@ -197,10 +204,12 @@ func runWithRetry[T any](ctx context.Context, attempt func(ctx context.Context, 
 	return res, err
 }
 
-// CheckAvailable reports an error if name already has a directory in the
-// Platform repository, without writing anything. Create uses it to
+// CheckAvailable reports an error if name already has a live Environment in
+// the Platform repository, without writing anything. Create uses it to
 // validate before the Application repository is created; CreateApplication
-// checks again on its own clone, so a race is still caught.
+// checks again on its own clone, so a race is still caught. A directory
+// left over from a previous iidp app delete (no live application.yaml
+// anywhere under it) is not treated as taken -- see checkApplicationAbsent.
 func (w *Writer) CheckAvailable(ctx context.Context, name string) error {
 	dir, err := os.MkdirTemp("", "iidp-platform-check-")
 	if err != nil {
@@ -213,38 +222,58 @@ func (w *Writer) CheckAvailable(ctx context.Context, name string) error {
 	return checkApplicationAbsent(dir, name, false)
 }
 
-// checkApplicationAbsent errors if name already has a directory under
-// ApplicationsDir in the clone at dir. This deliberately does not narrow to
-// "a live application.yaml exists": #39's iidp app delete leaves an
-// Environment's values.yaml (and any secrets) behind after removing its
-// application.yaml (see DeleteApplication's own doc comment and
-// docs/implementation-notes/39-final-backup-predelete-hook.md), and #58's
-// tolerance for hand edits means anything a human placed under
-// applications/<name>/, application.yaml or not, must still block a
-// same-named create from clobbering it -- the cost, recorded in the same
-// notes, is that recreating an Application right after deleting it needs
-// the leftover values.yaml removed by hand first. retry names the error for
-// the case where the check runs again after a push was rejected because
-// main moved.
+// checkApplicationAbsent errors if name already has a live Environment --
+// an application.yaml under prod/ or staging/ -- in the clone at dir. A
+// directory that exists but holds no application.yaml anywhere is the
+// leftover of a previous iidp app delete: DeleteApplication removes only
+// application.yaml, deliberately leaving values.yaml (and any secrets) in
+// place so the ArgoCD PreDelete hook can still render at deletion time (see
+// its own doc comment and docs/implementation-notes/39-final-backup-predelete-hook.md).
+// Developers never edit the Platform repository by hand
+// (docs/platform-repository.md), so such a directory must not need a hand
+// edit before the same Application name can be used again: it does not
+// block this check, and attemptCreate clears it itself when it is about to
+// write. retry names the error for the case where the check runs again
+// after a push was rejected because main moved.
 func checkApplicationAbsent(dir, name string, retry bool) error {
-	switch _, err := os.Stat(filepath.Join(dir, ApplicationsDir, name)); {
-	case err == nil && retry:
-		return fmt.Errorf("%w: %q was added to %s while this command ran; nothing was written", ErrApplicationExists, name, platform.Repository)
-	case err == nil:
-		return fmt.Errorf("%w: %q already has a directory under %s/ in %s", ErrApplicationExists, name, ApplicationsDir, platform.Repository)
-	case !errors.Is(err, fs.ErrNotExist):
+	live, err := applicationHasLiveEnvironment(dir, name)
+	if err != nil {
 		return fmt.Errorf("checking for an existing Application: %w", err)
+	}
+	switch {
+	case live && retry:
+		return fmt.Errorf("%w: %q was added to %s while this command ran; nothing was written", ErrApplicationExists, name, platform.Repository)
+	case live:
+		return fmt.Errorf("%w: %q already has a live Environment under %s/ in %s", ErrApplicationExists, name, ApplicationsDir, platform.Repository)
 	default:
 		return nil
 	}
+}
+
+// applicationHasLiveEnvironment reports whether name has an application.yaml
+// under prod/ or staging/ in the clone at dir.
+func applicationHasLiveEnvironment(dir, name string) (bool, error) {
+	for _, e := range Environments {
+		switch _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(EnvironmentDir(name, e)), "application.yaml")); {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, fs.ErrNotExist):
+			continue
+		default:
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 // attemptCreate validates app against a fresh clone of the Platform
 // repository and, unless preview is true, writes its Environment files,
 // commits and pushes them. preview stops right after validation, before
 // anything is written to the clone or the working tree, so PreviewApplication
-// costs one clone and nothing else.
-func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, preview bool) (Result, error) {
+// costs one clone and nothing else. out receives one line naming a leftover
+// directory (see checkApplicationAbsent) if one is found and cleared; it is
+// never written to, and nothing is ever cleared, during a preview.
+func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, preview bool, out io.Writer) (Result, error) {
 	dir, err := os.MkdirTemp("", "iidp-platform-")
 	if err != nil {
 		return Result{}, err
@@ -292,6 +321,23 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 			files = append(files, path.Join(envDir, "application.yaml"), path.Join(envDir, "values.yaml"))
 		}
 	} else {
+		appDir := path.Join(ApplicationsDir, app.Name)
+		switch _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(appDir))); {
+		case err == nil:
+			// checkApplicationAbsent already confirmed this is not a live
+			// Environment: the leftover of a previous iidp app delete
+			// (DeleteApplication's own doc comment). Developers never edit
+			// the Platform repository by hand (docs/platform-repository.md),
+			// so reusing this Application's name must not need one: clear
+			// it here, in the same commit as the new Environment's files,
+			// rather than asking anyone to remove it first.
+			fmt.Fprintf(out, "Found a leftover %s/ from a previous iidp app delete; removing it before creating %s.\n", appDir, app.Name)
+			if err := repo.Remove(ctx, appDir); err != nil {
+				return Result{}, fmt.Errorf("removing the leftover %s: %w", appDir, err)
+			}
+		case !errors.Is(err, fs.ErrNotExist):
+			return Result{}, fmt.Errorf("checking for a leftover %s: %w", appDir, err)
+		}
 		for _, environment := range environments {
 			envFiles, err := w.writeEnvironment(dir, cfg, app, environment)
 			if err != nil {
