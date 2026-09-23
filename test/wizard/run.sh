@@ -219,6 +219,39 @@ assert_eq "$out" "99"
 out=$(in_wizard "platform_yaml_get '$d/platform.yaml' acme.email")
 assert_eq "$out" "platform@itma.no"
 
+t_start "ask_platform_settings offers what platform.yaml already holds, so a re-run keeps it"
+d=$(scratch_dir)
+cat > "$d/platform.yaml" <<'EOF'
+acme:
+  email: admin@example.test
+  server: https://acme-staging-v02.api.letsencrypt.org/directory
+clusterName: custom-cluster
+backupsBucket: custom-bucket
+EOF
+answers=$(scratch_dir)/answers.env
+: > "$answers"
+out=$(in_wizard "
+  PLATFORM_REPO='$d'
+  BASE_DOMAIN=app.itma.no
+  STATE_TFVARS='$d/state.tfvars'
+  IIDP_WIZARD_ANSWERS='$answers'
+  ask_platform_settings >/dev/null
+  echo \"[\$ACME_EMAIL] [\$ACME_SERVER] [\$CLUSTER_NAME] [\$BACKUPS_BUCKET]\"
+" 2>&1)
+assert_eq "$out" "[admin@example.test] [https://acme-staging-v02.api.letsencrypt.org/directory] [custom-cluster] [custom-bucket]"
+
+t_start "ask_platform_settings falls back to the built-in defaults on a first run"
+d=$(scratch_dir)
+out=$(in_wizard "
+  PLATFORM_REPO='$d'
+  BASE_DOMAIN=app.itma.no
+  STATE_TFVARS='$d/state.tfvars'
+  IIDP_WIZARD_ANSWERS='$answers'
+  ask_platform_settings >/dev/null
+  echo \"[\$ACME_EMAIL] [\$ACME_SERVER] [\$CLUSTER_NAME] [\$BACKUPS_BUCKET]\"
+" 2>&1)
+assert_eq "$out" "[platform@itma.no] [https://acme-v02.api.letsencrypt.org/directory] [iidp] [itema-iidp-db-backups]"
+
 t_start "platform_yaml_get on a missing file fails"
 ( in_wizard "platform_yaml_get '$d/does-not-exist.yaml' baseDomain" >/dev/null 2>&1 )
 assert_eq "$?" "1"

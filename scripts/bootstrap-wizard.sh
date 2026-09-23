@@ -1488,6 +1488,24 @@ git_commit_if_changed() { # git_commit_if_changed "message" PATH...
   ok "committed: $message"
 }
 
+# ask_platform_settings asks for the four settings write_platform_yaml
+# records, each defaulting to what platform.yaml already holds, so a re-run
+# that accepts every default writes them back unchanged. A re-run once
+# offered the built-in defaults instead, and pressing Enter at acme.email
+# silently replaced the admin's address with platform@<zone>.
+ask_platform_settings() {
+  local platform_yaml="$PLATFORM_REPO/platform.yaml" current
+  current=$(platform_yaml_get "$platform_yaml" acme.email || true)
+  ask ACME_EMAIL "Contact email for Let's Encrypt expiry notices (acme.email):" "${ACME_EMAIL:-${current:-platform@${BASE_DOMAIN#*.}}}"
+  current=$(platform_yaml_get "$platform_yaml" acme.server || true)
+  ask ACME_SERVER "ACME server (acme.server):" "${ACME_SERVER:-${current:-https://acme-v02.api.letsencrypt.org/directory}}"
+  current=$(platform_yaml_get "$platform_yaml" clusterName || true)
+  ask CLUSTER_NAME "Cluster label for Grafana Cloud (clusterName):" "${CLUSTER_NAME:-${current:-iidp}}"
+  current=$(platform_yaml_get "$platform_yaml" backupsBucket || true)
+  [[ -n "$current" ]] || current=$(tfvar_get "$STATE_TFVARS" backup_bucket_name || echo itema-iidp-db-backups)
+  ask BACKUPS_BUCKET "Object Storage bucket for database backups (backupsBucket):" "${BACKUPS_BUCKET:-$current}"
+}
+
 stage_platform_repo() {
   stage "Platform repository"
 
@@ -1510,10 +1528,7 @@ stage_platform_repo() {
     log_choice "no release tag found; chartVersion defaults to 0.1.0 and the bootstrap pins to main"
   fi
 
-  ask ACME_EMAIL "Contact email for Let's Encrypt expiry notices (acme.email):" "${ACME_EMAIL:-platform@${BASE_DOMAIN#*.}}"
-  ask ACME_SERVER "ACME server (acme.server):" "${ACME_SERVER:-https://acme-v02.api.letsencrypt.org/directory}"
-  ask CLUSTER_NAME "Cluster label for Grafana Cloud (clusterName):" "${CLUSTER_NAME:-iidp}"
-  ask BACKUPS_BUCKET "Object Storage bucket for database backups (backupsBucket):" "${BACKUPS_BUCKET:-$(tfvar_get "$STATE_TFVARS" backup_bucket_name || echo itema-iidp-db-backups)}"
+  ask_platform_settings
 
   write_platform_yaml "$chart_version" "$ACME_EMAIL" "$ACME_SERVER" "$CLUSTER_NAME" "$BACKUPS_BUCKET" "$OBJECT_STORAGE_ENDPOINT"
   write_sops_yaml
