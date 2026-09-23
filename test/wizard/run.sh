@@ -219,6 +219,39 @@ assert_eq "$out" "99"
 out=$(in_wizard "platform_yaml_get '$d/platform.yaml' acme.email")
 assert_eq "$out" "platform@itma.no"
 
+t_start "ask_platform_settings offers what platform.yaml already holds, so a re-run keeps it"
+d=$(scratch_dir)
+cat > "$d/platform.yaml" <<'EOF'
+acme:
+  email: admin@example.test
+  server: https://acme-staging-v02.api.letsencrypt.org/directory
+clusterName: custom-cluster
+backupsBucket: custom-bucket
+EOF
+answers=$(scratch_dir)/answers.env
+: > "$answers"
+out=$(in_wizard "
+  PLATFORM_REPO='$d'
+  BASE_DOMAIN=app.itma.no
+  STATE_TFVARS='$d/state.tfvars'
+  IIDP_WIZARD_ANSWERS='$answers'
+  ask_platform_settings >/dev/null
+  echo \"[\$ACME_EMAIL] [\$ACME_SERVER] [\$CLUSTER_NAME] [\$BACKUPS_BUCKET]\"
+" 2>&1)
+assert_eq "$out" "[admin@example.test] [https://acme-staging-v02.api.letsencrypt.org/directory] [custom-cluster] [custom-bucket]"
+
+t_start "ask_platform_settings falls back to the built-in defaults on a first run"
+d=$(scratch_dir)
+out=$(in_wizard "
+  PLATFORM_REPO='$d'
+  BASE_DOMAIN=app.itma.no
+  STATE_TFVARS='$d/state.tfvars'
+  IIDP_WIZARD_ANSWERS='$answers'
+  ask_platform_settings >/dev/null
+  echo \"[\$ACME_EMAIL] [\$ACME_SERVER] [\$CLUSTER_NAME] [\$BACKUPS_BUCKET]\"
+" 2>&1)
+assert_eq "$out" "[platform@itma.no] [https://acme-v02.api.letsencrypt.org/directory] [iidp] [itema-iidp-db-backups]"
+
 t_start "platform_yaml_get on a missing file fails"
 ( in_wizard "platform_yaml_get '$d/does-not-exist.yaml' baseDomain" >/dev/null 2>&1 )
 assert_eq "$?" "1"
@@ -253,6 +286,18 @@ export IIDP_TEST_HTML_INPUT="a & b 'quoted' \"double\" <tag>"
 out=$(in_wizard 'html_escape "$IIDP_TEST_HTML_INPUT"')
 unset IIDP_TEST_HTML_INPUT
 assert_eq "$out" "a &amp; b &#39;quoted&#39; &quot;double&quot; &lt;tag&gt;"
+
+t_start "yaml_str single-quotes a value and doubles any single quote in it"
+export IIDP_TEST_YAML_INPUT="it's: a #value"
+# shellcheck disable=SC2016  # deliberately unexpanded here: eval'd inside in_wizard's subshell
+out=$(in_wizard 'yaml_str "$IIDP_TEST_YAML_INPUT"')
+unset IIDP_TEST_YAML_INPUT
+assert_eq "$out" "'it''s: a #value'"
+
+t_start "yaml_str keeps a value that looks like a number a string"
+# shellcheck disable=SC2016  # deliberately unexpanded here: eval'd inside in_wizard's subshell
+out=$(in_wizard 'yaml_str 3607024')
+assert_eq "$out" "'3607024'"
 
 # ── network wrapper functions under IIDP_WIZARD_FAKE=1 ──────────────────
 
@@ -533,6 +578,14 @@ if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; the
   assert_contains "$decrypted" "access-token: shh-token"
   assert_contains "$decrypted" "prometheus-username:"
   assert_contains "$decrypted" "12345"
+  # Grafana Cloud instance ids are plain numbers. Unquoted, YAML reads them
+  # as integers and the API server refuses the Secret ("stringData...
+  # expected string"), which is what broke platform-secrets on the first
+  # real bootstrap; every stringData value must stay a string.
+  t_start "numeric grafana usernames stay strings in the decrypted Secret"
+  types=$(SOPS_AGE_KEY_FILE="$keydir/key.txt" sops --decrypt --output-type json "$d/bootstrap/sops/grafana-cloud.enc.yaml" 2>&1 \
+    | jq -r '[.stringData[] | type] | unique | join(",")')
+  assert_eq "$types" "string"
 
   t_start "the written oauth2-proxy Entra secret file is sops ciphertext, not plaintext"
   oauth2content=$(cat "$d/bootstrap/sops/oauth2-proxy-entra.enc.yaml" 2>/dev/null || echo "MISSING")
