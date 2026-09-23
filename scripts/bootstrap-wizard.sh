@@ -888,6 +888,16 @@ html_escape() {
   printf '%s' "$s"
 }
 
+# yaml_str VALUE -- VALUE as a single-quoted YAML scalar, the only escape
+# being a doubled single quote. Every stringData value goes through this:
+# written bare, a Grafana Cloud instance id like 3607024 is read as an
+# integer and the API server refuses the whole Secret, and a token with
+# ": " or " #" in it would not parse at all.
+yaml_str() {
+  local s="$1" q="'"
+  printf "'%s'" "${s//$q/$q$q}"
+}
+
 # require_pem_file VARNAME -- validates that the path named by VARNAME (a
 # nameref target) looks like a PEM private key, unless --dry-run or
 # IIDP_WIZARD_FAKE, when a placeholder is substituted instead of touching
@@ -1393,8 +1403,8 @@ write_backups_credentials() {
   # first backup of every new Environment then fails permanently, since a
   # failed Backup is never retried and the next one is a day away.
   write_secret_plaintext "$file" backups-credentials "" "" \
-    "  ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY}
-  ACCESS_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}" \
+    "  ACCESS_KEY_ID: $(yaml_str "${OBJECT_STORAGE_ACCESS_KEY}")
+  ACCESS_SECRET_KEY: $(yaml_str "${OBJECT_STORAGE_SECRET_KEY}")" \
     '    argocd.argoproj.io/sync-wave: "-2"'
   sops_encrypt_in_place "bootstrap/templates/backups-credentials.enc.yaml"
   ok "wrote and encrypted bootstrap/templates/backups-credentials.enc.yaml"
@@ -1415,9 +1425,9 @@ write_and_encrypt_secrets() {
   if [[ -n "$ENTRA_ARGOCD_CLIENT_ID" ]]; then
     write_secret_plaintext "$sops_dir/argocd-entra.enc.yaml" argocd-entra argocd \
       "    app.kubernetes.io/part-of: argocd" \
-      "  clientID: ${ENTRA_ARGOCD_CLIENT_ID}
-  clientSecret: ${ENTRA_ARGOCD_CLIENT_SECRET}
-  tenant: ${ENTRA_ARGOCD_TENANT}"
+      "  clientID: $(yaml_str "${ENTRA_ARGOCD_CLIENT_ID}")
+  clientSecret: $(yaml_str "${ENTRA_ARGOCD_CLIENT_SECRET}")
+  tenant: $(yaml_str "${ENTRA_ARGOCD_TENANT}")"
     sops_encrypt_in_place "bootstrap/sops/argocd-entra.enc.yaml"
     ok "wrote and encrypted bootstrap/sops/argocd-entra.enc.yaml"
   else
@@ -1426,11 +1436,11 @@ write_and_encrypt_secrets() {
 
   if [[ -n "$CLOUDFLARE_TOKEN" ]]; then
     write_secret_plaintext "$sops_dir/cloudflare-api-token-cert-manager.enc.yaml" cloudflare-api-token cert-manager "" \
-      "  apiToken: ${CLOUDFLARE_TOKEN}"
+      "  apiToken: $(yaml_str "${CLOUDFLARE_TOKEN}")"
     sops_encrypt_in_place "bootstrap/sops/cloudflare-api-token-cert-manager.enc.yaml"
 
     write_secret_plaintext "$sops_dir/cloudflare-api-token-external-dns.enc.yaml" cloudflare-api-token external-dns "" \
-      "  apiToken: ${CLOUDFLARE_TOKEN}"
+      "  apiToken: $(yaml_str "${CLOUDFLARE_TOKEN}")"
     sops_encrypt_in_place "bootstrap/sops/cloudflare-api-token-external-dns.enc.yaml"
     ok "wrote and encrypted the two Cloudflare secrets"
   else
@@ -1439,11 +1449,11 @@ write_and_encrypt_secrets() {
 
   if [[ -n "$GRAFANA_ACCESS_TOKEN" ]]; then
     write_secret_plaintext "$sops_dir/grafana-cloud.enc.yaml" grafana-cloud monitoring "" \
-      "  prometheus-url: ${GRAFANA_PROM_URL}
-  prometheus-username: ${GRAFANA_PROM_USER}
-  loki-url: ${GRAFANA_LOKI_URL}
-  loki-username: ${GRAFANA_LOKI_USER}
-  access-token: ${GRAFANA_ACCESS_TOKEN}"
+      "  prometheus-url: $(yaml_str "${GRAFANA_PROM_URL}")
+  prometheus-username: $(yaml_str "${GRAFANA_PROM_USER}")
+  loki-url: $(yaml_str "${GRAFANA_LOKI_URL}")
+  loki-username: $(yaml_str "${GRAFANA_LOKI_USER}")
+  access-token: $(yaml_str "${GRAFANA_ACCESS_TOKEN}")"
     sops_encrypt_in_place "bootstrap/sops/grafana-cloud.enc.yaml"
     ok "wrote and encrypted bootstrap/sops/grafana-cloud.enc.yaml"
   else
@@ -1452,10 +1462,10 @@ write_and_encrypt_secrets() {
 
   if [[ -n "$ENTRA_OAUTH2_PROXY_CLIENT_ID" ]]; then
     write_secret_plaintext "$sops_dir/oauth2-proxy-entra.enc.yaml" oauth2-proxy-entra oauth2-proxy "" \
-      "  clientID: ${ENTRA_OAUTH2_PROXY_CLIENT_ID}
-  clientSecret: ${ENTRA_OAUTH2_PROXY_CLIENT_SECRET}
-  tenant: ${ENTRA_OAUTH2_PROXY_TENANT}
-  cookieSecret: ${ENTRA_OAUTH2_PROXY_COOKIE_SECRET}"
+      "  clientID: $(yaml_str "${ENTRA_OAUTH2_PROXY_CLIENT_ID}")
+  clientSecret: $(yaml_str "${ENTRA_OAUTH2_PROXY_CLIENT_SECRET}")
+  tenant: $(yaml_str "${ENTRA_OAUTH2_PROXY_TENANT}")
+  cookieSecret: $(yaml_str "${ENTRA_OAUTH2_PROXY_COOKIE_SECRET}")"
     sops_encrypt_in_place "bootstrap/sops/oauth2-proxy-entra.enc.yaml"
     ok "wrote and encrypted bootstrap/sops/oauth2-proxy-entra.enc.yaml"
   else

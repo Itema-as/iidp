@@ -254,6 +254,18 @@ out=$(in_wizard 'html_escape "$IIDP_TEST_HTML_INPUT"')
 unset IIDP_TEST_HTML_INPUT
 assert_eq "$out" "a &amp; b &#39;quoted&#39; &quot;double&quot; &lt;tag&gt;"
 
+t_start "yaml_str single-quotes a value and doubles any single quote in it"
+export IIDP_TEST_YAML_INPUT="it's: a #value"
+# shellcheck disable=SC2016  # deliberately unexpanded here: eval'd inside in_wizard's subshell
+out=$(in_wizard 'yaml_str "$IIDP_TEST_YAML_INPUT"')
+unset IIDP_TEST_YAML_INPUT
+assert_eq "$out" "'it''s: a #value'"
+
+t_start "yaml_str keeps a value that looks like a number a string"
+# shellcheck disable=SC2016  # deliberately unexpanded here: eval'd inside in_wizard's subshell
+out=$(in_wizard 'yaml_str 3607024')
+assert_eq "$out" "'3607024'"
+
 # ── network wrapper functions under IIDP_WIZARD_FAKE=1 ──────────────────
 
 t_start "validate_hetzner_token succeeds for the fake token"
@@ -533,6 +545,14 @@ if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; the
   assert_contains "$decrypted" "access-token: shh-token"
   assert_contains "$decrypted" "prometheus-username:"
   assert_contains "$decrypted" "12345"
+  # Grafana Cloud instance ids are plain numbers. Unquoted, YAML reads them
+  # as integers and the API server refuses the Secret ("stringData...
+  # expected string"), which is what broke platform-secrets on the first
+  # real bootstrap; every stringData value must stay a string.
+  t_start "numeric grafana usernames stay strings in the decrypted Secret"
+  types=$(SOPS_AGE_KEY_FILE="$keydir/key.txt" sops --decrypt --output-type json "$d/bootstrap/sops/grafana-cloud.enc.yaml" 2>&1 \
+    | jq -r '[.stringData[] | type] | unique | join(",")')
+  assert_eq "$types" "string"
 
   t_start "the written oauth2-proxy Entra secret file is sops ciphertext, not plaintext"
   oauth2content=$(cat "$d/bootstrap/sops/oauth2-proxy-entra.enc.yaml" 2>/dev/null || echo "MISSING")
