@@ -1765,7 +1765,11 @@ closing_summary() {
   printf '\n%s%s  ✓ Platform bootstrap complete%s\n\n' "$BOLD" "$GREEN" "$RESET" >&2
   note "ArgoCD:        ${ARGOCD_URL:-<not set>}"
   note "Node IPv4:     ${NODE_IP:-<not set>}"
-  note "Kubeconfig:    ssh root@${NODE_IP:-<node-ip>} cat /etc/rancher/k3s/k3s.yaml | sed \"s/127.0.0.1/${NODE_IP:-<node-ip>}/\" > ~/.kube/iidp.yaml"
+  # The firewall keeps 6443 closed, so kubectl goes through an SSH tunnel and
+  # the kubeconfig keeps k3s's own 127.0.0.1 (its certificate covers it).
+  note "Kubeconfig:    ssh root@${NODE_IP:-<node-ip>} cat /etc/rancher/k3s/k3s.yaml > ~/.kube/iidp.yaml"
+  note "API tunnel:    ssh -N -L 6443:127.0.0.1:6443 root@${NODE_IP:-<node-ip>}, then kubectl as usual"
+  note "               (infra/README.md, \"Reaching the Kubernetes API\")"
 
   if [[ -z "$CLOUDFLARE_ZONE" ]] || ! confirm "Does ${BASE_DOMAIN:-the base domain} already resolve through Cloudflare?"; then
     MANUAL_STEPS+=("Make sure ${BASE_DOMAIN:-the base domain} resolves once external-dns has created its first record (see bootstrap/README.md and bootstrap/components/tls)")

@@ -57,6 +57,10 @@ The message also says that a secret created a moment ago can take a minute to wo
 
 **Why only the manual path.** The `az` path creates the secret itself, so it can't paste the ID by mistake. It also creates the app with `az ad app create`, which doesn't create a service principal. A client-credentials request needs one in the tenant (`AADSTS7000229` otherwise), and it would also hit the new-secret delay straight away. A portal registration, which is what the manual steps describe, creates the service principal automatically.
 
+## Also: the closing summary's kubeconfig recipe (item 9)
+
+`closing_summary` still printed the old recipe, which rewrites `127.0.0.1` to the node's IP. That can't work, because the firewall keeps 6443 closed. It now prints the fetch without the rewrite, and the `ssh -N -L 6443:127.0.0.1:6443` tunnel. It also points at the "Reaching the Kubernetes API" section in `infra/README.md`, which #47's documentation change adds.
+
 ## Fake mode
 
 As with the Cloudflare checks, `_fake_http` answers both new endpoints under `IIDP_WIZARD_FAKE=1`, so `test/wizard/run.sh` stays offline. `_http` now passes the auth header and body to it.
