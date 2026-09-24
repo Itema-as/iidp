@@ -85,6 +85,23 @@ else
   echo "skip - shellcheck not installed"
 fi
 
+# The admin opens every link in the browser and profile of their choice;
+# the wizard only prints it (#47). browser_openers FILE prints each line,
+# comments aside, that runs a browser opener in command position or builds
+# a self-submitting page.
+browser_openers() {
+  local openers='open|xdg-open|wslview|explorer\.exe|sensible-browser|x-www-browser|www-browser|gnome-open|kde-open|gio[[:space:]]+open|cmd\.exe|powershell(\.exe)?|python3?[[:space:]]+-m[[:space:]]+webbrowser'
+  local before='(^|[;&|({`]|(^|[^[:alnum:]_-])(then|else|do|exec|command|env|nohup|-v))[[:space:]]*'
+  local after='([[:space:]]|$|[;&|)"'"'"'])'
+  grep -v -E '^[[:space:]]*#' "$1" \
+    | sed -E 's/[[:space:]]#[[:space:]].*$//' \
+    | grep -E -e "${before}(${openers})${after}" -e 'onload=|\.submit\(\)|<form' \
+    || true
+}
+
+t_start "the wizard never opens a browser or a page, it only prints links"
+assert_eq "$(browser_openers "$WIZARD")" ""
+
 # ── tfvar_get / tfvar_set ────────────────────────────────────────────────
 
 t_start "tfvar_set writes a KEY = \"value\" line, tfvar_get reads it back"
@@ -280,12 +297,23 @@ t_start "github_owner_of extracts owner/repo"
 out=$(in_wizard "github_owner_of 'https://github.com/Itema-as/iidp-platform.git'")
 assert_eq "$out" "Itema-as/iidp-platform"
 
-t_start "html_escape escapes everything that would break a single-quoted HTML attribute"
-export IIDP_TEST_HTML_INPUT="a & b 'quoted' \"double\" <tag>"
-# shellcheck disable=SC2016  # deliberately unexpanded here: eval'd inside in_wizard's subshell
-out=$(in_wizard 'html_escape "$IIDP_TEST_HTML_INPUT"')
-unset IIDP_TEST_HTML_INPUT
-assert_eq "$out" "a &amp; b &#39;quoted&#39; &quot;double&quot; &lt;tag&gt;"
+# ── expand_home: a path answer is a literal string, so ~ needs expanding ──
+
+t_start "expand_home turns a leading ~/ into \$HOME/"
+out=$(in_wizard "HOME=/home/admin; expand_home '~/Downloads/iidp-deploy.pem'")
+assert_eq "$out" "/home/admin/Downloads/iidp-deploy.pem"
+
+t_start "expand_home turns a bare ~ into \$HOME"
+out=$(in_wizard "HOME=/home/admin; expand_home '~'")
+assert_eq "$out" "/home/admin"
+
+t_start "expand_home leaves an absolute or relative path, and a ~ further in, alone"
+out=$(in_wizard "HOME=/home/admin; expand_home '/keys/~/x.pem'; echo; expand_home 'keys/x.pem'")
+assert_eq "$out" $'/keys/~/x.pem\nkeys/x.pem'
+
+t_start "expand_home leaves ~user alone rather than eval the answer"
+out=$(in_wizard "HOME=/home/admin; expand_home '~other/x.pem'")
+assert_eq "$out" "~other/x.pem"
 
 t_start "yaml_str single-quotes a value and doubles any single quote in it"
 export IIDP_TEST_YAML_INPUT="it's: a #value"
@@ -409,6 +437,43 @@ assert_contains "$tfvars_content" 'platform_repo_github_app_id = "5555"'
 assert_contains "$tfvars_content" 'platform_repo_github_app_installation_id = "7777"'
 assert_contains "$tfvars_content" "brand-new-key"
 
+t_start "stage_github_app (fresh App) prints the manual steps and the settings URL"
+assert_contains "$out" "https://github.com/organizations/itema-as/settings/apps/new"
+assert_contains "$out" "GitHub App name: iidp-deploy"
+assert_contains "$out" "Homepage URL: https://github.com/itema-as/iidp-platform"
+assert_contains "$out" "Webhook: untick Active"
+assert_contains "$out" "Contents: Read and write"
+assert_contains "$out" "Only on this account"
+assert_contains "$out" "Only select repositories > iidp-platform > Install"
+t_start "stage_github_app (fresh App) builds and submits no manifest"
+assert_not_contains "$out" "manifest"
+
+t_start "stage_github_app expands a leading ~ in the private-key path"
+d=$(scratch_dir)
+mkdir -p "$d/platform-repo" "$d/infra-platform" "$d/home/Downloads"
+printf -- '-----BEGIN RSA PRIVATE KEY-----\ntilde-key\n-----END RSA PRIVATE KEY-----\n' > "$d/home/Downloads/iidp-deploy.pem"
+answers=$(scratch_dir)/answers.env
+cat > "$answers" <<'EOF'
+GITHUB_ORG=itema-as
+GITHUB_APP_ID=5555
+PEM_PATH=~/Downloads/iidp-deploy.pem
+GITHUB_APP_INSTALLATION_ID=7777
+EOF
+# The stage runs in fake mode, which never reads the key; turning fake mode
+# off for require_pem_file afterwards checks the expanded path for real.
+out=$(in_wizard "
+  HOME='$d/home'
+  PLATFORM_REPO='$d/platform-repo'
+  INFRA_PLATFORM_DIR='$d/infra-platform'
+  IIDP_WIZARD_ANSWERS='$answers'
+  stage_github_app >/dev/null 2>&1
+  echo \"pem=[\$PEM_PATH]\"
+  IIDP_WIZARD_FAKE=0
+  require_pem_file PEM_PATH && echo 'pem file found'
+" 2>&1)
+assert_contains "$out" "pem=[$d/home/Downloads/iidp-deploy.pem]"
+assert_contains "$out" "pem file found"
+
 t_start "stage_cloudflare keeps existing encrypted secrets without asking for a new token"
 d=$(scratch_dir)
 mkdir -p "$d/platform-repo/bootstrap/sops"
@@ -525,6 +590,25 @@ t_start "stage_hetzner (override) exits 0"
 assert_success "$rc"
 t_start "stage_hetzner honours an explicit objectStorageEndpoint override"
 assert_contains "$out" "endpoint=[https://custom.example.test]"
+
+t_start "stage_hetzner expands a leading ~ in the SSH public key path"
+d=$(scratch_dir)
+answers=$(scratch_dir)/answers.env
+cat > "$answers" <<'EOF'
+HCLOUD_TOKEN=fake-token
+OBJECT_STORAGE_ACCESS_KEY=access123
+OBJECT_STORAGE_SECRET_KEY=secret123
+SSH_PUBLIC_KEY_PATH=~/.ssh/iidp.pub
+EOF
+out=$(in_wizard "
+  HOME='$d/home'
+  STATE_TFVARS='$d/state.tfvars'
+  PLATFORM_TFVARS='$d/platform.tfvars'
+  IIDP_WIZARD_ANSWERS='$answers'
+  stage_hetzner >/dev/null 2>&1
+  echo \"ssh=[\${SSH_PUBLIC_KEY_PATH}]\"
+" 2>&1)
+assert_contains "$out" "ssh=[$d/home/.ssh/iidp.pub]"
 
 t_start "write_platform_yaml writes objectStorageEndpoint"
 d=$(scratch_dir)
