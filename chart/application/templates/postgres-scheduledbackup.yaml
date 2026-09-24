@@ -10,6 +10,8 @@ metadata:
     # After the Cluster is healthy, so the immediate first backup has a
     # running database to take.
     argocd.argoproj.io/sync-wave: "-1"
+    # Kept with the Cluster, so a kept database keeps its daily base backup.
+    {{- include "application.postgres.keepOnPrune" . | nindent 4 }}
 spec:
   cluster:
     name: {{ include "application.postgres.cluster" . }}

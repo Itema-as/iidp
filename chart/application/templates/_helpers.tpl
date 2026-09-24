@@ -144,6 +144,17 @@ database and a prefix is one Environment.
 {{- end -}}
 
 {{/*
+The annotation that keeps the database's objects (the Cluster, its
+ObjectStore and ScheduledBackup) when a sync would prune them. Prune=false
+applies to syncs only: ArgoCD's cascade deletion of the Environment's
+Application (the resources finalizer, what iidp app delete triggers)
+honours Delete=false, not Prune=false, so it still removes them.
+*/}}
+{{- define "application.postgres.keepOnPrune" -}}
+argocd.argoproj.io/sync-options: Prune=false
+{{- end -}}
+
+{{/*
 The S3 endpoint of the backups bucket's location.
 */}}
 {{- define "application.postgres.objectStorageEndpoint" -}}
