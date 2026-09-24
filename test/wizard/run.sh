@@ -544,6 +544,35 @@ out=$(in_wizard "
 content=$(cat "$d/platform-repo/platform.yaml" 2>/dev/null || echo "MISSING")
 assert_contains "$content" "objectStorageEndpoint: https://hel1.your-objectstorage.com"
 
+t_start "write_bootstrap_applications writes the Application that discovers every Environment"
+d=$(scratch_dir)
+in_wizard "
+  PLATFORM_REPO='$d'
+  write_bootstrap_applications https://github.com/Itema-as/iidp-platform.git >/dev/null
+"
+content=$(cat "$d/bootstrap/applications.yaml" 2>/dev/null || echo "MISSING")
+assert_contains "$content" "name: applications"
+assert_contains "$content" "repoURL: https://github.com/Itema-as/iidp-platform.git"
+assert_contains "$content" "path: applications"
+assert_contains "$content" "recurse: true"
+assert_contains "$content" "include: '*/*/application.yaml'"
+
+# The kind e2e fixture's bootstrap/ is hand-written. It once carried
+# applications.yaml while the wizard never wrote it, so the first real
+# Platform discovered no Application at all and the e2e run could not
+# notice. Every top-level file the fixture has, the wizard must write.
+t_start "the wizard writes every top-level bootstrap file the e2e fixture has"
+d=$(scratch_dir)
+in_wizard "
+  PLATFORM_REPO='$d'
+  write_bootstrap_components https://github.com/Itema-as/iidp.git v0.1.0 https://github.com/Itema-as/iidp-platform.git >/dev/null
+  write_bootstrap_secrets https://github.com/Itema-as/iidp-platform.git >/dev/null
+  write_bootstrap_applications https://github.com/Itema-as/iidp-platform.git >/dev/null
+"
+fixture_files=$(cd "$(dirname "$0")/../e2e/fixtures/platform-repo/bootstrap" && find . -maxdepth 1 -name '*.yaml' | sort | tr '\n' ' ')
+wizard_files=$(cd "$d/bootstrap" && find . -maxdepth 1 -name '*.yaml' | sort | tr '\n' ' ')
+assert_eq "$wizard_files" "$fixture_files"
+
 # ── sops round-trip: what write_and_encrypt_secrets actually produces ───
 
 if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; then

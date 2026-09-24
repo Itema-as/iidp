@@ -3,7 +3,9 @@
 # docs/platform-repository.md in the iidp repository), and nothing else made
 # ArgoCD pick those up. Not part of the iidp bootstrap chart, like
 # platform-components.yaml and platform-secrets.yaml above: every Platform
-# repository carries this file once, hand-written, next to them.
+# repository carries this file once, next to them, written by
+# scripts/bootstrap-wizard.sh (write_bootstrap_applications). The wizard
+# tests fail if this fixture gains a top-level file the wizard does not write.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

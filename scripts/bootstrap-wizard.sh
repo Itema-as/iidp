@@ -1312,6 +1312,53 @@ EOF
   ok "wrote $file"
 }
 
+# write_bootstrap_applications writes the Application that discovers every
+# Environment: the CLI writes applications/<name>/<environment>/application.yaml,
+# and nothing else makes ArgoCD notice those, since the root Application only
+# syncs bootstrap/ (bootstrap/README.md, "applications.yaml"). The first real
+# Platform lacked it, and no Application it created ever appeared.
+write_bootstrap_applications() {
+  local file="$PLATFORM_REPO/bootstrap/applications.yaml"
+  local platform_url="$1"
+  if [[ "$DRY_RUN" == "1" ]]; then dry "would write $file"; return 0; fi
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<EOF
+# Discovers every Environment's ArgoCD Application under applications/: the
+# CLI writes applications/<name>/<environment>/application.yaml, and the root
+# Application only syncs bootstrap/. Written by scripts/bootstrap-wizard.sh.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: applications
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ${platform_url}
+    targetRevision: HEAD
+    path: applications
+    directory:
+      recurse: true
+      include: '*/*/application.yaml'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+EOF
+  ok "wrote $file"
+}
+
 write_sops_kustomization() {
   local dir="$PLATFORM_REPO/bootstrap/sops"
   if [[ "$DRY_RUN" == "1" ]]; then dry "would write $dir/kustomization.yaml and $dir/ksops.yaml"; return 0; fi
@@ -1534,11 +1581,12 @@ stage_platform_repo() {
   write_sops_yaml
   write_bootstrap_components "$iidp_url" "$bootstrap_rev" "$platform_url"
   write_bootstrap_secrets "$platform_url"
+  write_bootstrap_applications "$platform_url"
   write_sops_kustomization
   write_and_encrypt_secrets
   write_backups_credentials
 
-  git_commit_if_changed "Add platform.yaml" platform.yaml .sops.yaml bootstrap/platform-components.yaml bootstrap/platform-secrets.yaml bootstrap/sops/kustomization.yaml bootstrap/sops/ksops.yaml
+  git_commit_if_changed "Add platform.yaml" platform.yaml .sops.yaml bootstrap/platform-components.yaml bootstrap/platform-secrets.yaml bootstrap/applications.yaml bootstrap/sops/kustomization.yaml bootstrap/sops/ksops.yaml
   git_commit_if_changed "Add Platform secrets" bootstrap/sops bootstrap/templates/backups-credentials.enc.yaml
 
   if [[ "$NO_PUSH" == "1" ]]; then
