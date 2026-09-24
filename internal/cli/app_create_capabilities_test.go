@@ -359,6 +359,28 @@ func TestAppCreateRefusesDomainEqualToAPlatformAddress(t *testing.T) {
 	assertNoApplications(t, url)
 }
 
+// deploy.<baseDomain> is the Deploy gate and auth.<baseDomain> the Itema
+// login. An Application serving either address would share it with the
+// Platform, and one serving the gate's could receive the OIDC tokens other
+// Applications' workflows mint for it
+// (docs/implementation-notes/60-deploy-gate.md).
+func TestAppCreateRefusesThePlatformsOwnAddresses(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+
+	for _, name := range []string{"deploy", "auth"} {
+		_, stderr, code := createApplication(t, url, cli.Dependencies{}, "--name", name, "--kind", "web-service")
+		if code == 0 || !strings.Contains(stderr, "reserved") {
+			t.Errorf("--name %s: exit code = %d, stderr = %q, want it refused as reserved", name, code, stderr)
+		}
+		host := name + ".app.itma.no"
+		_, stderr, code = createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service", "--domain", host)
+		if code == 0 || !strings.Contains(stderr, host) || !strings.Contains(stderr, "Platform's own address") {
+			t.Errorf("--domain %s: exit code = %d, stderr = %q, want it refused", host, code, stderr)
+		}
+	}
+	assertNoApplications(t, url)
+}
+
 func TestAppCreateCustomDomainOnlyAppliesToProd(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 

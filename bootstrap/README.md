@@ -1,6 +1,6 @@
 # bootstrap
 
-The ArgoCD app-of-apps that installs every Phase 1 Platform component. It is a Helm chart whose values are the Platform repository's `platform.yaml`, rendered by ArgoCD, and whose output is one ArgoCD `Application` per component. ("Application" below means an ArgoCD Application, not an Application in the sense of `CONTEXT.md`, except where it says so.) Nothing here is applied by hand: cloud-init applies one root Application (`infra/platform/cloud-init/user-data.yaml.tftpl`), and the Platform repository points it at this directory. The Platform repository is private (`docs/implementation-notes/12-deploy-workflow.md`, from `docs/design.md`'s access model), so cloud-init also applies ArgoCD's credential for it — an ArgoCD repository Secret for the same org GitHub App the deploy workflow uses for CI write-back — before it applies the root Application, so ArgoCD reads the Platform repository from first boot with nobody touching the cluster (`docs/implementation-notes/41-argocd-platform-repo-credential.md`).
+The ArgoCD app-of-apps that installs every Phase 1 Platform component. It is a Helm chart whose values are the Platform repository's `platform.yaml`, rendered by ArgoCD, and whose output is one ArgoCD `Application` per component. ("Application" below means an ArgoCD Application, not an Application in the sense of `CONTEXT.md`, except where it says so.) Nothing here is applied by hand: cloud-init applies one root Application (`infra/platform/cloud-init/user-data.yaml.tftpl`), and the Platform repository points it at this directory. The Platform repository is private (`docs/implementation-notes/12-deploy-workflow.md`, from `docs/design.md`'s access model), so cloud-init also applies ArgoCD's credential for it — an ArgoCD repository Secret for the org GitHub App `iidp-deploy`, which the Deploy gate also commits deploys as — before it applies the root Application, so ArgoCD reads the Platform repository from first boot with nobody touching the cluster (`docs/implementation-notes/41-argocd-platform-repo-credential.md`).
 
 | ArgoCD Application | What it installs | Namespace |
 |---|---|---|
@@ -12,6 +12,7 @@ The ArgoCD app-of-apps that installs every Phase 1 Platform component. It is a H
 | `cnpg-barman-cloud` | The CloudNativePG Barman Cloud plugin, which the application chart's Postgres Capability uses for continuous backups to Object Storage | `cnpg-system` |
 | `monitoring` | Grafana's `k8s-monitoring` chart: Alloy shipping pod logs, node and kube-state metrics to Grafana Cloud | `monitoring` |
 | `oauth2-proxy` | The Itema login Capability's one shared oauth2-proxy (Entra ID, `entra-id` provider), served at `auth.<baseDomain>` through an Ingress covered by the wildcard, plus the Traefik `Middleware`s `itema-login-auth` and `itema-login-errors` the application chart's `login.enabled` Ingress annotation points at | `oauth2-proxy` |
+| `deploy-gate` | [`components/deploy-gate`](components/deploy-gate): the Deploy gate (`cmd/iidp-deploy-gate`), the one way an Application repository's CI deploys and promotes, served at `deploy.<baseDomain>` through an Ingress covered by the wildcard (below) | `argocd` |
 
 Every version is pinned in [`versions.yaml`](versions.yaml). The Applications share one sync policy (`templates/_helpers.tpl`): automated with prune and self-heal, server-side apply, and unlimited retries, so a component that needs another one's CRDs or namespace converges on its own. Each retry syncs the newest commit (`retry.refresh: true`), so a fix pushed while a sync keeps failing applies on the next retry instead of waiting for someone to terminate the operation. No Application carries the resources finalizer: removing a component from the bootstrap leaves what it installed in the cluster, to be deleted by hand, rather than cascading into the deletion of CRDs and everything defined with them.
 
@@ -81,7 +82,11 @@ To add or change it by hand: write the Secret in the clear at `bootstrap/templat
 | `argocdURL` | bootstrap, CLI | Where ArgoCD is served; its host must be under `baseDomain` so the wildcard covers it |
 | `grafanaURL` | CLI | The Grafana Cloud stack, for the closing summary |
 | `chartVersion` | CLI | The application chart version written into new Environments |
-| `githubApp.id`, `githubApp.installationId` | CLI | The org GitHub App the deploy workflow writes back with |
+| `githubApp.id`, `githubApp.installationId` | nobody (documentation) | The org GitHub App the Deploy gate commits as and ArgoCD reads the Platform repository with; both take it from the Secret cloud-init writes |
+| `deployGate.githubOrgId` | bootstrap | Itema-as's numeric GitHub org id (default `1230559`): a deploy's OIDC token and the Application's binding must both carry it |
+| `deployGate.image.*` | bootstrap | The gate's image; `tag` empty (the default) means the version of the bootstrap release `platform-components.yaml` pins |
+| `deployGate.oidc.issuer`, `deployGate.oidc.jwksURL` | bootstrap | The OIDC issuer the gate trusts (default GitHub Actions') and its key set (default `<issuer>/.well-known/jwks`); only a test cluster changes them |
+| `deployGate.githubAPI`, `deployGate.platformRepository`, `deployGate.appSecret` | bootstrap | The GitHub API, the Platform repository the gate writes, and the Secret with the App credential (default `platform-repo-github-app`); only a test cluster changes them |
 | `agePublicKey` | CLI | What `iidp secret set` encrypts with; the private key exists only in the cluster |
 | `backupsBucket` | CLI | The Object Storage bucket for CloudNativePG backups. Required for `--postgres` |
 | `objectStorageEndpoint` | CLI | The S3 endpoint of `backupsBucket`'s location, for example `https://hel1.your-objectstorage.com`. Required for `--postgres` |
@@ -102,11 +107,20 @@ Login is Entra ID through Dex only; the local `admin` account is disabled. The E
 
 ArgoCD's own credential for the Platform repository — the Secret `argocd/platform-repo-github-app`, labelled `argocd.argoproj.io/secret-type: repository` — is also cloud-init's, applied right before the root Application; see `infra/README.md` ("Rotating the Platform repository credential") for the credential itself and `docs/implementation-notes/41-argocd-platform-repo-credential.md` for why it is shaped the way it is.
 
+## The Deploy gate
+
+The `deploy-gate` Application renders [`components/deploy-gate`](components/deploy-gate) at the same pin as this chart: a Deployment, a Service and an Ingress at `deploy.<baseDomain>` (TLS with no secret of its own, so Traefik serves the wildcard). It runs the image `ghcr.io/itema-as/iidp-deploy-gate:<version>`, which the release workflow publishes for every `v*` tag, where `<version>` is the pinned bootstrap revision without its `v`: bumping the bootstrap bumps the gate. A pin that is not a release tag names no image; the Application then fails to render with a message saying so, and nothing else in the bootstrap is affected. The node pulls the image with the same read-only GHCR credential it pulls Application images with.
+
+The gate needs the `iidp-deploy` GitHub App's id, installation id and private key. Those are already in the cluster: the Secret `argocd/platform-repo-github-app` cloud-init writes as ArgoCD's credential for the Platform repository (`githubAppID`, `githubAppInstallationID`, `githubAppPrivateKey`; `docs/implementation-notes/41-argocd-platform-repo-credential.md`). The gate runs in the `argocd` namespace and mounts those three keys as a volume, since a pod can only mount a Secret of its own namespace. It needs no Kubernetes API access, so it runs without a service account token and no Role is involved. It reads the files on every call, so rotating the key (`infra/README.md`, "Rotating the Platform repository credential") reaches the gate once the kubelet refreshes the volume, with no restart.
+
+Its requests are 5m of CPU and 32Mi of memory, with a 128Mi memory limit: the node is near its CPU request limit, and a deploy is one shallow clone and one push. What it checks and what it commits is in [`docs/platform-repository.md`](../docs/platform-repository.md#how-a-deploy-reaches-the-platform-repository-the-deploy-gate); why it is built this way is in [`docs/implementation-notes/60-deploy-gate.md`](../docs/implementation-notes/60-deploy-gate.md).
+
 ## Verifying without a cluster
 
 ```sh
 helm lint --strict bootstrap --values test/e2e/fixtures/platform-repo/platform.yaml
 helm lint --strict bootstrap/components/tls
+helm lint --strict bootstrap/components/deploy-gate --set bootstrapRevision=v0.0.0
 go test ./bootstrap/...          # renders with helm template and checks the Applications
 ```
 

@@ -1,28 +1,45 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Itema-as/iidp/internal/git"
-	"github.com/Itema-as/iidp/internal/github"
-	"github.com/Itema-as/iidp/internal/githubapp"
+	"github.com/Itema-as/iidp/internal/deploygate"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 )
 
-// ciSetImageOptions are the positional arguments of ci set-image.
+// DeployGateURLEnvVar is where ci set-image finds the Deploy gate: the
+// generated deploy workflow sets it to https://deploy.<baseDomain>,
+// rendered in by iidp app create, since CI cannot read the private
+// Platform repository to find it (docs/implementation-notes/60-deploy-gate.md).
+const DeployGateURLEnvVar = "IIDP_DEPLOY_GATE_URL"
+
+// The two variables GitHub Actions sets in a job with
+// permissions: id-token: write, through which the job asks for an OIDC
+// token.
+const (
+	actionsTokenURLEnvVar   = "ACTIONS_ID_TOKEN_REQUEST_URL"
+	actionsTokenTokenEnvVar = "ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+)
+
+// ciSetImageOptions are the arguments of ci set-image.
 type ciSetImageOptions struct {
-	application  string
-	environment  string
-	tag          string
-	platformRepo string
+	application string
+	environment string
+	tag         string
+	gateURL     string
 }
 
 func newCICommand(deps Dependencies) *cobra.Command {
@@ -38,18 +55,18 @@ func newCISetImageCommand(deps Dependencies) *cobra.Command {
 	var opts ciSetImageOptions
 	cmd := &cobra.Command{
 		Use:   "set-image <app> <prod|staging|auto> <tag>",
-		Short: "Write an image tag into an Environment's values.yaml (run by the deploy workflow)",
-		Long: "Writes tag into image.tag of an Application's Environment in the Platform\n" +
-			"repository (" + platform.Repository + "), the way the deploy workflow's\n" +
-			"write-back step does: a commit SHA on every push to main, a version on a\n" +
-			"v* tag. auto targets staging when the Application has one and prod\n" +
-			"otherwise; that decision is made from the Platform repository, never by\n" +
-			"the workflow.\n\n" +
-			"Authenticates as the org's GitHub App, not the developer: the app id from\n" +
-			"IIDP_DEPLOY_APP_ID (an org Actions variable), the private key from\n" +
-			"IIDP_DEPLOY_APP_PRIVATE_KEY (a PEM) or IIDP_DEPLOY_APP_PRIVATE_KEY_FILE (a\n" +
-			"path to one), and the installation id discovered from GitHub itself. gh\n" +
-			"auth login is not consulted; this command is not meant to be run by hand.",
+		Short: "Ask the Deploy gate to run an image in an Environment (run by the deploy workflow)",
+		Long: "Asks the Deploy gate to write tag into image.tag of an Application's\n" +
+			"Environment in the Platform repository (" + platform.Repository + "): a\n" +
+			"commit SHA on every push to main, a version on a v* tag. auto lets the gate\n" +
+			"decide: main deploys to staging when the Application has one and to prod\n" +
+			"otherwise, and a v* tag promotes to prod.\n\n" +
+			"Runs only in GitHub Actions, in a job with permissions: id-token: write. It\n" +
+			"requests an OIDC token for the gate's URL and calls the gate with it; the\n" +
+			"gate checks that the token comes from the Application's own repository and\n" +
+			"a ref allowed to deploy that Environment, and commits the change itself. The\n" +
+			"gate's URL is --gate-url, or " + DeployGateURLEnvVar + ", which the generated\n" +
+			"workflow sets. No secret is needed; gh auth login is not consulted.",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.application = args[0]
@@ -58,9 +75,7 @@ func newCISetImageCommand(deps Dependencies) *cobra.Command {
 			return runCISetImage(cmd, opts, deps)
 		},
 	}
-	f := cmd.Flags()
-	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
-	_ = f.MarkHidden("platform-repo")
+	cmd.Flags().StringVar(&opts.gateURL, "gate-url", "", "The Deploy gate's URL, https://deploy.<baseDomain> (default $"+DeployGateURLEnvVar+")")
 	return cmd
 }
 
@@ -74,27 +89,39 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 	if strings.TrimSpace(opts.tag) == "" {
 		return errors.New("the tag must not be empty")
 	}
+	gate := strings.TrimSuffix(strings.TrimSpace(opts.gateURL), "/")
+	if gate == "" {
+		gate = strings.TrimSuffix(strings.TrimSpace(os.Getenv(DeployGateURLEnvVar)), "/")
+	}
+	if gate == "" {
+		return fmt.Errorf("the Deploy gate's URL is not set: pass --gate-url or set %s to https://deploy.<baseDomain>. A deploy workflow generated before the Deploy gate lacks it; see docs/implementation-notes/60-deploy-gate.md for moving it over", DeployGateURLEnvVar)
+	}
+	if u, err := url.Parse(gate); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("the Deploy gate's URL %q is not an http(s) URL", gate)
+	}
 
-	auth, err := ciInstallationAuth(cmd.Context(), deps)
+	ctx := cmd.Context()
+	client := &http.Client{Timeout: 3 * time.Minute}
+	token, err := requestOIDCToken(ctx, client, gate)
 	if err != nil {
 		return err
 	}
-
-	writer := &platformrepo.Writer{URL: opts.platformRepo, Auth: auth, BeforePush: deps.BeforePush}
-	res, err := writer.SetImageTag(cmd.Context(), opts.application, opts.environment, opts.tag)
+	res, err := callDeployGate(ctx, client, gate, token, deploygate.Request{
+		Application: opts.application,
+		Environment: opts.environment,
+		Tag:         opts.tag,
+	}, deps.CIRetryDelay)
 	if err != nil {
 		return err
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Deploy %s %s %s\n", opts.application, res.Environment, opts.tag)
-	fmt.Fprintf(out, "\nCommitted to %s:\n", platform.Repository)
-	for _, f := range res.Files {
-		fmt.Fprintf(out, "  %s\n", f)
+	if res.Unchanged {
+		fmt.Fprintf(out, "%s %s already runs %s; nothing to deploy.\n", res.Application, res.Environment, res.Tag)
+		return nil
 	}
-	if res.DocumentedGitHubAppInstallationID != 0 {
-		fmt.Fprintf(out, "\n(%s documents githubApp.installationId %d; informational only.)\n", platformrepo.ConfigFile, res.DocumentedGitHubAppInstallationID)
-	}
+	fmt.Fprintf(out, "Deploy %s %s %s\n", res.Application, res.Environment, res.Tag)
+	fmt.Fprintf(out, "\nThe Deploy gate committed %s to %s:\n  %s\n", shortCommit(res.Commit), platform.Repository, res.File)
 	return nil
 }
 
@@ -109,86 +136,109 @@ func validateCIEnvironment(environment string) error {
 	}
 }
 
-// ciInstallationAuth mints the GitHub App installation token ci set-image
-// authenticates the Platform repository with, entirely without reading the
-// Platform repository first: the app id comes from IIDP_DEPLOY_APP_ID (the
-// org Actions variable the deploy workflow passes through, see
-// docs/implementation-notes/05-bootstrap-wizard.md), the private key from
-// the environment, and the installation id is discovered from GitHub
-// itself (GET /app/installations) rather than from platform.yaml, so
-// minting a credential never depends on already having one to read the
-// Platform repository with (docs/implementation-notes/12-deploy-workflow.md).
-func ciInstallationAuth(ctx context.Context, deps Dependencies) (git.Auth, error) {
-	appID, err := githubapp.AppIDFromEnv()
+// requestOIDCToken asks GitHub Actions for an OIDC token whose audience is
+// the gate's URL, the only audience the gate accepts.
+func requestOIDCToken(ctx context.Context, client *http.Client, audience string) (string, error) {
+	requestURL, requestToken := os.Getenv(actionsTokenURLEnvVar), os.Getenv(actionsTokenTokenEnvVar)
+	if requestURL == "" || requestToken == "" {
+		return "", fmt.Errorf("no GitHub Actions OIDC token available: %s and %s are not set. iidp ci set-image runs only in GitHub Actions, in a job with permissions: id-token: write", actionsTokenURLEnvVar, actionsTokenTokenEnvVar)
+	}
+	u, err := url.Parse(requestURL)
 	if err != nil {
-		return git.Auth{}, err
+		return "", fmt.Errorf("%s is not a URL: %w", actionsTokenURLEnvVar, err)
 	}
-	key, err := githubapp.PrivateKeyFromEnv()
+	q := u.Query()
+	q.Set("audience", audience)
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return git.Auth{}, err
+		return "", err
 	}
-	jwt, err := githubapp.SignJWT(appID, key, time.Now())
+	req.Header.Set("Authorization", "bearer "+requestToken)
+	resp, err := client.Do(req)
 	if err != nil {
-		return git.Auth{}, err
+		return "", fmt.Errorf("requesting a GitHub Actions OIDC token: %w", err)
 	}
-	ghClient := &github.Client{Token: jwt}
-	if deps.GitHubAPI != "" {
-		ghClient.BaseURL = deps.GitHubAPI
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("requesting a GitHub Actions OIDC token: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	installationID, err := resolveInstallationID(ctx, ghClient, 0)
-	if err != nil {
-		return git.Auth{}, err
+	var token struct {
+		Value string `json:"value"`
 	}
-	token, err := ghClient.CreateInstallationToken(ctx, installationID)
-	if err != nil {
-		return git.Auth{}, err
+	if err := json.Unmarshal(body, &token); err != nil || token.Value == "" {
+		return "", errors.New("requesting a GitHub Actions OIDC token: the response carried no token")
 	}
-	if deps.CIAuthObserved != nil {
-		deps.CIAuthObserved(token)
-	}
-	return git.Auth{Token: token, Identity: ciIdentity()}, nil
+	return token.Value, nil
 }
 
-// ciIdentity is who a deploy write-back commits as: the GitHub user whose
-// push or tag started the workflow, from the variables every Actions run
-// sets, with the noreply address GitHub links to that account, so the
-// Platform repository's log records who deployed what. A hosted runner has
-// no git identity of its own, and without this the commit fails. Outside
-// Actions it is empty, leaving the identity to git's own configuration.
-func ciIdentity() git.Identity {
-	actor, id := os.Getenv("GITHUB_ACTOR"), os.Getenv("GITHUB_ACTOR_ID")
-	if actor == "" || id == "" {
-		return git.Identity{}
+// callDeployGate posts the deploy request to the gate. A gate that cannot
+// be reached, or answers 502, 503 or 504 (restarting behind Traefik), is
+// tried again twice; a deploy is safe to repeat, since the gate commits
+// nothing when the Environment already runs the tag. Every other refusal
+// is returned with the gate's own message.
+func callDeployGate(ctx context.Context, client *http.Client, gate, token string, request deploygate.Request, retryDelay time.Duration) (deploygate.Response, error) {
+	if retryDelay == 0 {
+		retryDelay = 10 * time.Second
 	}
-	return git.Identity{Name: actor, Email: id + "+" + actor + "@users.noreply.github.com"}
-}
-
-// resolveInstallationID is the org's installation id of the GitHub App
-// ghClient is authenticated as (a JWT). When knownID is non-zero, it is
-// returned directly and GitHub is not consulted at all: a shortcut for a
-// caller that already learned the installation id some other way (for
-// example, platform.yaml's githubApp.installationId, once it has been read
-// from an authenticated clone — never before one exists). iidp ci set-image
-// itself always calls this with knownID 0, since it has no clone yet at
-// this point; the shortcut exists for callers that do.
-//
-// Without a known id, it lists the App's installations
-// (GET /app/installations, confirmed against the current GitHub REST API
-// documentation: "List installations for the authenticated app") and picks
-// the one whose account matches the compiled-in org (internal/platform)
-// case-insensitively.
-func resolveInstallationID(ctx context.Context, ghClient *github.Client, knownID int64) (int64, error) {
-	if knownID != 0 {
-		return knownID, nil
-	}
-	installations, err := ghClient.ListInstallations(ctx)
+	body, err := json.Marshal(request)
 	if err != nil {
-		return 0, err
+		return deploygate.Response{}, err
 	}
-	for _, inst := range installations {
-		if strings.EqualFold(inst.Account.Login, platform.Org) {
-			return inst.ID, nil
+	const attempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			select {
+			case <-ctx.Done():
+				return deploygate.Response{}, ctx.Err()
+			case <-time.After(retryDelay):
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, gate+deploygate.DeployPath, bytes.NewReader(body))
+		if err != nil {
+			return deploygate.Response{}, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("calling the Deploy gate at %s: %w", gate, err)
+			continue
+		}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		switch {
+		case resp.StatusCode == http.StatusOK:
+			var res deploygate.Response
+			if err := json.Unmarshal(data, &res); err != nil {
+				return deploygate.Response{}, fmt.Errorf("the Deploy gate at %s answered with something other than a deploy result: %w", gate, err)
+			}
+			return res, nil
+		case resp.StatusCode == http.StatusBadGateway, resp.StatusCode == http.StatusServiceUnavailable, resp.StatusCode == http.StatusGatewayTimeout:
+			lastErr = fmt.Errorf("the Deploy gate at %s is unavailable: HTTP %d: %s", gate, resp.StatusCode, gateMessage(data))
+			continue
+		default:
+			return deploygate.Response{}, fmt.Errorf("the Deploy gate did not deploy %s (HTTP %d): %s", request.Application, resp.StatusCode, gateMessage(data))
 		}
 	}
-	return 0, fmt.Errorf("no GitHub App installation found for %s; install the org's deploy App on %s first", platform.Org, platform.Org)
+	return deploygate.Response{}, lastErr
+}
+
+// gateMessage is the error message in a gate's refusal, or the raw body
+// when it is not one (a proxy's own error page).
+func gateMessage(data []byte) string {
+	var refusal deploygate.ErrorResponse
+	if err := json.Unmarshal(data, &refusal); err == nil && refusal.Error != "" {
+		return refusal.Error
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func shortCommit(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }

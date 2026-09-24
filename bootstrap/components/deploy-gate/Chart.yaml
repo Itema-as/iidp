@@ -1,0 +1,5 @@
+apiVersion: v2
+name: deploy-gate
+description: The Deploy gate - the one service through which an Application repository's CI deploys and promotes, authenticated with GitHub Actions OIDC. Rendered by the deploy-gate Application of the bootstrap.
+type: application
+version: 0.1.0

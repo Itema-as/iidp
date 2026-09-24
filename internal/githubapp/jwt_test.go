@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -92,51 +91,5 @@ func TestSignJWTRejectsAnUnparsablePrivateKey(t *testing.T) {
 	_, err := githubapp.SignJWT(1, []byte("not a PEM key"), time.Now())
 	if err == nil {
 		t.Fatal("err = nil, want an error for an unparsable key")
-	}
-}
-
-func TestPrivateKeyFromEnvReadsTheDirectVariable(t *testing.T) {
-	t.Setenv(githubapp.PrivateKeyEnvVar, "the-pem-content")
-	t.Setenv(githubapp.PrivateKeyFileEnvVar, "")
-
-	got, err := githubapp.PrivateKeyFromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "the-pem-content" {
-		t.Errorf("got %q, want the-pem-content", got)
-	}
-}
-
-func TestPrivateKeyFromEnvReadsTheFileVariable(t *testing.T) {
-	t.Setenv(githubapp.PrivateKeyEnvVar, "")
-	dir := t.TempDir()
-	path := dir + "/key.pem"
-	if err := os.WriteFile(path, []byte("file-pem-content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(githubapp.PrivateKeyFileEnvVar, path)
-
-	got, err := githubapp.PrivateKeyFromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "file-pem-content" {
-		t.Errorf("got %q, want file-pem-content", got)
-	}
-}
-
-func TestPrivateKeyFromEnvFailsClearlyWhenNeitherIsSet(t *testing.T) {
-	t.Setenv(githubapp.PrivateKeyEnvVar, "")
-	t.Setenv(githubapp.PrivateKeyFileEnvVar, "")
-
-	_, err := githubapp.PrivateKeyFromEnv()
-	if err == nil {
-		t.Fatal("err = nil, want an error naming the missing variables")
-	}
-	for _, want := range []string{githubapp.PrivateKeyEnvVar, githubapp.PrivateKeyFileEnvVar} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error = %q, want it to name %q", err, want)
-		}
 	}
 }

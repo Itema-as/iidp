@@ -101,15 +101,17 @@ variable "platform_repo_bootstrap_path" {
 }
 
 # ArgoCD's credential for the Platform repository. The same org GitHub App
-# the deploy workflow uses for CI write-back (contents: write, which
-# implies the read ArgoCD needs) doubles as this credential: cloud-init
-# writes it into an ArgoCD repository Secret (docs/implementation-notes/
+# the Deploy gate commits deploys as (contents: write, which implies the
+# read ArgoCD needs) doubles as this credential: cloud-init writes it into
+# an ArgoCD repository Secret (docs/implementation-notes/
 # 41-argocd-platform-repo-credential.md) so the root Application can
 # reconcile the private Platform repository from first boot with nobody
-# touching the cluster. No default: every Platform has its own App.
+# touching the cluster, and the Deploy gate mounts the same Secret
+# (docs/implementation-notes/60-deploy-gate.md). No default: every
+# Platform has its own App.
 
 variable "platform_repo_github_app_id" {
-  description = "Id of the org GitHub App (bootstrap wizard stage \"GitHub App for CI write-back\") that authenticates ArgoCD to the Platform repository. Matches platform.yaml's githubApp.id in the Platform repository."
+  description = "Id of the org GitHub App (bootstrap wizard stage \"GitHub App for the Deploy gate and ArgoCD\") that authenticates ArgoCD and the Deploy gate to the Platform repository. Matches platform.yaml's githubApp.id in the Platform repository."
   type        = number
 
   validation {

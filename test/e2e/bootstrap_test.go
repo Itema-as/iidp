@@ -4,7 +4,10 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -31,7 +34,11 @@ import (
 // does, makes ArgoCD delete the shop-staging Application only after its
 // final Backup PreDelete hook completes a real Backup against the
 // harness's own MinIO, and leaves the namespace's Deployment and Cluster
-// gone afterwards.
+// gone afterwards. Last (testDeployGate) it proves #60: a deploy through the
+// Deploy gate, authenticated by an OIDC token from the harness's fake
+// issuer, lands in the Platform repository and brochure-prod syncs it,
+// while a call from another repository and one from a disallowed ref are
+// refused.
 //
 // Run with:
 //
@@ -85,6 +92,13 @@ func TestBootstrap(t *testing.T) {
 	if err := cluster.InstallMinIO(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// What the Deploy gate needs that kind lacks: its image built from this
+	// working tree, the App credential cloud-init writes, and a stand-in
+	// for GitHub's OIDC issuer and API (testDeployGate).
+	issuer, err := cluster.InstallDeployGateStandIns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// The Platform repository pins the bootstrap by pointing at this
 	// repository, so both are served: iidp.git holds the working tree's
@@ -135,6 +149,9 @@ func TestBootstrap(t *testing.T) {
 		// the pod itself to come up Healthy in kind; only a real sign-in
 		// would need real credentials.
 		"oauth2-proxy": Healthy,
+		// Healthy against the harness's image, App credential and fake
+		// GitHub (InstallDeployGateStandIns).
+		"deploy-gate": Healthy,
 		// Cloud-dependent: configured, applied, but nothing to talk to.
 		"platform-tls": Synced,
 		"external-dns": Synced,
@@ -147,6 +164,101 @@ func TestBootstrap(t *testing.T) {
 	testFixtureApplication(ctx, t, cluster)
 	testUnreleasedEnvironments(ctx, t, cluster)
 	testDeleteEnvironment(ctx, t, cluster)
+	// Last, once shop-staging's CPU requests are gone: brochure-prod's
+	// first image adds a workload to the node.
+	testDeployGate(ctx, t, cluster, issuer)
+}
+
+// brochureRepositoryID is the repository id the fixture binds brochure to
+// (applications/brochure/repository.yaml).
+const brochureRepositoryID = 700000001
+
+// testDeployGate proves #60 end to end: the Deploy gate the bootstrap
+// installed, reached through Traefik at deploy.<baseDomain> with a token
+// from the harness's fake issuer, refuses a call from another repository
+// of the org and a call from a ref that may not deploy, then deploys
+// brochure's first image from main. The commit lands in the Platform
+// repository authored by the token's actor and committed by the App, and
+// brochure-prod syncs it: the Environment that rendered nothing
+// (testUnreleasedEnvironments) now answers HTTP 200.
+func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer *FakeIssuer) {
+	t.Helper()
+	if err := cluster.WaitForDeployGate(ctx, 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	call := func(claims map[string]any, tag string) (int, string) {
+		t.Helper()
+		token, err := issuer.Sign(claims)
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, body, err := cluster.CallDeployGate(ctx, token, "brochure", "auto", tag)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("Deploy gate: HTTP %d %v", status, body)
+		if msg, ok := body["error"].(string); ok {
+			return status, msg
+		}
+		return status, fmt.Sprint(body["environment"])
+	}
+
+	// Another repository of the org, calling for brochure.
+	status, msg := call(issuer.Claims("Itema-as/impostor", 700000099, "refs/heads/main"), "1.27-alpine")
+	if status != http.StatusForbidden || !strings.Contains(msg, "repository id 700000099") {
+		t.Errorf("a call from another repository: HTTP %d %q, want 403 naming its repository id", status, msg)
+	}
+	// brochure's own repository, from a branch other than main.
+	status, msg = call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/feature"), "1.27-alpine")
+	if status != http.StatusForbidden || !strings.Contains(msg, "refs/heads/feature") {
+		t.Errorf("a call from refs/heads/feature: HTTP %d %q, want 403 naming the ref", status, msg)
+	}
+
+	// The deploy. brochure has no staging, so main deploys to prod.
+	status, env := call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/main"), "1.27-alpine")
+	if status != http.StatusOK || env != "prod" {
+		t.Fatalf("the deploy from main: HTTP %d %q, want 200 and prod", status, env)
+	}
+
+	// Refused calls committed nothing; the deploy committed one change.
+	err := cluster.ReadRepository(ctx, "iidp-platform", func(dir string) error {
+		git := func(args ...string) string {
+			out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+			if err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+			return strings.TrimSpace(string(out))
+		}
+		if got := git("log", "-1", "--format=%s"); got != "Deploy brochure prod 1.27-alpine" {
+			t.Errorf("the Platform repository's head is %q, want the deploy", got)
+		}
+		if got := git("log", "-1", "--format=%an <%ae>"); got != "e2e-developer <1000001+e2e-developer@users.noreply.github.com>" {
+			t.Errorf("the deploy's author is %q, want the token's actor", got)
+		}
+		if got := git("log", "-1", "--format=%cn <%ce>"); got != FakeBotIdentity {
+			t.Errorf("the deploy's committer is %q, want the App's bot %q", got, FakeBotIdentity)
+		}
+		if got := git("show", "--stat", "--format=", "HEAD"); !strings.Contains(got, "applications/brochure/prod/values.yaml") || !strings.Contains(got, "1 file changed") {
+			t.Errorf("the deploy changed:\n%s\nwant only brochure's prod values.yaml", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// brochure-prod syncs the new image. A refresh saves waiting out
+	// ArgoCD's three-minute poll; this is a plain sync, not the deletion
+	// testDeleteEnvironment must not hurry.
+	if err := cluster.RefreshApplication(ctx, "brochure-prod"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.CheckHTTP200(ctx, "brochure.app.example.test", 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.WaitForApplications(ctx, map[string]Expectation{"brochure-prod": Healthy}, 3*time.Minute); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // testUnreleasedEnvironments proves #47's item 13: an Environment the deploy

@@ -29,14 +29,13 @@ has one, prod otherwise). On a `v*` tag it retags the already-built SHA
 image with the tag's version, with no rebuild, and runs `iidp ci set-image`
 for prod.
 
-The write-back authenticates as the org's GitHub App without ever reading
-the (private) Platform repository first: the `IIDP_DEPLOY_APP_PRIVATE_KEY`
-org Actions secret and the `IIDP_DEPLOY_APP_ID` org Actions variable the
-Platform admin's bootstrap wizard creates, plus an installation id
-discovered from GitHub itself. Both the secret and the variable have org
-visibility; every Application repository is in the org.
+`iidp ci set-image` asks the Platform's Deploy gate to make that change.
+It authenticates with the workflow's GitHub Actions OIDC token (the
+workflow has `permissions: id-token: write`), so this repository stores
+no secret: the gate checks that the token comes from this repository, and
+from `main` or a `v*` tag, before it commits anything. The gate's address,
+`IIDP_DEPLOY_GATE_URL`, was written into the workflow by `iidp app create`.
 
-The image GHCR receives on the first push is private by default: make the
-package public before the first deploy (its GitHub page, Package settings
-→ Danger Zone → Change visibility), or give the Environment's namespace
-pull credentials for it instead.
+Images stay private in GHCR: the workflow pushes them with its own
+`GITHUB_TOKEN`, and the Platform pulls them with its own read-only
+credential.

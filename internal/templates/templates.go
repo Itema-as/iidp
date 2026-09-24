@@ -80,6 +80,12 @@ type Data struct {
 	// rendered the template (internal/version), or "latest" for a dev
 	// build ("dev").
 	IidpVersion string
+	// DeployGateURL is the Platform's Deploy gate,
+	// https://deploy.<baseDomain> (platformrepo.Config.DeployGateURL): the
+	// deploy workflow calls it, and asks for OIDC tokens with it as the
+	// audience. Rendered in because CI cannot read the private Platform
+	// repository to find it (docs/implementation-notes/60-deploy-gate.md).
+	DeployGateURL string
 }
 
 // Render writes framework's template into dir (which must already exist),
@@ -203,6 +209,7 @@ func renderWorkflow(content []byte, data Data) []byte {
 		"__IIDP_OWNER__", data.Owner,
 		"__IIDP_VERSION__", data.IidpVersion,
 		"__IIDP_CLI_REPO__", platform.CLIRepository,
+		"__IIDP_DEPLOY_GATE_URL__", data.DeployGateURL,
 	)
 	return []byte(r.Replace(string(content)))
 }

@@ -1,0 +1,106 @@
+# The Deploy gate (cmd/iidp-deploy-gate). It runs in the namespace of the
+# Secret it reads, ArgoCD's credential for the Platform repository, and
+# mounts that Secret as a volume: a pod can only mount a Secret of its own
+# namespace, and a volume needs no Kubernetes API access, so the pod runs
+# without a service account token and no Role grants anything
+# (docs/implementation-notes/60-deploy-gate.md). The files are read on every
+# call, so a rotated key is picked up without a restart.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iidp-deploy-gate
+  labels:
+    {{- include "deploy-gate.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: iidp-deploy-gate
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # The new pod is ready before the old one stops taking calls.
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "deploy-gate.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      # A deploy in flight (a clone and a push) finishes before the pod
+      # stops; the gate waits up to two minutes for it on SIGTERM.
+      terminationGracePeriodSeconds: 150
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: deploy-gate
+          image: {{ printf "%s:%s" .Values.image.repository (include "deploy-gate.tag" .) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: IIDP_GATE_AUDIENCE
+              value: {{ include "deploy-gate.url" . | quote }}
+            - name: IIDP_GATE_ORG_ID
+              value: {{ .Values.githubOrgId | int64 | toString | quote }}
+            - name: IIDP_GATE_APP_DIR
+              value: /var/run/iidp-deploy-gate/app
+            - name: IIDP_GATE_OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            {{- with .Values.oidc.jwksURL }}
+            - name: IIDP_GATE_OIDC_JWKS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: IIDP_GATE_PLATFORM_REPO
+              value: {{ .Values.platformRepository | quote }}
+            {{- with .Values.githubAPI }}
+            - name: IIDP_GATE_GITHUB_API
+              value: {{ . | quote }}
+            {{- end }}
+            - name: HOME
+              value: /tmp
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: app
+              mountPath: /var/run/iidp-deploy-gate/app
+              readOnly: true
+            # git's clones of the Platform repository.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: app
+          secret:
+            secretName: {{ .Values.appSecret }}
+            defaultMode: 0440
+            items:
+              - key: githubAppID
+                path: githubAppID
+              - key: githubAppInstallationID
+                path: githubAppInstallationID
+              - key: githubAppPrivateKey
+                path: githubAppPrivateKey
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

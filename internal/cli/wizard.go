@@ -34,7 +34,7 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) erro
 	// 1. Application name.
 	if !f.Changed("name") {
 		name, err := p.Text("Application name", "", func(s string) error {
-			return platformrepo.ValidateName(s)
+			return platformrepo.ValidateNewName(s)
 		})
 		if err != nil {
 			return err

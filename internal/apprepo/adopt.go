@@ -181,6 +181,9 @@ type AdoptRequest struct {
 	// that already has the workflow needs no scope. The zero value
 	// (unknown) never refuses.
 	Scopes github.TokenScopes
+	// DeployGateURL is the Platform's Deploy gate, rendered into the
+	// deploy workflow when Adopt adds one (templates.Data.DeployGateURL).
+	DeployGateURL string
 }
 
 // AdoptResult is what Adopt wrote and opened.
@@ -264,7 +267,7 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 	}
 
 	iidpVersion := templateIidpVersion()
-	data := templates.Data{Name: req.AppName, Owner: strings.ToLower(req.Owner), IidpVersion: iidpVersion}
+	data := templates.Data{Name: req.AppName, Owner: strings.ToLower(req.Owner), IidpVersion: iidpVersion, DeployGateURL: req.DeployGateURL}
 
 	if !det.HasDockerfile {
 		if _, err := templates.RenderDockerfile(det.Framework, data, dir); err != nil {

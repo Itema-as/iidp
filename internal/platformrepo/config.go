@@ -60,24 +60,19 @@ type Config struct {
 	// platform.objectStorageEndpoint. Required for --postgres; not required
 	// otherwise.
 	ObjectStorageEndpoint string `yaml:"objectStorageEndpoint"`
-	// GitHubApp documents the org GitHub App iidp ci set-image authenticates
-	// as: the bootstrap wizard records it here after creating and installing
-	// the App, for a human reading platform.yaml to see which App and
-	// installation is in play. iidp ci set-image does not read this field to
-	// authenticate (see PeekGitHubAppInstallationID) and never requires it.
+	// GitHubApp documents the org GitHub App the Deploy gate and ArgoCD
+	// authenticate as: the bootstrap wizard records it here after creating
+	// and installing the App, for a human reading platform.yaml to see
+	// which App and installation is in play. Nothing reads it to
+	// authenticate: the gate takes the App from the cluster Secret
+	// cloud-init writes (docs/implementation-notes/60-deploy-gate.md).
 	GitHubApp GitHubApp `yaml:"githubApp"`
 }
 
 // GitHubApp documents the org GitHub App id and installation id the
 // bootstrap wizard records after creating and installing the deploy App
-// (docs/implementation-notes/05-bootstrap-wizard.md). Neither field is
-// read to authenticate iidp ci set-image: the app id comes from the
-// IIDP_DEPLOY_APP_ID environment variable and the installation id is
-// discovered from GitHub (GET /app/installations), precisely so minting a
-// credential never depends on already having one to read the Platform
-// repository with (docs/implementation-notes/12-deploy-workflow.md). The
-// private key is never written here either: it comes from the environment
-// (internal/githubapp.PrivateKeyFromEnv).
+// (docs/implementation-notes/05-bootstrap-wizard.md). The private key is
+// never written here.
 type GitHubApp struct {
 	ID             int64 `yaml:"id"`
 	InstallationID int64 `yaml:"installationId"`
@@ -108,29 +103,19 @@ func LoadConfig(dir string) (Config, error) {
 	return cfg, nil
 }
 
-// PeekGitHubAppInstallationID does a best-effort, tolerant read of
-// platform.yaml's githubApp.installationId in an already-cloned Platform
-// repository at dir, for documentation and logging only: unlike
-// LoadConfig, a missing file, invalid YAML, or a zero/absent id simply
-// reports ok=false rather than erroring. iidp ci set-image's own operation
-// never depends on this value; it is surfaced only so an operator sees
-// that platform.yaml's documented installation id (if the wizard recorded
-// one) agrees with reality.
-func PeekGitHubAppInstallationID(dir string) (id int64, ok bool) {
-	data, err := os.ReadFile(filepath.Join(dir, ConfigFile))
-	if err != nil {
-		return 0, false
-	}
-	var cfg struct {
-		GitHubApp GitHubApp `yaml:"githubApp"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return 0, false
-	}
-	if cfg.GitHubApp.InstallationID == 0 {
-		return 0, false
-	}
-	return cfg.GitHubApp.InstallationID, true
+// DeployGateHostLabel is the label under baseDomain the Deploy gate is
+// served at: https://deploy.<baseDomain>, under the Platform's wildcard
+// certificate. The bootstrap chart builds the gate's Ingress host the same
+// way (bootstrap/templates/deploy-gate.yaml).
+const DeployGateHostLabel = "deploy"
+
+// DeployGateURL is the Deploy gate's address on the Platform with this
+// base domain: where the deploy workflow calls it, and the audience its
+// GitHub Actions OIDC token is requested for. iidp app create renders it
+// into the workflow, because the workflow cannot read the private Platform
+// repository to find it (docs/implementation-notes/60-deploy-gate.md).
+func (c Config) DeployGateURL() string {
+	return "https://" + DeployGateHostLabel + "." + c.BaseDomain
 }
 
 // Chart splits ChartRepository into the registry path ArgoCD wants as

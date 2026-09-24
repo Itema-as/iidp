@@ -1,13 +1,18 @@
 # Deploy workflow for __IIDP_APP_NAME__, added by `iidp app create`.
 #
 # On push to main: builds the image with buildx and pushes it to GHCR
-# tagged with the commit SHA, then runs `iidp ci set-image` to write that
-# tag into the Platform repository: staging when this Application has one,
-# prod otherwise. iidp decides that from the Platform repository, not this
-# workflow.
+# tagged with the commit SHA, then runs `iidp ci set-image` to deploy it:
+# to staging when this Application has one, to prod otherwise. The
+# Platform decides that, not this workflow.
 #
 # On a v* tag: retags the already-built SHA image with the tag's version,
-# with no rebuild, and runs `iidp ci set-image` for prod.
+# with no rebuild, and runs `iidp ci set-image` to promote it to prod.
+#
+# `iidp ci set-image` asks the Platform's Deploy gate to make the change.
+# It authenticates with this workflow's GitHub Actions OIDC token (hence
+# id-token: write below), so no secret is stored in this repository; the
+# gate checks that the token comes from this repository and from main or a
+# v* tag. Images go to GHCR with the workflow's own GITHUB_TOKEN.
 #
 # `iidp app create` rewrites this file whenever it regenerates the
 # template; a hand edit here has no effect on iidp itself. The same file
@@ -24,6 +29,10 @@ on:
 
 env:
   IMAGE: ghcr.io/__IIDP_OWNER__/__IIDP_APP_NAME__
+  # The Platform's Deploy gate, https://deploy.<baseDomain>, written here by
+  # iidp app create from the Platform's base domain. It is also the audience
+  # of the OIDC token iidp ci set-image requests.
+  IIDP_DEPLOY_GATE_URL: __IIDP_DEPLOY_GATE_URL__
 
 jobs:
   build:
@@ -33,6 +42,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -71,10 +81,7 @@ jobs:
           sudo install -m 0755 "${dir}/iidp" /usr/local/bin/iidp
           iidp version
 
-      - name: Write the image tag to the Platform repository
-        env:
-          IIDP_DEPLOY_APP_PRIVATE_KEY: ${{ secrets.IIDP_DEPLOY_APP_PRIVATE_KEY }}
-          IIDP_DEPLOY_APP_ID: ${{ vars.IIDP_DEPLOY_APP_ID }}
+      - name: Deploy through the Deploy gate
         run: iidp ci set-image __IIDP_APP_NAME__ auto ${{ github.sha }}
 
   promote:
@@ -84,6 +91,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -120,10 +128,7 @@ jobs:
           sudo install -m 0755 "${dir}/iidp" /usr/local/bin/iidp
           iidp version
 
-      - name: Write the version to the Platform repository
-        env:
-          IIDP_DEPLOY_APP_PRIVATE_KEY: ${{ secrets.IIDP_DEPLOY_APP_PRIVATE_KEY }}
-          IIDP_DEPLOY_APP_ID: ${{ vars.IIDP_DEPLOY_APP_ID }}
+      - name: Promote through the Deploy gate
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"

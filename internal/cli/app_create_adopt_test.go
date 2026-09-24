@@ -114,6 +114,9 @@ func TestAppAdoptWithoutDockerfileDetectsNextJSAndGeneratesIt(t *testing.T) {
 	if !strings.Contains(string(workflow), "ghcr.io/"+strings.ToLower(platform.Org)+"/shop") {
 		t.Errorf("deploy.yaml lacks the expected image reference:\n%s", workflow)
 	}
+	if !strings.Contains(string(workflow), "IIDP_DEPLOY_GATE_URL: https://deploy.app.itma.no\n") {
+		t.Errorf("deploy.yaml does not name the Platform's Deploy gate:\n%s", workflow)
+	}
 
 	prs := gh.pullRequestsTo(platform.Org, "shop")
 	if len(prs) != 1 {

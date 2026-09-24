@@ -76,6 +76,27 @@ func ValidateName(name string) error {
 	return nil
 }
 
+// ReservedNames are the labels under baseDomain the Platform serves itself:
+// the Deploy gate at deploy.<baseDomain> and the Itema login's oauth2-proxy
+// at auth.<baseDomain>. An Application of one of these names would have the
+// same address, and one serving deploy.<baseDomain> could receive the OIDC
+// tokens other Applications' workflows mint for the gate.
+var ReservedNames = []string{DeployGateHostLabel, "auth"}
+
+// ValidateNewName is ValidateName for an Application about to be created:
+// it also refuses the ReservedNames.
+func ValidateNewName(name string) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	for _, reserved := range ReservedNames {
+		if name == reserved {
+			return fmt.Errorf("%w: %q is reserved: %s.<baseDomain> is the Platform's own address", ErrInvalidName, name, name)
+		}
+	}
+	return nil
+}
+
 // EnvironmentDir is the directory of one Environment of an Application,
 // relative to the Platform repository root.
 func EnvironmentDir(application, environment string) string {
@@ -127,16 +148,6 @@ type Result struct {
 	// Domains reports how each requested custom domain will be served, in
 	// the order given.
 	Domains []DomainPlan
-	// Environment is set by SetImageTag to the Environment actually
-	// written: the literal prod or staging it was given, or, given auto,
-	// whichever of the two it resolved to.
-	Environment string
-	// DocumentedGitHubAppInstallationID is set by SetImageTag to
-	// platform.yaml's githubApp.installationId when present, purely for
-	// logging: it plays no part in authenticating the command that
-	// produced this Result (docs/implementation-notes/12-deploy-workflow.md).
-	// Zero means platform.yaml documented none.
-	DocumentedGitHubAppInstallationID int64
 	// Login is whether the Itema login Capability is enabled.
 	Login bool
 }
@@ -216,16 +227,22 @@ func runWithRetry[T any](ctx context.Context, attempt func(ctx context.Context, 
 // checks again on its own clone, so a race is still caught. A directory
 // left over from a previous iidp app delete (no live application.yaml
 // anywhere under it) is not treated as taken -- see checkApplicationAbsent.
-func (w *Writer) CheckAvailable(ctx context.Context, name string) error {
+// It returns platform.yaml from the same clone: Create and Adopt render
+// the Deploy gate's URL into the deploy workflow from its base domain.
+func (w *Writer) CheckAvailable(ctx context.Context, name string) (Config, error) {
 	dir, err := os.MkdirTemp("", "iidp-platform-check-")
 	if err != nil {
-		return err
+		return Config{}, err
 	}
 	defer os.RemoveAll(dir)
 	if _, err := git.Clone(ctx, w.URL, Branch, dir, w.Auth); err != nil {
-		return fmt.Errorf("cloning %s: %w", platform.Repository, err)
+		return Config{}, fmt.Errorf("cloning %s: %w", platform.Repository, err)
 	}
-	return checkApplicationAbsent(dir, name, false)
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		return Config{}, err
+	}
+	return cfg, checkApplicationAbsent(dir, name, false)
 }
 
 // checkApplicationAbsent errors if name already has a live Environment --

@@ -293,15 +293,17 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		fmt.Fprintf(out, "  Owner:     %s\n", platform.Org)
 		fmt.Fprintf(out, "  Private:   %t\n", plan.private)
 
-		if err := platformWriter.CheckAvailable(cmd.Context(), plan.name); err != nil {
+		cfg, err := platformWriter.CheckAvailable(cmd.Context(), plan.name)
+		if err != nil {
 			return err
 		}
 
 		creator := &apprepo.Creator{Client: ghClient, Auth: auth}
 		appRepo, err = creator.Create(cmd.Context(), apprepo.Application{
-			Name:      plan.name,
-			Framework: plan.framework,
-			Private:   plan.private,
+			Name:          plan.name,
+			Framework:     plan.framework,
+			Private:       plan.private,
+			DeployGateURL: cfg.DeployGateURL(),
 		})
 		if err != nil {
 			if appRepo.URL != "" {
@@ -321,6 +323,15 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	if plan.path == pathAdopt {
 		fmt.Fprintf(out, "Adopting %s/%s onto the Platform:\n", plan.repoOwner, plan.repoName)
 
+		// The name is checked before the pull request is opened, not only
+		// when the Platform repository is written after it, and the same
+		// clone gives the base domain the Deploy gate's URL is rendered
+		// from.
+		cfg, err := platformWriter.CheckAvailable(cmd.Context(), plan.name)
+		if err != nil {
+			return err
+		}
+
 		// Postgres-vs-Kind is validated inside Adopter.Adopt itself, right
 		// after Kind is resolved and before anything is written, committed
 		// or pushed: unlike the interactive summary's preview (which can
@@ -329,12 +340,13 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		// cloned, and a refusal must never come after the pull request
 		// already exists (docs/implementation-notes/15-cli-adopt-path.md).
 		adoptResult, err = adopter.Adopt(cmd.Context(), apprepo.AdoptRequest{
-			Owner:    plan.repoOwner,
-			Name:     plan.repoName,
-			AppName:  plan.name,
-			Kind:     kind,
-			Postgres: plan.postgres,
-			Scopes:   scopes,
+			Owner:         plan.repoOwner,
+			Name:          plan.repoName,
+			AppName:       plan.name,
+			Kind:          kind,
+			DeployGateURL: cfg.DeployGateURL(),
+			Postgres:      plan.postgres,
+			Scopes:        scopes,
 		})
 		if err != nil {
 			return err
@@ -578,7 +590,7 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 			name = repoName
 		}
 	}
-	if err := platformrepo.ValidateName(name); err != nil {
+	if err := platformrepo.ValidateNewName(name); err != nil {
 		return createPlan{}, err
 	}
 

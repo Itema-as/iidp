@@ -908,6 +908,11 @@ func TestAppCreatePathAddsTheDeployWorkflow(t *testing.T) {
 	if !strings.Contains(content, "iidp ci set-image shop prod") {
 		t.Errorf("deploy.yaml lacks the tag-promotion set-image invocation:\n%s", content)
 	}
+	// The workflow cannot read the private Platform repository, so the
+	// Deploy gate's URL is rendered in from platform.yaml's baseDomain.
+	if !strings.Contains(content, "IIDP_DEPLOY_GATE_URL: https://deploy.app.itma.no\n") {
+		t.Errorf("deploy.yaml does not name the Platform's Deploy gate:\n%s", content)
+	}
 	if !strings.Contains(stdout, "pinned to iidp latest") {
 		t.Errorf("stdout lacks the dev-build iidp version note:\n%s", stdout)
 	}

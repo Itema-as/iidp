@@ -154,9 +154,10 @@ write_files:
 
       # ArgoCD's credential for the Platform repository, so the root
       # Application below can reconcile it from first boot with nobody
-      # touching the cluster (issue #41). Same App as the deploy workflow's
-      # CI write-back (contents: write, which already implies the read
-      # ArgoCD needs); the declarative shape is the one the ArgoCD
+      # touching the cluster (issue #41). Same App the Deploy gate commits
+      # deploys as (contents: write, which already implies the read ArgoCD
+      # needs), and the gate mounts this very Secret, so keep its name and
+      # keys (docs/implementation-notes/60-deploy-gate.md); the declarative shape is the one the ArgoCD
       # documentation gives for GitHub App repository credentials: a Secret
       # labelled argocd.argoproj.io/secret-type: repository. Re-running
       # this script re-applies it, so a rotated key or a changed

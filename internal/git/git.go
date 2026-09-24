@@ -21,18 +21,26 @@ var ErrPushRejected = errors.New("the remote branch moved since the clone")
 
 // Auth is the credential git presents to an HTTPS remote. An empty token
 // means no credential, which is what a file:// or ssh remote needs.
-// Identity, when set, is who the commits are made as; empty leaves that to
-// the developer's own git configuration.
+// Identity, when set, is who the commits are made as, author and committer
+// both; empty leaves that to the developer's own git configuration.
+// Committer, when set, overrides the committer alone, so a commit can be
+// authored by one account and committed by another: the Deploy gate
+// commits a deploy authored by the GitHub user who asked for it and
+// committed by the GitHub App that wrote it
+// (docs/implementation-notes/60-deploy-gate.md).
 type Auth struct {
-	Token    string
-	Identity Identity
+	Token     string
+	Identity  Identity
+	Committer Identity
 }
 
-// Identity is a commit's author and committer.
+// Identity is a name and an email a commit is attributed to.
 type Identity struct {
 	Name  string
 	Email string
 }
+
+func (id Identity) set() bool { return id.Name != "" && id.Email != "" }
 
 // Repository is a working copy of a remote branch.
 type Repository struct {
@@ -105,6 +113,15 @@ func (r *Repository) Remove(ctx context.Context, paths ...string) error {
 	return nil
 }
 
+// Head is the commit id HEAD points at.
+func (r *Repository) Head(ctx context.Context) (string, error) {
+	out, err := r.run(ctx, r.Dir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("rev-parse HEAD: %w", err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // Push pushes HEAD to branch on origin. A push refused because the branch
 // moved returns an error wrapping ErrPushRejected; every other refusal
 // (permissions, network) is returned as is.
@@ -129,11 +146,14 @@ func (r *Repository) run(ctx context.Context, dir string, args ...string) (strin
 	if r.auth.Token != "" {
 		cmd.Env = append(cmd.Env, "IIDP_GIT_TOKEN="+r.auth.Token)
 	}
-	if id := r.auth.Identity; id.Name != "" && id.Email != "" {
-		// Later entries win over any identity already in the environment.
+	// Later entries win over any identity already in the environment.
+	if id := r.auth.Identity; id.set() {
 		cmd.Env = append(cmd.Env,
 			"GIT_AUTHOR_NAME="+id.Name, "GIT_AUTHOR_EMAIL="+id.Email,
 			"GIT_COMMITTER_NAME="+id.Name, "GIT_COMMITTER_EMAIL="+id.Email)
+	}
+	if id := r.auth.Committer; id.set() {
+		cmd.Env = append(cmd.Env, "GIT_COMMITTER_NAME="+id.Name, "GIT_COMMITTER_EMAIL="+id.Email)
 	}
 	var out bytes.Buffer
 	cmd.Stdout = &out

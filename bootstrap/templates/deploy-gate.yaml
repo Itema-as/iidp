@@ -1,0 +1,40 @@
+# The Deploy gate: the one way an Application repository's CI deploys and
+# promotes (docs/adr/0005-private-application-repositories-on-github-free.md).
+# Rendered from bootstrap/components/deploy-gate in this repository at the
+# same revision as this chart, served at https://deploy.<baseDomain>. It
+# runs in the argocd namespace because that is where the iidp-deploy App's
+# key already is: the Secret platform-repo-github-app cloud-init writes for
+# ArgoCD, which the gate mounts
+# (docs/implementation-notes/60-deploy-gate.md).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: deploy-gate
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.bootstrap.repoURL }}
+    targetRevision: {{ .Values.bootstrap.targetRevision | quote }}
+    path: bootstrap/components/deploy-gate
+    helm:
+      releaseName: deploy-gate
+      valuesObject:
+        baseDomain: {{ .Values.baseDomain }}
+        bootstrapRevision: {{ .Values.bootstrap.targetRevision | quote }}
+        githubOrgId: {{ .Values.deployGate.githubOrgId | int64 }}
+        image:
+          repository: {{ .Values.deployGate.image.repository }}
+          tag: {{ .Values.deployGate.image.tag | quote }}
+          pullPolicy: {{ .Values.deployGate.image.pullPolicy }}
+        oidc:
+          issuer: {{ .Values.deployGate.oidc.issuer | quote }}
+          jwksURL: {{ .Values.deployGate.oidc.jwksURL | quote }}
+        githubAPI: {{ .Values.deployGate.githubAPI | quote }}
+        platformRepository: {{ .Values.deployGate.platformRepository | quote }}
+        appSecret: {{ .Values.deployGate.appSecret }}
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: argocd
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list) | nindent 4 }}
