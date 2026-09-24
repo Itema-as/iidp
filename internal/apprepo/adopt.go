@@ -13,7 +13,6 @@ import (
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/github"
 	"github.com/Itema-as/iidp/internal/migrate"
-	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/templates"
 )
@@ -132,6 +131,9 @@ func (a *Adopter) Preview(ctx context.Context, owner, name string) (AdoptPreview
 	if err != nil {
 		return AdoptPreview{}, err
 	}
+	if _, err := BindingForRepository(owner+"/"+name, repo); err != nil {
+		return AdoptPreview{}, err
+	}
 	branchExists, err := a.Client.BranchExists(ctx, owner, name, AdoptBranch)
 	if err != nil {
 		return AdoptPreview{}, err
@@ -192,10 +194,14 @@ type AdoptResult struct {
 	Files []string
 	Kind  string
 	Detection
+	// Binding is the adopted repository's ids, as GitHub reported them,
+	// for the Platform repository to bind the Application to.
+	Binding platformrepo.RepositoryBinding
 }
 
-// Adopt reads req.Owner/req.Name through the GitHub API, refuses without
-// push access or with AdoptBranch already present, clones the default
+// Adopt reads req.Owner/req.Name through the GitHub API, refuses it when
+// GitHub reports an owner other than the org, without push access or with
+// AdoptBranch already present, clones the default
 // branch, detects what is missing (refusing a token without the workflow
 // scope when that includes the deploy workflow), writes only that (a Dockerfile and
 // .dockerignore when none exists, the deploy workflow unless one already
@@ -204,6 +210,13 @@ type AdoptResult struct {
 // against the default branch.
 func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, error) {
 	repo, err := a.Client.GetRepository(ctx, req.Owner, req.Name)
+	if err != nil {
+		return AdoptResult{}, err
+	}
+	// The CLI already refused a --repo outside the org as typed; this
+	// checks the owner GitHub reports, which differs when the name
+	// redirects to a repository that has since been transferred away.
+	binding, err := BindingForRepository(req.Owner+"/"+req.Name, repo)
 	if err != nil {
 		return AdoptResult{}, err
 	}
@@ -299,6 +312,7 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 		Files:          files,
 		Kind:           kind,
 		Detection:      det,
+		Binding:        binding,
 	}, nil
 }
 
@@ -403,9 +417,6 @@ func pullRequestBody(req AdoptRequest, files []string, det Detection) string {
 	}
 	if det.MigrationOK {
 		fmt.Fprintf(&b, "\nDetected %s in the repository; if the Postgres Capability is enabled, its migration command is set to `%s`.\n", det.Migration.Tool, det.Migration.Command)
-	}
-	if !strings.EqualFold(req.Owner, platform.Org) {
-		fmt.Fprintf(&b, "\n%s is not the %s org, so the deploy workflow's write-back step needs credentials that only reach org repositories automatically. Once this is merged, add them by hand in this repository's settings: secret `IIDP_DEPLOY_APP_PRIVATE_KEY` (the org GitHub App's private key) and variable `IIDP_DEPLOY_APP_ID` (the org GitHub App's id).\n", req.Owner, platform.Org)
 	}
 	return b.String()
 }

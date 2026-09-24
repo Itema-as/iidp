@@ -45,6 +45,7 @@ func newAppCommand(deps Dependencies) *cobra.Command {
 	app.AddCommand(newAppCreateCommand(deps))
 	app.AddCommand(newAppAddCapabilityCommand(deps))
 	app.AddCommand(newAppDeleteCommand(deps))
+	app.AddCommand(newAppBindCommand(deps))
 	return app
 }
 
@@ -54,7 +55,6 @@ type createOptions struct {
 	name             string
 	kind             string
 	framework        string
-	owner            string
 	private          bool
 	public           bool
 	size             string
@@ -83,13 +83,15 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 		Use:   "create",
 		Short: "Create an Application on the Platform",
 		Long: "Create an Application on the Platform.\n\n" +
-			"With --path create, it also creates the Application repository: under\n" +
-			"the org by default or, with --owner user, under the developer's personal\n" +
-			"account, generated from a built-in framework template (or a commented\n" +
-			"Dockerfile stub for --framework other), and pushes the first commit.\n" +
-			"With --path adopt --repo <owner>/<name>, it instead opens a pull request\n" +
-			"on that existing repository, adding only a Dockerfile (when it has none,\n" +
-			"generated from its detected framework) and the deploy workflow.\n" +
+			"With --path create, it also creates the Application repository in\n" +
+			platform.Org + ", generated from a built-in framework template (or a\n" +
+			"commented Dockerfile stub for --framework other), and pushes the first\n" +
+			"commit. With --path adopt --repo " + platform.Org + "/<name>, it instead opens a\n" +
+			"pull request on that existing repository, adding only a Dockerfile (when\n" +
+			"it has none, generated from its detected framework) and the deploy\n" +
+			"workflow. Only repositories in " + platform.Org + " can be Applications: transfer\n" +
+			"one there before adopting it. Both paths bind the Application to its\n" +
+			"repository by GitHub's numeric ids, so a rename keeps it deployable.\n" +
 			"Without --path, it writes only the prod Environment to the Platform\n" +
 			"repository (" + platform.Repository + "): an ArgoCD Application pinned\n" +
 			"to the chart version in platform.yaml and the values file that defines\n" +
@@ -111,9 +113,8 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f.StringVar(&opts.name, "name", "", "Application name: lowercase letters, digits and dashes, starting with a letter, at most 40 characters, unique on the Platform (defaults to the repository name with --path adopt)")
 	f.StringVar(&opts.kind, "kind", "", "Kind of Application: web-service or static-site (derived from --framework with --path create, unless --framework other; required with --path adopt when the repository already has a Dockerfile or no known framework is detected)")
 	f.StringVar(&opts.path, "path", "", "How the Application repository comes to be: create (generate one) or adopt (open a pull request on an existing one). Omit to write only the Platform repository, as before this flag existed")
-	f.StringVar(&opts.repo, "repo", "", "Existing Application repository to adopt: owner/name or a URL (--path adopt only)")
+	f.StringVar(&opts.repo, "repo", "", "Existing Application repository to adopt, in "+platform.Org+": "+platform.Org+"/name or a URL (--path adopt only)")
 	f.StringVar(&opts.framework, "framework", "", "Framework to generate the Application repository from (--path create only): nextjs, vite-react or other")
-	f.StringVar(&opts.owner, "owner", "org", "Where to create the Application repository (--path create only): org (the compiled-in "+platform.Org+") or user (your personal GitHub account)")
 	f.BoolVar(&opts.private, "private", true, "Create the Application repository as private (--path create only; default)")
 	f.BoolVar(&opts.public, "public", false, "Create the Application repository as public instead of private (--path create only)")
 	f.StringVar(&opts.size, "size", "small", "Size: small, medium or large")
@@ -208,29 +209,12 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		}
 	}
 
-	ownerLogin := platform.Org
-	ownerIsOrg := true
-	switch plan.path {
-	case pathCreate:
-		if plan.ownerMode == "user" {
-			login, err := ghClient.CurrentUser(cmd.Context())
-			if err != nil {
-				return err
-			}
-			ownerLogin, ownerIsOrg = login, false
-		}
-	case pathAdopt:
-		// The Application repository's own owner, not a choice: Adopt
-		// reads an existing repository rather than creating one under the
-		// org or the developer's account
-		// (docs/implementation-notes/15-cli-adopt-path.md).
-		ownerLogin = plan.repoOwner
-		ownerIsOrg = strings.EqualFold(plan.repoOwner, platform.Org)
-	}
-
+	// Every Application repository is in the org, whichever path made the
+	// Application (docs/adr/0005-private-application-repositories-on-github-free.md),
+	// so its image is always in the org's GHCR namespace.
 	image := plan.imageOverride
 	if image == "" {
-		image = "ghcr.io/" + strings.ToLower(ownerLogin) + "/" + plan.name
+		image = platform.Registry + "/" + plan.name
 	}
 	// kind and migrationCommand are already final for Create and the
 	// legacy bare path (plan.kind is resolved, and detectMigrationCommand
@@ -291,7 +275,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		if err != nil {
 			return err
 		}
-		printSummary(out, plan, ownerLogin, app, preview, adoptFiles)
+		printSummary(out, plan, app, preview, adoptFiles)
 		proceed, err := p.YesNo("Proceed?", true)
 		if err != nil {
 			return err
@@ -306,7 +290,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	if plan.path == pathCreate {
 		fmt.Fprintf(out, "Creating Application %s on the Platform (Create path):\n", plan.name)
 		fmt.Fprintf(out, "  Framework: %s\n", plan.framework)
-		fmt.Fprintf(out, "  Owner:     %s (%s)\n", ownerLogin, plan.ownerMode)
+		fmt.Fprintf(out, "  Owner:     %s\n", platform.Org)
 		fmt.Fprintf(out, "  Private:   %t\n", plan.private)
 
 		if err := platformWriter.CheckAvailable(cmd.Context(), plan.name); err != nil {
@@ -317,13 +301,12 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		appRepo, err = creator.Create(cmd.Context(), apprepo.Application{
 			Name:      plan.name,
 			Framework: plan.framework,
-			Owner:     apprepo.Owner{Login: ownerLogin, Org: ownerIsOrg},
 			Private:   plan.private,
 		})
 		if err != nil {
 			if appRepo.URL != "" {
 				fmt.Fprintf(out, "\nCreated the Application repository %s, but: %v\n", appRepo.URL, err)
-				fmt.Fprintf(out, "Nothing was written to %s. Running this command again with the same --name will refuse: %s already exists. Either push the rendered template to %s by hand and finish with the Platform-repository step yourself (see docs/platform-repository.md), or delete the repository on GitHub and run this command again.\n", platform.Repository, appRepo.URL, appRepo.CloneURL)
+				fmt.Fprintf(out, "Nothing was written to %s. Running this command again with the same --name will refuse: %s already exists. Either push the rendered template to %s by hand and finish with the Platform-repository step yourself (see docs/platform-repository.md, then %s), or delete the repository on GitHub and run this command again.\n", platform.Repository, appRepo.URL, appRepo.CloneURL, bindCommand(plan.name, platform.Org+"/"+plan.name))
 			}
 			return err
 		}
@@ -332,9 +315,6 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			fmt.Fprintf(out, "  %s\n", f)
 		}
 		fmt.Fprintf(out, "\nThe deploy workflow (.github/workflows/deploy.yaml) is pinned to iidp %s.\n", appRepo.IidpVersion)
-		if !ownerIsOrg {
-			printPersonalOwnerNote(out, appRepo.URL)
-		}
 	}
 
 	var adoptResult apprepo.AdoptResult
@@ -376,9 +356,18 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			fmt.Fprintf(out, "  %s\n", f)
 		}
 		fmt.Fprintln(out, "The first merged run of its deploy workflow deploys the Application.")
-		if !ownerIsOrg {
-			printPersonalOwnerNote(out, adoptResult.RepoURL)
-		}
+	}
+
+	// Create and Adopt bind the Application to its Application repository
+	// by id, in the same commit as its Environments; without --path there
+	// is no Application repository to bind
+	// (docs/implementation-notes/58-repository-binding.md).
+	var binding *platformrepo.RepositoryBinding
+	switch plan.path {
+	case pathCreate:
+		binding = &appRepo.Binding
+	case pathAdopt:
+		binding = &adoptResult.Binding
 	}
 
 	app := platformrepo.Application{
@@ -393,6 +382,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		Staging:          plan.staging,
 		Domains:          plan.domains,
 		Login:            plan.login,
+		Repository:       binding,
 	}
 
 	fmt.Fprintf(out, "\nWriting the prod Environment to %s...\n", platform.Repository)
@@ -410,6 +400,9 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	if app.Login {
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required on the Platform addresses")
 	}
+	if binding != nil {
+		fmt.Fprintf(out, "  Repository: %s (repository id %d, owner id %d)\n", binding.Repository, binding.RepositoryID, binding.RepositoryOwnerID)
+	}
 
 	res, err := platformWriter.CreateApplication(cmd.Context(), app, out)
 	if err != nil {
@@ -417,11 +410,11 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		case pathCreate:
 			fmt.Fprintf(out, "\nThe Application repository %s was created and pushed.\n", appRepo.URL)
 			fmt.Fprintf(out, "Writing %s failed: %v\n", platform.Repository, err)
-			fmt.Fprintf(out, "Finish by hand: clone %s, add applications/%s/prod/{application.yaml,values.yaml} (see docs/platform-repository.md), commit and push to main. The Application repository is untouched; nothing is deleted.\n", platform.RepositoryURL, plan.name)
+			fmt.Fprintf(out, "Finish by hand: clone %s, add applications/%s/prod/{application.yaml,values.yaml} (see docs/platform-repository.md), commit and push to main, then run %s. The Application repository is untouched; nothing is deleted.\n", platform.RepositoryURL, plan.name, bindCommand(plan.name, binding.Repository))
 		case pathAdopt:
 			fmt.Fprintf(out, "\nThe pull request %s was opened.\n", adoptResult.PullRequestURL)
 			fmt.Fprintf(out, "Writing %s failed: %v\n", platform.Repository, err)
-			fmt.Fprintf(out, "Finish by hand: clone %s, add applications/%s/prod/{application.yaml,values.yaml} (see docs/platform-repository.md), commit and push to main. The pull request is untouched; nothing is deleted.\n", platform.RepositoryURL, plan.name)
+			fmt.Fprintf(out, "Finish by hand: clone %s, add applications/%s/prod/{application.yaml,values.yaml} (see docs/platform-repository.md), commit and push to main, then run %s. The pull request is untouched; nothing is deleted.\n", platform.RepositoryURL, plan.name, bindCommand(plan.name, binding.Repository))
 		}
 		return err
 	}
@@ -432,7 +425,16 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		fmt.Fprintf(out, "\nPull request: %s\n", adoptResult.PullRequestURL)
 	}
 	printCreated(out, plan.name, res)
+	if binding == nil {
+		fmt.Fprintf(out, "\nThis Application is not bound to an Application repository, so no repository can deploy it. Once its repository is in %s, bind it: %s\n", platform.Org, bindCommand(plan.name, platform.Org+"/<repository>"))
+	}
 	return nil
+}
+
+// bindCommand is the iidp app bind invocation that binds name to repo,
+// for the messages that point at it.
+func bindCommand(name, repo string) string {
+	return "iidp app bind " + name + " --repo " + repo
 }
 
 // checkPostgresKind refuses --postgres against a Static site Kind: a
@@ -463,15 +465,6 @@ func checkAdoptPreview(preview apprepo.AdoptPreview, scopes github.TokenScopes, 
 		return apprepo.CheckWorkflowScope(scopes)
 	}
 	return nil
-}
-
-// printPersonalOwnerNote is the by-hand secret-and-variable note for an
-// Application repository under a personal account rather than the org
-// (docs/implementation-notes/12-deploy-workflow.md): neither the deploy
-// App's private key nor its id reaches a personal-account repository
-// automatically.
-func printPersonalOwnerNote(out io.Writer, repoURL string) {
-	fmt.Fprintf(out, "IIDP_DEPLOY_APP_PRIVATE_KEY (a secret) and IIDP_DEPLOY_APP_ID (a variable) are org-level; a personal-account repository does not receive either automatically. Add both by hand: %s/settings/secrets/actions/new (secret IIDP_DEPLOY_APP_PRIVATE_KEY, the org GitHub App's private key PEM) and %s/settings/variables/actions/new (variable IIDP_DEPLOY_APP_ID, the org GitHub App's id).\n", repoURL, repoURL)
 }
 
 // checkRequiredFlags reports flags missing for the chosen --path, in the
@@ -531,7 +524,6 @@ type createPlan struct {
 	// repoOwner and repoName are --repo, parsed (--path adopt only).
 	repoOwner        string
 	repoName         string
-	ownerMode        string
 	private          bool
 	postgres         bool
 	migrationCommand string
@@ -556,7 +548,7 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	}
 
 	if o.path != pathCreate {
-		for _, name := range []string{"framework", "owner", "private", "public"} {
+		for _, name := range []string{"framework", "private", "public"} {
 			if cmd.Flags().Changed(name) {
 				return createPlan{}, fmt.Errorf("--%s requires --path create", name)
 			}
@@ -575,6 +567,11 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		var err error
 		repoOwner, repoName, err = parseRepoFlag(o.repo)
 		if err != nil {
+			return createPlan{}, err
+		}
+		// Refused here, before the token is read or anything is cloned;
+		// Adopter checks again against the owner GitHub reports.
+		if err := apprepo.CheckInOrg(repoOwner, repoName); err != nil {
 			return createPlan{}, err
 		}
 		if name == "" {
@@ -651,15 +648,8 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		return createPlan{}, errors.New(platformrepo.LoginDomainConflictMessage)
 	}
 
-	ownerMode := "org"
 	private := true
 	if o.path == pathCreate {
-		switch o.owner {
-		case "org", "user":
-			ownerMode = o.owner
-		default:
-			return createPlan{}, fmt.Errorf("unknown --owner %q: must be org or user", o.owner)
-		}
 		if cmd.Flags().Changed("private") && cmd.Flags().Changed("public") {
 			return createPlan{}, errors.New("--private and --public are mutually exclusive")
 		}
@@ -682,7 +672,6 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		path:                o.path,
 		repoOwner:           repoOwner,
 		repoName:            repoName,
-		ownerMode:           ownerMode,
 		private:             private,
 		postgres:            o.postgres,
 		migrationCommand:    o.migrationCommand,

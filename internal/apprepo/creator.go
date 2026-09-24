@@ -14,6 +14,8 @@ import (
 
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/github"
+	"github.com/Itema-as/iidp/internal/platform"
+	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/templates"
 	"github.com/Itema-as/iidp/internal/version"
 )
@@ -27,19 +29,12 @@ const Branch = "main"
 // Adopt (--path adopt --repo owner/name) is for.
 var ErrRepositoryExists = errors.New("repository already exists")
 
-// Owner is where the Application repository is created.
-type Owner struct {
-	// Login is the GitHub organisation or user login.
-	Login string
-	// Org is true when Login is a GitHub organisation rather than a user.
-	Org bool
-}
-
-// Application is what Create needs to make the Application repository.
+// Application is what Create needs to make the Application repository. It
+// is always created in platform.Org: only repositories in the org can be
+// Applications (docs/adr/0005-private-application-repositories-on-github-free.md).
 type Application struct {
 	Name      string
 	Framework templates.Framework
-	Owner     Owner
 	Private   bool
 }
 
@@ -57,6 +52,9 @@ type Result struct {
 	// IidpVersion is the iidp release .github/workflows/deploy.yaml was
 	// pinned to: internal/version.Version, or "latest" for a dev build.
 	IidpVersion string
+	// Binding is the new repository's ids, as GitHub reported them on
+	// creation, for the Platform repository to bind the Application to.
+	Binding platformrepo.RepositoryBinding
 }
 
 // Creator creates Application repositories through the GitHub API.
@@ -71,12 +69,13 @@ type Creator struct {
 // into a temporary directory, and pushes it as the repository's first
 // commit on Branch. It refuses if owner/name already exists.
 func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
-	exists, err := c.Client.RepositoryExists(ctx, app.Owner.Login, app.Name)
+	owner := platform.Org
+	exists, err := c.Client.RepositoryExists(ctx, owner, app.Name)
 	if err != nil {
 		return Result{}, err
 	}
 	if exists {
-		return Result{}, fmt.Errorf("%w: %s/%s; Create always generates a fresh repository, use --path adopt --repo %s/%s for one that already exists", ErrRepositoryExists, app.Owner.Login, app.Name, app.Owner.Login, app.Name)
+		return Result{}, fmt.Errorf("%w: %s/%s; Create always generates a fresh repository, use --path adopt --repo %s/%s for one that already exists", ErrRepositoryExists, owner, app.Name, owner, app.Name)
 	}
 
 	dir, err := os.MkdirTemp("", "iidp-app-")
@@ -87,23 +86,27 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 	iidpVersion := templateIidpVersion()
 	files, err := templates.Render(app.Framework, templates.Data{
 		Name:        app.Name,
-		Owner:       strings.ToLower(app.Owner.Login),
+		Owner:       strings.ToLower(owner),
 		IidpVersion: iidpVersion,
 	}, dir)
 	if err != nil {
 		return Result{}, err
 	}
 
-	url := "https://github.com/" + app.Owner.Login + "/" + app.Name
-	cloneURL, defaultBranch, err := c.Client.CreateRepository(ctx, app.Owner.Login, app.Owner.Org, app.Name, app.Private)
+	url := "https://github.com/" + owner + "/" + app.Name
+	created, err := c.Client.CreateRepository(ctx, owner, app.Name, app.Private)
 	if err != nil {
 		return Result{}, err
 	}
-	res := Result{URL: url, CloneURL: cloneURL, Files: files, IidpVersion: iidpVersion}
-
-	repo, err := git.Init(ctx, dir, Branch, cloneURL, c.Auth)
+	res := Result{URL: url, CloneURL: created.CloneURL, Files: files, IidpVersion: iidpVersion}
+	res.Binding, err = Binding(owner+"/"+app.Name, created.ID, created.Owner)
 	if err != nil {
-		return res, fmt.Errorf("preparing the initial commit for %s/%s: %w", app.Owner.Login, app.Name, err)
+		return res, err
+	}
+
+	repo, err := git.Init(ctx, dir, Branch, created.CloneURL, c.Auth)
+	if err != nil {
+		return res, fmt.Errorf("preparing the initial commit for %s/%s: %w", owner, app.Name, err)
 	}
 	if err := repo.Add(ctx, files...); err != nil {
 		return res, err
@@ -112,10 +115,10 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 		return res, err
 	}
 	if err := repo.Push(ctx, Branch); err != nil {
-		return res, fmt.Errorf("pushing the initial commit to %s/%s: %w", app.Owner.Login, app.Name, err)
+		return res, fmt.Errorf("pushing the initial commit to %s/%s: %w", owner, app.Name, err)
 	}
-	if defaultBranch != Branch {
-		if err := c.Client.SetDefaultBranch(ctx, app.Owner.Login, app.Name, Branch); err != nil {
+	if created.DefaultBranch != Branch {
+		if err := c.Client.SetDefaultBranch(ctx, owner, app.Name, Branch); err != nil {
 			return res, err
 		}
 	}
