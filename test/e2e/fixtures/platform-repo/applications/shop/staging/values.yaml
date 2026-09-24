@@ -10,11 +10,12 @@ platform:
   backupsBucket: iidp-backups
   # Unlike prod's (see prod/values.yaml), this Environment's endpoint is a
   # real, in-cluster S3-compatible store (test/e2e's harness runs a small
-  # MinIO server and creates this bucket, Cluster.InstallMinIO) rather than
-  # the unreachable objectstorage.invalid: TestBootstrap deletes this
+  # versitygw server with this bucket, Cluster.InstallObjectStorage) rather
+  # than the unreachable objectstorage.invalid: TestBootstrap deletes this
   # Environment and needs its final Backup PreDelete hook to genuinely
-  # complete, not merely run (docs/implementation-notes/39-final-backup-predelete-hook.md).
-  objectStorageEndpoint: http://minio.iidp-e2e.svc.cluster.local:9000
+  # complete, not merely run (docs/implementation-notes/39-final-backup-predelete-hook.md,
+  # docs/implementation-notes/71-e2e-s3-server.md).
+  objectStorageEndpoint: http://object-storage.iidp-e2e.svc.cluster.local:7070
 kind: web-service
 image:
   repository: docker.io/library/nginx
@@ -29,9 +30,9 @@ postgres:
   migrationCommand: >-
     test -n "$DATABASE_URL" && nc -z -w 5 shop-staging-db-rw 5432 && echo "migrated: DATABASE_URL set, shop-staging-db-rw:5432 reachable"
   # The chart's default (1800s/30 minutes) is far more than a real backup
-  # against MinIO needs, but also far more than TestBootstrap's own
-  # fifteen-minute budget can spend waiting on one that is stuck; a small,
-  # empty database backing up to an in-cluster MinIO typically finishes in
+  # against the harness's S3 server needs, but also far more than
+  # TestBootstrap's own fifteen-minute budget can spend waiting on one that
+  # is stuck; a small, empty database backing up in-cluster typically finishes in
   # well under a minute.
   finalBackupTimeout: 120
 # The Itema login Capability, on staging only: TestBootstrap proves an

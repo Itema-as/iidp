@@ -33,7 +33,7 @@ import (
 // shop's staging Environment directory, the way iidp app delete itself
 // does, makes ArgoCD delete the shop-staging Application only after its
 // final Backup PreDelete hook completes a real Backup against the
-// harness's own MinIO, and leaves the namespace's Deployment and Cluster
+// harness's own S3 server, and leaves the namespace's Deployment and Cluster
 // gone afterwards. Last (testDeployGate) it proves #60: a deploy through the
 // Deploy gate, authenticated by an OIDC token from the harness's fake
 // issuer, lands in the Platform repository and brochure-prod syncs it,
@@ -89,7 +89,7 @@ func TestBootstrap(t *testing.T) {
 	// the chart: shop-staging's ObjectStore points at it, so its final
 	// Backup PreDelete hook can genuinely complete when testDeleteEnvironment
 	// deletes it (docs/implementation-notes/39-final-backup-predelete-hook.md).
-	if err := cluster.InstallMinIO(ctx); err != nil {
+	if err := cluster.InstallObjectStorage(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// What the Deploy gate needs that kind lacks: its image built from this
@@ -132,8 +132,9 @@ func TestBootstrap(t *testing.T) {
 	// their own ArgoCD Application, at the same sync-wave as the Cluster
 	// and ObjectStore that reference it. prod's endpoint stays unreachable
 	// (objectstorage.invalid; nothing ever authenticates with these
-	// credentials there); staging's points at the harness's own MinIO,
-	// whose root credentials (MinIOAccessKey/MinIOSecretKey) are exactly
+	// credentials there); staging's points at the harness's own S3 server
+	// (versitygw), whose root credentials
+	// (ObjectStorageAccessKey/ObjectStorageSecretKey) are exactly
 	// what that file decrypts to. See
 	// docs/implementation-notes/42-backups-credentials.md.
 	want := map[string]Expectation{
@@ -376,7 +377,7 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 // ArgoCD Application only after its final Backup PreDelete hook
 // (chart/application/templates/final-backup-job.yaml) reaches Healthy --
 // its Backup genuinely completes, since shop-staging's ObjectStore points
-// at the harness's MinIO (InstallMinIO, unlike prod's, which stays
+// at the harness's S3 server (InstallObjectStorage, unlike prod's, which stays
 // unreachable and is not touched here) -- and that the namespace's
 // Deployment and Cluster are gone afterwards. See
 // docs/implementation-notes/39-final-backup-predelete-hook.md.

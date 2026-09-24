@@ -46,34 +46,36 @@ const (
 
 	gitServerImage = "iidp-e2e.local/git-server:dev"
 
-	// minioImage and minioClientImage run the harness's own in-cluster
-	// Object Storage stand-in (InstallMinIO), so the final Backup PreDelete
-	// hook (docs/implementation-notes/39-final-backup-predelete-hook.md)
-	// can genuinely complete in kind for the one Environment TestBootstrap
-	// deletes, rather than only being proven to have run. quay.io, not
-	// docker.io: MinIO's Docker Hub images now require an authenticated
-	// account to pull even "latest" (a policy change discovered while
-	// building this harness -- both `minio/minio` and `minio/mc` on
-	// docker.io return "requested access to the resource is denied" for
-	// every tag anonymously); quay.io/minio/minio and quay.io/minio/mc are
-	// MinIO's own alternate registry and pull anonymously. Not something
-	// either the chart or a real bootstrap ever installs.
-	minioImage       = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
-	minioClientImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
-	// MinIOAccessKey and MinIOSecretKey are the harness's fixed MinIO root
-	// credentials. Not secret -- this cluster never leaves the machine
-	// running the test -- just long enough for MinIO to accept: it refuses
-	// a secret key under 8 characters. These must match the plaintext
-	// bootstrap/templates/backups-credentials.enc.yaml decrypts to in the fixture
-	// Platform repository (test/e2e/fixtures/platform-repo), the same
-	// values every Environment's copy of that file carries
+	// objectStorageImage runs the harness's own in-cluster Object Storage
+	// stand-in (InstallObjectStorage), so the final Backup PreDelete hook
+	// (docs/implementation-notes/39-final-backup-predelete-hook.md) can
+	// genuinely complete in kind for the one Environment TestBootstrap
+	// deletes, rather than only being proven to have run. It is Versity's
+	// S3 gateway (versitygw, Apache-2.0) over its posix backend: one Go
+	// binary on Alpine, pinned by release tag and digest, pulled anonymously
+	// from ghcr.io. It replaced MinIO when quay.io/minio/minio and
+	// quay.io/minio/mc stopped serving anonymous pulls on 2026-09-24, as
+	// docker.io/minio/* had before them
+	// (docs/implementation-notes/71-e2e-s3-server.md). Not something either
+	// the chart or a real bootstrap ever installs.
+	objectStorageImage = "ghcr.io/versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499"
+	// ObjectStorageAccessKey and ObjectStorageSecretKey are the harness's
+	// fixed Object Storage root credentials. Not secret -- this cluster
+	// never leaves the machine running the test. These must match the
+	// plaintext bootstrap/templates/backups-credentials.enc.yaml decrypts to
+	// in the fixture Platform repository (test/e2e/fixtures/platform-repo),
+	// the same values every Environment's copy of that file carries
 	// (docs/implementation-notes/42-backups-credentials.md); the harness no
 	// longer creates the backups-credentials Secret itself.
-	MinIOAccessKey = "iidpe2e"
-	MinIOSecretKey = "iidpe2epassword"
-	// MinIOBucket is the bucket InstallMinIO creates, matching the fixture
-	// Platform repository's platform.backupsBucket.
-	MinIOBucket = "iidp-backups"
+	ObjectStorageAccessKey = "iidpe2e"
+	ObjectStorageSecretKey = "iidpe2epassword"
+	// ObjectStorageBucket is the bucket InstallObjectStorage creates,
+	// matching the fixture Platform repository's platform.backupsBucket.
+	// The stand-in answers at
+	// http://object-storage.<GitServerNamespace>.svc.cluster.local:7070
+	// (7070 is versitygw's default port), which the fixture's shop-staging
+	// platform.objectStorageEndpoint hardcodes.
+	ObjectStorageBucket = "iidp-backups"
 
 	// Traefik's entrypoints are NodePorts in kind (there is no ServiceLB);
 	// the kind config maps them to host ports so a test can curl Traefik
@@ -442,29 +444,28 @@ func (c *Cluster) CreateNamespace(ctx context.Context, name string) error {
 	return c.Apply(ctx, fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n", name))
 }
 
-// InstallMinIO deploys a single-Pod MinIO server in GitServerNamespace,
-// alongside the git server, and creates MinIOBucket: a harness-only
+// InstallObjectStorage deploys a single-Pod S3-compatible server
+// (versitygw, objectStorageImage) in GitServerNamespace, alongside the git
+// server, with ObjectStorageBucket already in it: a harness-only
 // component, installed by neither the chart nor a real bootstrap, that
 // lets the final Backup PreDelete hook's Backup genuinely reach phase
 // completed in kind for the one Environment TestBootstrap deletes
-// (docs/implementation-notes/39-final-backup-predelete-hook.md).
-func (c *Cluster) InstallMinIO(ctx context.Context) error {
-	c.Log("installing MinIO (namespace %s, bucket %s)", GitServerNamespace, MinIOBucket)
+// (docs/implementation-notes/39-final-backup-predelete-hook.md,
+// docs/implementation-notes/71-e2e-s3-server.md).
+func (c *Cluster) InstallObjectStorage(ctx context.Context) error {
+	c.Log("installing the Object Storage stand-in (namespace %s, bucket %s)", GitServerNamespace, ObjectStorageBucket)
 	// GitServerNamespace may not exist yet: ServeGitRepositories creates it
 	// too, but does not have to run before this does, and CreateNamespace
 	// is idempotent either way.
 	if err := c.CreateNamespace(ctx, GitServerNamespace); err != nil {
 		return err
 	}
-	if err := c.Apply(ctx, minioManifest()); err != nil {
+	if err := c.Apply(ctx, objectStorageManifest()); err != nil {
 		return err
 	}
-	if out, err := c.Kubectl(ctx, "-n", GitServerNamespace, "rollout", "status", "deployment/minio", "--timeout=2m"); err != nil {
-		return fmt.Errorf("wait for minio: %w\n%s", err, out)
-	}
-	if out, err := c.Kubectl(ctx, "-n", GitServerNamespace, "wait", "job/minio-init-bucket", "--for=condition=complete", "--timeout=2m"); err != nil {
-		logs, _ := c.Kubectl(ctx, "-n", GitServerNamespace, "logs", "job/minio-init-bucket")
-		return fmt.Errorf("wait for minio-init-bucket: %w\n%s\n%s", err, out, logs)
+	if out, err := c.Kubectl(ctx, "-n", GitServerNamespace, "rollout", "status", "deployment/object-storage", "--timeout=2m"); err != nil {
+		logs, _ := c.Kubectl(ctx, "-n", GitServerNamespace, "logs", "deployment/object-storage", "--all-containers")
+		return fmt.Errorf("wait for object-storage: %w\n%s\n%s", err, out, logs)
 	}
 	return nil
 }
@@ -1301,56 +1302,76 @@ spec:
 `, GitServerNamespace, gitServerImage, checksum)
 }
 
-// minioManifest is InstallMinIO's Deployment, Service and bucket-creation
-// Job: a single MinIO Pod with an emptyDir (kind's disk is thrown away with
-// the cluster regardless, so nothing here needs to survive a restart), and
-// a small mc Job that creates MinIOBucket once the server answers -- run as
-// a Job with retries rather than as an initContainer of the server itself,
-// since it has to wait for the Service, not just the container, to be
-// reachable. CPU requests are pinned to 10m on both: this harness, not the
-// product under test, and a hosted CI runner's node has only 2 vCPUs of
-// schedulable capacity total (see docs/implementation-notes
+// objectStorageManifest is InstallObjectStorage's Deployment and Service:
+// a single versitygw Pod serving its posix backend from an emptyDir (kind's
+// disk is thrown away with the cluster regardless, so nothing here needs
+// to survive a restart). The posix backend treats each top-level directory
+// as a bucket, so an init container running the same image creates
+// ObjectStorageBucket with mkdir -- no client image, and no Job waiting
+// for the Service to answer, which MinIO's bucket needed its mc image for.
+// The server keeps its object metadata (ETags, checksums, multipart state)
+// in extended attributes on that volume. --region is spelled out as the
+// default it already is, us-east-1, the region botocore (underneath the
+// Barman Cloud plugin) signs with when the ObjectStore names none; the
+// gateway rejects a signature made for any other.
+//
+// CPU requests are pinned to 10m: this harness, not the product under
+// test, and a hosted CI runner's node has only 2 vCPUs of schedulable
+// capacity total (see docs/implementation-notes
 // /39-final-backup-predelete-hook.md) -- every millicore claimed here is one
 // the shop-prod/shop-staging fixture's own Deployment and migrate Job
-// cannot get. The mc Job carries no CPU limit at all for the same reason:
-// it runs once, for seconds, and only its request (not its limit) competes
-// for the node's scheduling budget.
-func minioManifest() string {
+// cannot get. The init container's request does not add to the server's:
+// a Pod is scheduled on the larger of its init and regular containers'
+// requests, not their sum.
+func objectStorageManifest() string {
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: minio
+  name: object-storage
   namespace: %[1]s
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: minio
+      app: object-storage
   template:
     metadata:
       labels:
-        app: minio
+        app: object-storage
     spec:
-      containers:
-        - name: minio
+      initContainers:
+        - name: create-bucket
           image: %[2]s
-          args: ["server", "/data"]
+          command: ["mkdir", "-p", "/data/%[5]s"]
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              memory: "32Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: versitygw
+          image: %[2]s
+          args: ["--port", ":7070", "--region", "us-east-1", "posix", "/data"]
           env:
-            - name: MINIO_ROOT_USER
+            - name: ROOT_ACCESS_KEY
+              value: %[3]s
+            - name: ROOT_SECRET_KEY
               value: %[4]s
-            - name: MINIO_ROOT_PASSWORD
-              value: %[5]s
           ports:
-            - containerPort: 9000
+            - containerPort: 7070
           readinessProbe:
             tcpSocket:
-              port: 9000
+              port: 7070
             initialDelaySeconds: 1
             periodSeconds: 2
           resources:
             requests:
               cpu: "10m"
-              memory: "128Mi"
+              memory: "32Mi"
             limits:
               cpu: "250m"
               memory: "256Mi"
@@ -1364,42 +1385,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: minio
+  name: object-storage
   namespace: %[1]s
 spec:
   selector:
-    app: minio
+    app: object-storage
   ports:
-    - port: 9000
-      targetPort: 9000
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: minio-init-bucket
-  namespace: %[1]s
-spec:
-  backoffLimit: 10
-  template:
-    spec:
-      restartPolicy: OnFailure
-      containers:
-        - name: mc
-          image: %[3]s
-          command:
-            - sh
-            - -c
-            - |
-              set -eu
-              mc alias set local http://minio.%[1]s.svc.cluster.local:9000 %[4]s %[5]s
-              mc mb --ignore-existing local/%[6]s
-          resources:
-            requests:
-              cpu: "10m"
-              memory: "32Mi"
-            limits:
-              memory: "64Mi"
-`, GitServerNamespace, minioImage, minioClientImage, MinIOAccessKey, MinIOSecretKey, MinIOBucket)
+    - port: 7070
+      targetPort: 7070
+`, GitServerNamespace, objectStorageImage, ObjectStorageAccessKey, ObjectStorageSecretKey, ObjectStorageBucket)
 }
 
 func (c *Cluster) env() []string {
