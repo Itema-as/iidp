@@ -14,8 +14,25 @@
 # works the same way, with PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64 (and,
 # if they changed too, PLATFORM_REPO_GITHUB_APP_ID and
 # PLATFORM_REPO_GITHUB_APP_INSTALLATION_ID) set in the environment.
+#
+# k3s's registries.yaml (the GHCR pull credential) is not part of that
+# script: it is a plain file below, which cloud-init writes before runcmd
+# starts the script, so it exists before k3s first starts. Adding or
+# rotating it on a running node means writing the file over ssh and
+# restarting k3s (infra/README.md, "Adding or rotating the GHCR pull
+# token").
 
 write_files:
+  # Credentials for pulling Applications' private images from ghcr.io
+  # (ADR-0005), rendered by OpenTofu (local.registries_yaml in
+  # bootstrap.tf) and carried as base64. k3s reads this file only when it
+  # starts. Not deferred: write_files runs in cloud-init's init stage,
+  # before runcmd installs k3s.
+  - path: /etc/rancher/k3s/registries.yaml
+    permissions: "0600"
+    owner: root:root
+    encoding: b64
+    content: ${registries_yaml_b64}
   - path: /usr/local/sbin/iidp-bootstrap
     permissions: "0755"
     owner: root:root

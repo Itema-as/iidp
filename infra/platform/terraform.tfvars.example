@@ -22,6 +22,15 @@ platform_repo_github_app_private_key     = <<EOT
 -----END RSA PRIVATE KEY-----
 EOT
 
+# The node's credential for pulling Applications' private images from GHCR
+# (ADR-0005): a classic personal access token with only the read:packages
+# scope, and the GitHub login that owns it. The bootstrap wizard's "GHCR
+# pull token" stage checks the token and writes both. cloud-init puts them
+# in /etc/rancher/k3s/registries.yaml at first boot; on a running node,
+# see infra/README.md, "Adding or rotating the GHCR pull token".
+ghcr_pull_username = "platform-admin-login"
+ghcr_pull_token    = "ghp_..."
+
 # Everything else has an agreed default in variables.tf; set it here only to
 # override, for example:
 # server_type = "cpx32"

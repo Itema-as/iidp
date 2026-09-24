@@ -138,3 +138,35 @@ variable "platform_repo_github_app_private_key" {
     error_message = "platform_repo_github_app_private_key must be the PEM contents of the GitHub App's private key (starts with -----BEGIN ... PRIVATE KEY-----)."
   }
 }
+
+# The node's credential for pulling Applications' private images from GHCR
+# (ADR-0005). ghcr.io accepts only a classic personal access token for
+# pulls from outside Actions, never a GitHub App token, so this is one
+# classic token with only the read:packages scope. cloud-init writes both
+# values into k3s's /etc/rancher/k3s/registries.yaml (local.registries_yaml
+# in bootstrap.tf) before k3s first starts. Like the App key above, a change
+# here never reaches a running node through tofu apply alone: see "Adding
+# or rotating the GHCR pull token" in infra/README.md. No default: the
+# token belongs to one GitHub account (the Platform admin's at first, a
+# machine user's after #56).
+
+variable "ghcr_pull_username" {
+  description = "GitHub login of the account that owns ghcr_pull_token, sent to ghcr.io as the basic-auth username. The bootstrap wizard reads it from the token itself (GET /user)."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9-]{0,38}$", var.ghcr_pull_username))
+    error_message = "ghcr_pull_username must be a GitHub login: letters, digits and hyphens, at most 39 characters."
+  }
+}
+
+variable "ghcr_pull_token" {
+  description = "Classic personal access token with only the read:packages scope, owned by ghcr_pull_username. Sensitive and git-ignored like hcloud_token. The bootstrap wizard checks its scopes before storing it."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_]+$", var.ghcr_pull_token))
+    error_message = "ghcr_pull_token must be a GitHub token: letters, digits and underscores (a classic token starts with ghp_)."
+  }
+}
