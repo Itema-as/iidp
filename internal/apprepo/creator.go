@@ -36,6 +36,9 @@ type Application struct {
 	Name      string
 	Framework templates.Framework
 	Private   bool
+	// DeployGateURL is the Platform's Deploy gate, rendered into the
+	// deploy workflow (templates.Data.DeployGateURL).
+	DeployGateURL string
 }
 
 // Result is what Create wrote and where. On an error after the repository
@@ -85,9 +88,10 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 	defer os.RemoveAll(dir)
 	iidpVersion := templateIidpVersion()
 	files, err := templates.Render(app.Framework, templates.Data{
-		Name:        app.Name,
-		Owner:       strings.ToLower(owner),
-		IidpVersion: iidpVersion,
+		Name:          app.Name,
+		Owner:         strings.ToLower(owner),
+		IidpVersion:   iidpVersion,
+		DeployGateURL: app.DeployGateURL,
 	}, dir)
 	if err != nil {
 		return Result{}, err

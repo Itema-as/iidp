@@ -1,12 +1,12 @@
 // Package githubapp signs the short-lived JSON Web Token a GitHub App
-// authenticates with, and reads the App's private key from the
-// environment. iidp ci set-image is the one caller: it mints a GitHub App
-// installation token to write the Platform repository, following GitHub's
-// documented shape for "Authenticating as a GitHub App" (checked against
-// current GitHub REST API documentation; see
-// docs/implementation-notes/12-deploy-workflow.md). No JWT library is used:
-// the standard library's crypto/rsa, crypto/sha256, encoding/base64 and
-// encoding/json are enough for the one algorithm GitHub requires, RS256.
+// authenticates with. The Deploy gate is the one caller: it mints a GitHub
+// App installation token to write the Platform repository, following
+// GitHub's documented shape for "Authenticating as a GitHub App" (see
+// docs/implementation-notes/12-deploy-workflow.md, where this was written
+// for iidp ci set-image before the gate took the key out of CI). No JWT
+// library is used: the standard library's crypto/rsa, crypto/sha256,
+// encoding/base64 and encoding/json are enough for the one algorithm
+// GitHub requires, RS256.
 package githubapp
 
 import (
@@ -20,59 +20,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"time"
 )
-
-// PrivateKeyEnvVar and PrivateKeyFileEnvVar are the environment variables
-// iidp ci set-image reads the GitHub App's private key from: the PEM
-// itself, or a path to a file holding it. The bootstrap wizard writes the
-// PEM into the org Actions secret named after PrivateKeyEnvVar
-// (docs/implementation-notes/05-bootstrap-wizard.md).
-const (
-	PrivateKeyEnvVar     = "IIDP_DEPLOY_APP_PRIVATE_KEY"
-	PrivateKeyFileEnvVar = "IIDP_DEPLOY_APP_PRIVATE_KEY_FILE"
-)
-
-// AppIDEnvVar is the environment variable iidp ci set-image reads the
-// GitHub App's id from: the org Actions variable the bootstrap wizard
-// creates (docs/implementation-notes/05-bootstrap-wizard.md), passed to
-// the deploy workflow as IIDP_DEPLOY_APP_ID: ${{ vars.IIDP_DEPLOY_APP_ID }}.
-// Read from the environment rather than platform.yaml so minting a
-// credential never depends on already having one to read the Platform
-// repository with (docs/implementation-notes/12-deploy-workflow.md).
-const AppIDEnvVar = "IIDP_DEPLOY_APP_ID"
-
-// AppIDFromEnv reads and parses AppIDEnvVar.
-func AppIDFromEnv() (int64, error) {
-	v := os.Getenv(AppIDEnvVar)
-	if v == "" {
-		return 0, fmt.Errorf("%s is not set; iidp ci set-image cannot authenticate as the GitHub App without it", AppIDEnvVar)
-	}
-	id, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s %q is not a valid integer: %w", AppIDEnvVar, v, err)
-	}
-	return id, nil
-}
-
-// PrivateKeyFromEnv reads the GitHub App's private key PEM from
-// PrivateKeyEnvVar, or from the file named by PrivateKeyFileEnvVar when
-// the former is not set. It is an error for neither to be set.
-func PrivateKeyFromEnv() ([]byte, error) {
-	if pem := os.Getenv(PrivateKeyEnvVar); pem != "" {
-		return []byte(pem), nil
-	}
-	if path := os.Getenv(PrivateKeyFileEnvVar); path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("reading %s: %w", PrivateKeyFileEnvVar, err)
-		}
-		return data, nil
-	}
-	return nil, fmt.Errorf("neither %s nor %s is set; iidp ci set-image cannot authenticate as the GitHub App without the private key", PrivateKeyEnvVar, PrivateKeyFileEnvVar)
-}
 
 // SignJWT signs a GitHub App authentication JWT for appID with
 // privateKeyPEM (PKCS#1 or PKCS#8, RSA), following GitHub's documented

@@ -18,7 +18,7 @@ grafanaURL: https://example.grafana.net
 # The application chart version the CLI writes into new Environments.
 chartVersion: 0.1.0
 
-# The org GitHub App the deploy workflow uses to write image tags back.
+# The org GitHub App the Deploy gate commits deploys as (documentation only).
 githubApp:
   id: 1
   installationId: 1
@@ -47,3 +47,19 @@ clusterName: iidp-e2e
 # TestBootstrap asserts. See bootstrap/README.md.
 oauth2Proxy:
   skipOIDCDiscovery: true
+
+# kind has no GHCR, no GitHub and no GitHub Actions: the Deploy gate runs
+# the image the harness builds from this repository and loads into the
+# node, trusts the harness's fake OIDC issuer, mints its App token from the
+# harness's fake GitHub, and writes to the in-cluster git server. The
+# harness creates the App credential Secret itself. See
+# docs/implementation-notes/60-deploy-gate.md.
+deployGate:
+  image:
+    repository: iidp-e2e.local/deploy-gate
+    tag: dev
+    pullPolicy: Never
+  oidc:
+    issuer: http://fake-github.iidp-e2e.svc.cluster.local
+  githubAPI: http://fake-github.iidp-e2e.svc.cluster.local/api
+  platformRepository: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git

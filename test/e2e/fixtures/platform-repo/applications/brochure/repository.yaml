@@ -1,0 +1,12 @@
+# The Application repository brochure is bound to. The Deploy gate lets only the
+# repository with these GitHub ids (an Actions OIDC token's repository_id and
+# repository_owner_id) deploy it; repository is the name when it was bound,
+# for people to read, and goes stale on a rename.
+# Written by iidp (iidp app create, iidp app bind); do not edit by hand.
+#
+# In the kind fixture the ids are the harness's own: TestBootstrap's
+# testDeployGate signs tokens carrying repository_id 700000001 and
+# Itema-as's org id.
+repository: Itema-as/brochure
+repositoryId: 700000001
+repositoryOwnerId: 1230559

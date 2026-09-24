@@ -24,6 +24,54 @@ builds:
       - -s -w -X github.com/Itema-as/iidp/internal/version.Version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
+  # The Deploy gate (cmd/iidp-deploy-gate), shipped only as the image below,
+  # never in an archive: the Platform node is linux/amd64.
+  - id: iidp-deploy-gate
+    main: ./cmd/iidp-deploy-gate
+    binary: iidp-deploy-gate
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/Itema-as/iidp/internal/version.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+# The Deploy gate's image, ghcr.io/itema-as/iidp-deploy-gate:<version>, the
+# tag the bootstrap chart derives from the bootstrap revision it is pinned
+# to (bootstrap/templates/deploy-gate.yaml). Built from
+# cmd/iidp-deploy-gate/Dockerfile, the same file the kind harness builds
+# from. Only linux/amd64: the node is, and one platform needs no emulation
+# for the Dockerfile's RUN. Publishing needs the release job logged in to
+# GHCR with packages: write, which the release workflow sets up together
+# with IIDP_PUBLISH_DEPLOY_GATE=true; without that variable the image is
+# skipped, so a release never fails on a push it has no credential for
+# (docs/implementation-notes/60-deploy-gate.md).
+dockers_v2:
+  - id: iidp-deploy-gate
+    ids:
+      - iidp-deploy-gate
+    dockerfile: cmd/iidp-deploy-gate/Dockerfile
+    images:
+      - ghcr.io/itema-as/iidp-deploy-gate
+    tags:
+      - "{{ .Version }}"
+    platforms:
+      - linux/amd64
+    labels:
+      "org.opencontainers.image.source": '{{ trimsuffix .GitURL ".git" }}'
+      "org.opencontainers.image.description": "The iidp Deploy gate"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+    sbom: false
+    flags:
+      - "--provenance=false"
+    disable: '{{ ne (index .Env "IIDP_PUBLISH_DEPLOY_GATE") "true" }}'
+
 archives:
   - id: iidp
     ids:

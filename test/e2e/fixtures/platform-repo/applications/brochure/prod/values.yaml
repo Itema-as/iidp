@@ -3,6 +3,11 @@
 # "" the CLI writes, so the chart renders nothing and the ArgoCD
 # Application has no resources at all. See
 # docs/implementation-notes/47-unreleased-environment.md.
+#
+# TestBootstrap then deploys its first image through the Deploy gate
+# (testDeployGate), which writes image.tag. kind has no GHCR, so the image
+# repository is nginx, which a Static site's chart serves on port 80 and
+# shop's Environments have already pulled.
 application:
   name: brochure
 environment: prod
@@ -10,7 +15,7 @@ platform:
   baseDomain: app.example.test
 kind: static-site
 image:
-  repository: ghcr.io/itema-as/brochure
+  repository: docker.io/library/nginx
   tag: ""
 size: small
 port: 3000

@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -20,16 +21,14 @@ type Dependencies struct {
 	// BeforePush, when set, runs between committing to the Platform
 	// repository and each push attempt. Tests use it to move main.
 	BeforePush func() error
-	// GitHubAPI overrides the GitHub API base URL the Create path's client
-	// and ci set-image's installation-token client talk to; empty means the
-	// real API. Tests point it at an in-process fake server.
+	// GitHubAPI overrides the GitHub API base URL the CLI's GitHub client
+	// talks to; empty means the real API. Tests point it at an in-process
+	// fake server.
 	GitHubAPI string
-	// CIAuthObserved, when set, is called by ci set-image with the GitHub
-	// App installation token it minted, right before using it as the
-	// Platform repository's git credential. Tests use it to assert that
-	// the token the fake GitHub server returned is the one that reaches
-	// git (docs/implementation-notes/12-deploy-workflow.md).
-	CIAuthObserved func(token string)
+	// CIRetryDelay is how long ci set-image waits before calling an
+	// unavailable Deploy gate again; zero means ten seconds. Tests shorten
+	// it.
+	CIRetryDelay time.Duration
 }
 
 // Run executes the CLI with the given arguments (excluding the program name)

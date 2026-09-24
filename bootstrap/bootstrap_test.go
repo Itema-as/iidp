@@ -33,7 +33,7 @@ func TestRendersOneApplicationPerComponent(t *testing.T) {
 		got = append(got, name)
 	}
 	sort.Strings(got)
-	want := []string{"argocd", "cert-manager", "cloudnative-pg", "cnpg-barman-cloud", "external-dns", "monitoring", "oauth2-proxy", "platform-tls"}
+	want := []string{"argocd", "cert-manager", "cloudnative-pg", "cnpg-barman-cloud", "deploy-gate", "external-dns", "monitoring", "oauth2-proxy", "platform-tls"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("rendered Applications = %v, want %v", got, want)
 	}
@@ -216,6 +216,151 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	providerMap := get[object](t, map[string]any{"p": provider}, "p")
 	if got := get[string](t, providerMap, "provider"); got != "entra-id" {
 		t.Errorf("provider = %q, want entra-id", got)
+	}
+}
+
+// The Deploy gate's Application follows the bootstrap pin like platform-tls
+// and hands the component the Platform's values, including the org id it
+// pins and the bootstrap revision its image tag comes from.
+func TestDeployGateFollowsTheBootstrapAndThePlatformValues(t *testing.T) {
+	apps := renderApplications(t, "--values", "values.yaml", "--set", "baseDomain=app.example.test",
+		"--set", "bootstrap.repoURL=https://example.test/iidp.git",
+		"--set", "bootstrap.targetRevision=v9.9.9")
+	gate := apps["deploy-gate"]
+	for path, want := range map[string]string{
+		"repoURL":        "https://example.test/iidp.git",
+		"targetRevision": "v9.9.9",
+		"path":           "bootstrap/components/deploy-gate",
+	} {
+		if got := get[string](t, gate, "spec", "source", path); got != want {
+			t.Errorf("deploy-gate source %s = %q, want %q", path, got, want)
+		}
+	}
+	// In argocd, next to the Secret holding the App's key.
+	if got := get[string](t, gate, "spec", "destination", "namespace"); got != "argocd" {
+		t.Errorf("deploy-gate namespace = %q, want argocd", got)
+	}
+	values := get[object](t, gate, "spec", "source", "helm", "valuesObject")
+	if got := get[string](t, values, "baseDomain"); got != "app.example.test" {
+		t.Errorf("baseDomain = %q", got)
+	}
+	if got := get[string](t, values, "bootstrapRevision"); got != "v9.9.9" {
+		t.Errorf("bootstrapRevision = %q, want the bootstrap pin", got)
+	}
+	if got := get[int](t, values, "githubOrgId"); got != 1230559 {
+		t.Errorf("githubOrgId = %d, want Itema-as's 1230559", got)
+	}
+	if got := get[string](t, values, "oidc", "issuer"); got != "https://token.actions.githubusercontent.com" {
+		t.Errorf("oidc.issuer = %q, want GitHub Actions'", got)
+	}
+	if got := get[string](t, values, "platformRepository"); got != "https://github.com/Itema-as/iidp-platform.git" {
+		t.Errorf("platformRepository = %q", got)
+	}
+	if got := get[string](t, values, "appSecret"); got != "platform-repo-github-app" {
+		t.Errorf("appSecret = %q, want ArgoCD's Platform-repository credential", got)
+	}
+}
+
+// The kind fixture's platform.yaml swaps GitHub for the harness's
+// stand-ins; those overrides must reach the component.
+func TestDeployGateTakesTheFixturesStandIns(t *testing.T) {
+	values := get[object](t, renderApplications(t, "--values", fixture)["deploy-gate"], "spec", "source", "helm", "valuesObject")
+	if got := get[string](t, values, "oidc", "issuer"); !strings.Contains(got, "iidp-e2e.svc.cluster.local") {
+		t.Errorf("oidc.issuer = %q, want the harness's fake issuer", got)
+	}
+	if got := get[string](t, values, "image", "tag"); got == "" {
+		t.Errorf("image.tag is empty, want the harness's locally built image")
+	}
+}
+
+func TestDeployGateComponentRendersTheGate(t *testing.T) {
+	objects := parseObjects(t, helmTemplate(t, "components/deploy-gate",
+		"--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
+
+	deployment, ok := objects["Deployment/iidp-deploy-gate"]
+	if !ok {
+		t.Fatalf("no Deployment/iidp-deploy-gate in %v", keys(objects))
+	}
+	pod := get[object](t, deployment, "spec", "template", "spec")
+	if got := get[bool](t, pod, "automountServiceAccountToken"); got {
+		t.Errorf("the gate mounts a service account token; it needs no Kubernetes API access")
+	}
+	container := get[object](t, map[string]any{"c": get[[]any](t, pod, "containers")[0]}, "c")
+	if got := get[string](t, container, "image"); got != "ghcr.io/itema-as/iidp-deploy-gate:1.2.3" {
+		t.Errorf("image = %q, want the bootstrap release's version", got)
+	}
+	env := map[string]string{}
+	for _, e := range get[[]any](t, container, "env") {
+		m := e.(object)
+		env[m["name"].(string)] = fmt.Sprint(m["value"])
+	}
+	for name, want := range map[string]string{
+		"IIDP_GATE_AUDIENCE":      "https://deploy.app.example.test",
+		"IIDP_GATE_ORG_ID":        "1230559",
+		"IIDP_GATE_OIDC_ISSUER":   "https://token.actions.githubusercontent.com",
+		"IIDP_GATE_PLATFORM_REPO": "https://github.com/Itema-as/iidp-platform.git",
+		"IIDP_GATE_APP_DIR":       "/var/run/iidp-deploy-gate/app",
+	} {
+		if env[name] != want {
+			t.Errorf("env %s = %q, want %q", name, env[name], want)
+		}
+	}
+	if got := get[string](t, container, "resources", "requests", "cpu"); got != "5m" {
+		t.Errorf("cpu request = %q, want 5m: the node and the kind runner are near their CPU request limits", got)
+	}
+
+	var secret object
+	for _, v := range get[[]any](t, pod, "volumes") {
+		if m := v.(object); m["name"] == "app" {
+			secret = get[object](t, m, "secret")
+		}
+	}
+	if secret == nil {
+		t.Fatalf("no app volume")
+	}
+	if got := get[string](t, secret, "secretName"); got != "platform-repo-github-app" {
+		t.Errorf("secretName = %q, want ArgoCD's Platform-repository credential", got)
+	}
+	var items []string
+	for _, item := range get[[]any](t, secret, "items") {
+		items = append(items, item.(object)["key"].(string))
+	}
+	if got := strings.Join(items, ","); got != "githubAppID,githubAppInstallationID,githubAppPrivateKey" {
+		t.Errorf("secret items = %s, want only the App's id, installation id and key", got)
+	}
+
+	ingress, ok := objects["Ingress/iidp-deploy-gate"]
+	if !ok {
+		t.Fatalf("no Ingress/iidp-deploy-gate in %v", keys(objects))
+	}
+	rule := get[object](t, map[string]any{"r": get[[]any](t, ingress, "spec", "rules")[0]}, "r")
+	if got := get[string](t, rule, "host"); got != "deploy.app.example.test" {
+		t.Errorf("Ingress host = %q, want deploy.<baseDomain>", got)
+	}
+	tls := get[object](t, map[string]any{"t": get[[]any](t, ingress, "spec", "tls")[0]}, "t")
+	if _, has := tls["secretName"]; has {
+		t.Errorf("the Ingress names a TLS secret; the wildcard comes from Traefik's default store")
+	}
+	if got := get[string](t, ingress, "metadata", "annotations", "traefik.ingress.kubernetes.io/router.entrypoints"); got != "websecure" {
+		t.Errorf("entrypoints = %q", got)
+	}
+	if _, ok := objects["Service/iidp-deploy-gate"]; !ok {
+		t.Errorf("no Service/iidp-deploy-gate in %v", keys(objects))
+	}
+}
+
+func TestDeployGateImageTagCanBePinnedButNotGuessed(t *testing.T) {
+	objects := parseObjects(t, helmTemplate(t, "components/deploy-gate",
+		"--set", "bootstrapRevision=main", "--set", "image.tag=dev", "--set", "image.repository=iidp-e2e.local/deploy-gate"))
+	container := get[[]any](t, objects["Deployment/iidp-deploy-gate"], "spec", "template", "spec", "containers")[0].(object)
+	if got := container["image"]; got != "iidp-e2e.local/deploy-gate:dev" {
+		t.Errorf("image = %v, want the pinned tag", got)
+	}
+
+	requireHelm(t)
+	out, err := exec.Command("helm", "template", "t", "components/deploy-gate", "--set", "bootstrapRevision=main").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "not a v* release tag") {
+		t.Errorf("rendering with the bootstrap on a branch and no tag: err = %v, output:\n%s\nwant a refusal naming the release tag", err, out)
 	}
 }
 

@@ -675,19 +675,8 @@ func (c *Cluster) ServeGitRepositories(ctx context.Context, repos ...Repository)
 	if err != nil {
 		return fmt.Errorf("%s build: %w\n%s", c.Provider, err, out)
 	}
-	// Loaded as an archive rather than with kind load docker-image: the
-	// latter looks the image up in the engine's store under a name the
-	// podman provider does not always resolve.
-	imageArchive, err := writeTemp("iidp-e2e-git-server-*.tar", nil)
-	if err != nil {
+	if err := c.loadImage(ctx, gitServerImage); err != nil {
 		return err
-	}
-	defer os.Remove(imageArchive)
-	if out, err := c.run(ctx, c.Provider, "save", "-o", imageArchive, gitServerImage); err != nil {
-		return fmt.Errorf("%s save: %w\n%s", c.Provider, err, out)
-	}
-	if out, err := c.run(ctx, "kind", "load", "image-archive", imageArchive, "--name", c.Name); err != nil {
-		return fmt.Errorf("kind load image-archive: %w\n%s", err, out)
 	}
 
 	work, err := os.MkdirTemp("", "iidp-e2e-git-*")

@@ -1,0 +1,51 @@
+# Set by the deploy-gate Application in bootstrap/templates from the Platform
+# repository's platform.yaml; the defaults are placeholders.
+
+# The gate is served at https://deploy.<baseDomain>, under the Platform's
+# wildcard certificate. That URL is also the audience every OIDC token must
+# carry.
+baseDomain: app.itma.no
+
+# The numeric id of the GitHub org whose repositories may deploy
+# (Itema-as). A token's repository_owner_id and an Application's binding
+# must both carry it.
+githubOrgId: 1230559
+
+image:
+  repository: ghcr.io/itema-as/iidp-deploy-gate
+  # Empty: the version of the bootstrap release this chart is rendered from,
+  # bootstrapRevision without its leading v, so bumping the bootstrap pin
+  # bumps the gate with it.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# The bootstrap revision the Platform repository pins (a v* release tag).
+bootstrapRevision: ""
+
+oidc:
+  # GitHub Actions' OIDC issuer. Only a test cluster points it elsewhere.
+  issuer: https://token.actions.githubusercontent.com
+  # Where the issuer publishes its signing keys; empty means
+  # <issuer>/.well-known/jwks.
+  jwksURL: ""
+
+# The GitHub REST API root; empty means https://api.github.com.
+githubAPI: ""
+
+# The Platform repository the gate writes image tags to.
+platformRepository: https://github.com/Itema-as/iidp-platform.git
+
+# The Secret holding the iidp-deploy GitHub App credential, in the
+# namespace the gate runs in: ArgoCD's own credential for the Platform
+# repository, which cloud-init writes (keys githubAppID,
+# githubAppInstallationID, githubAppPrivateKey).
+appSecret: platform-repo-github-app
+
+# Small on purpose: the node, and the kind runner, are near their CPU
+# request limits. A deploy is one shallow clone and one push.
+resources:
+  requests:
+    cpu: 5m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

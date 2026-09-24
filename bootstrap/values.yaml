@@ -48,6 +48,34 @@ dnsOwnerId: iidp
 oauth2Proxy:
   skipOIDCDiscovery: false
 
+# The Deploy gate (templates/deploy-gate.yaml), served at
+# https://deploy.<baseDomain>. Everything here has a working default for the
+# Platform; the kind harness's fixture platform.yaml overrides the image,
+# the OIDC issuer, the GitHub API and the Platform repository with its own
+# stand-ins.
+deployGate:
+  # Itema-as's numeric GitHub org id. A deploy's OIDC token
+  # (repository_owner_id) and the Application's binding
+  # (applications/<name>/repository.yaml) must both carry it.
+  githubOrgId: 1230559
+  image:
+    repository: ghcr.io/itema-as/iidp-deploy-gate
+    # Empty: the version of the bootstrap release pinned in the Platform
+    # repository's platform-components.yaml (v1.2.3 runs 1.2.3).
+    tag: ""
+    pullPolicy: IfNotPresent
+  oidc:
+    issuer: https://token.actions.githubusercontent.com
+    # Empty: <issuer>/.well-known/jwks.
+    jwksURL: ""
+  # Empty: https://api.github.com.
+  githubAPI: ""
+  platformRepository: https://github.com/Itema-as/iidp-platform.git
+  # ArgoCD's credential for the Platform repository, in the argocd
+  # namespace, written by cloud-init: the gate reads the iidp-deploy App's
+  # id, installation id and key from it.
+  appSecret: platform-repo-github-app
+
 # Where this chart lives, for the component Applications that point back at
 # it (bootstrap/components/*). The Platform repository sets both from ArgoCD's
 # build environment so they always match the pinned bootstrap revision.

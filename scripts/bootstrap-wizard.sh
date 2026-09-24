@@ -619,41 +619,6 @@ github_owner_of() { # github_owner_of URL -> "owner/repo" without scheme or .git
   printf '%s' "$u"
 }
 
-gh_secret_set_org() { # gh_secret_set_org NAME ORG VALUE_OR_FILE [--from-file]
-  local name="$1" org="$2" value="$3" from_file="${4:-}"
-  if [[ "$DRY_RUN" == "1" ]]; then
-    dry "would run: gh secret set $name --org $org --visibility all"
-    return 0
-  fi
-  if [[ "${IIDP_WIZARD_FAKE:-0}" == "1" ]]; then
-    ok "(fake) set org secret $name"
-    return 0
-  fi
-  if [[ "$from_file" == "--from-file" ]]; then
-    gh secret set "$name" --org "$org" --visibility all < "$value" \
-      || die "gh secret set $name --org $org failed"
-  else
-    printf '%s' "$value" | gh secret set "$name" --org "$org" --visibility all \
-      || die "gh secret set $name --org $org failed"
-  fi
-  ok "set org secret $name (visibility: all)"
-}
-
-gh_variable_set_org() { # gh_variable_set_org NAME ORG VALUE
-  local name="$1" org="$2" value="$3"
-  if [[ "$DRY_RUN" == "1" ]]; then
-    dry "would run: gh variable set $name --org $org --visibility all --body $value"
-    return 0
-  fi
-  if [[ "${IIDP_WIZARD_FAKE:-0}" == "1" ]]; then
-    ok "(fake) set org variable $name=$value"
-    return 0
-  fi
-  gh variable set "$name" --org "$org" --visibility all --body "$value" \
-    || die "gh variable set $name --org $org failed"
-  ok "set org variable $name (visibility: all)"
-}
-
 latest_release_tag() { # latest_release_tag OWNER/REPO -> prints tag, or nothing
   local repo="$1"
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -1106,7 +1071,7 @@ verify_grafana_push() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────
-# Stage 5: GitHub App for CI write-back
+# Stage 5: GitHub App for the Deploy gate and ArgoCD
 # ──────────────────────────────────────────────────────────────────────────
 
 GITHUB_APP_ID="" GITHUB_APP_INSTALLATION_ID="" GITHUB_ORG="" PEM_PATH=""
@@ -1165,7 +1130,7 @@ tfvars_write_github_app() {
 }
 
 stage_github_app() {
-  stage "GitHub App for CI write-back"
+  stage "GitHub App for the Deploy gate and ArgoCD"
   local platform_yaml="$PLATFORM_REPO/platform.yaml"
   local tfvars="$INFRA_PLATFORM_DIR/terraform.tfvars"
   local existing_id existing_pem
@@ -1220,10 +1185,9 @@ stage_github_app() {
 
   require_pem_file PEM_PATH
 
-  gh_secret_set_org IIDP_DEPLOY_APP_PRIVATE_KEY "$GITHUB_ORG" "$PEM_PATH" --from-file
-  gh_variable_set_org IIDP_DEPLOY_APP_ID "$GITHUB_ORG" "$GITHUB_APP_ID"
-  log_choice "org secret IIDP_DEPLOY_APP_PRIVATE_KEY and org variable IIDP_DEPLOY_APP_ID are what ticket #12's deploy workflow reads"
-
+  # The key goes to the node only, never to an org Actions secret: the
+  # Deploy gate and ArgoCD both read it from the Secret cloud-init writes
+  # (docs/implementation-notes/60-deploy-gate.md).
   tfvars_write_github_app "$tfvars" "$GITHUB_APP_ID" "$GITHUB_APP_INSTALLATION_ID" "$PEM_PATH"
 }
 
@@ -1486,7 +1450,7 @@ grafanaURL: ${GRAFANA_URL}
 # The application chart version the CLI writes into new Environments.
 chartVersion: ${chart_version}
 
-# The org GitHub App the deploy workflow uses to write image tags back.
+# The org GitHub App the Deploy gate commits deploys as (documentation only).
 githubApp:
   id: ${GITHUB_APP_ID}
   installationId: ${GITHUB_APP_INSTALLATION_ID}

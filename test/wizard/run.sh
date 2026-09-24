@@ -550,7 +550,7 @@ tfvars_content=$(cat "$d/infra-platform/terraform.tfvars" 2>/dev/null || echo "M
 assert_contains "$tfvars_content" "fresh-key"
 assert_not_contains "$tfvars_content" "should-not-be-written"
 
-t_start "stage_github_app (fresh App) creates the App, sets org secret/variable, and writes tfvars"
+t_start "stage_github_app (fresh App) creates the App and writes tfvars"
 d=$(scratch_dir)
 mkdir -p "$d/platform-repo" "$d/infra-platform"
 cat > "$d/platform-repo/platform.yaml" <<'EOF'
@@ -573,9 +573,12 @@ out=$(in_wizard "
 rc=$?
 t_start "stage_github_app (fresh App) exits 0"
 assert_success "$rc"
-t_start "stage_github_app (fresh App) sets the org secret and variable"
-assert_contains "$out" "(fake) set org secret IIDP_DEPLOY_APP_PRIVATE_KEY"
-assert_contains "$out" "(fake) set org variable IIDP_DEPLOY_APP_ID=5555"
+# The App key stays out of CI: only the Deploy gate and ArgoCD hold it,
+# from the Secret cloud-init writes (docs/implementation-notes/60-deploy-gate.md).
+t_start "stage_github_app (fresh App) sets no org secret or variable"
+assert_not_contains "$out" "org secret"
+assert_not_contains "$out" "org variable"
+assert_not_contains "$out" "IIDP_DEPLOY_APP"
 t_start "stage_github_app (fresh App) writes the tfvars credential for ArgoCD"
 tfvars_content=$(cat "$d/infra-platform/terraform.tfvars" 2>/dev/null || echo "MISSING")
 assert_contains "$tfvars_content" 'platform_repo_github_app_id = "5555"'

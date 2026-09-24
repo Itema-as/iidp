@@ -54,6 +54,11 @@ func ValidateDomains(domains []string, baseDomain, cloudflareZone string, platfo
 				return nil, fmt.Errorf("--domain %q is a Platform address of this Application; remove it", host)
 			}
 		}
+		for _, reserved := range ReservedNames {
+			if host == reserved+"."+baseDomain {
+				return nil, fmt.Errorf("--domain %q is the Platform's own address; it cannot be an Application's", host)
+			}
+		}
 		if seen[host] {
 			return nil, fmt.Errorf("--domain %q is listed twice", host)
 		}

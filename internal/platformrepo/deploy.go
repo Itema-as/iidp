@@ -14,122 +14,150 @@ import (
 	"github.com/Itema-as/iidp/internal/render"
 )
 
-// EnvironmentAuto is the environment argument iidp ci set-image accepts
-// besides prod and staging: it targets staging when the Application has
-// one and prod otherwise, decided from the Platform repository, never by
-// the caller (docs/implementation-notes/12-deploy-workflow.md).
+// EnvironmentAuto is the Environment a deploy asks for when it leaves the
+// choice to the Platform: the Deploy gate turns it into staging or prod
+// from the Platform repository and the ref being deployed, never from what
+// the workflow says (docs/implementation-notes/60-deploy-gate.md).
 const EnvironmentAuto = "auto"
 
-// SetImageTag writes tag into image.tag of application's environment
-// values.yaml, where environment is "prod", "staging" or EnvironmentAuto.
-// It clones main, resolves auto (if given) by checking whether the
-// Application has a staging Environment, edits image.tag in place (every
-// other key, and every comment, untouched), commits
-// "Deploy <application> <environment> <tag>" and pushes, with the same
-// push-and-retry-on-moved-main logic as CreateApplication.
-func (w *Writer) SetImageTag(ctx context.Context, application, environment, tag string) (Result, error) {
-	return runWithRetry(ctx, func(ctx context.Context, _ bool) (Result, error) {
-		return w.attemptSetImageTag(ctx, application, environment, tag)
+// ImageTagChange is one Deploy or Promote: a new image tag for one
+// Environment of an Application.
+type ImageTagChange struct {
+	Application string
+	Tag         string
+	// Environment decides, on each fresh clone at dir, which Environment
+	// the tag is written to, or refuses the change by returning an error.
+	// It runs once the Application is known to have a directory, so it can
+	// read the Application's binding and look for a staging Environment in
+	// the same clone the write is made from. Nothing is written when it
+	// errors.
+	Environment func(dir string) (string, error)
+	// Body, when set, follows the commit subject after a blank line.
+	Body string
+}
+
+// DeployResult is what SetImageTag wrote.
+type DeployResult struct {
+	// Environment is the Environment the tag was written to.
+	Environment string
+	// File is the values file, relative to the Platform repository root.
+	File string
+	// Commit is the commit that wrote it, or "" when Unchanged.
+	Commit string
+	// Unchanged is true when the Environment already ran this tag: nothing
+	// was committed, so a retried request is harmless.
+	Unchanged bool
+}
+
+// SetImageTag writes change.Tag into image.tag of an Environment's
+// values.yaml. It clones main, refuses an Application with no directory,
+// asks change.Environment which Environment to write, refuses one without
+// a live application.yaml, edits image.tag in place (every other key, and
+// every comment, untouched), commits "Deploy <application> <environment>
+// <tag>" and pushes, with the same retry-once-on-a-moved-main logic as
+// CreateApplication. Every check runs again on the retry's fresh clone.
+func (w *Writer) SetImageTag(ctx context.Context, change ImageTagChange) (DeployResult, error) {
+	if change.Environment == nil {
+		return DeployResult{}, errors.New("SetImageTag: no Environment decision")
+	}
+	return runWithRetry(ctx, func(ctx context.Context, _ bool) (DeployResult, error) {
+		return w.attemptSetImageTag(ctx, change)
 	})
 }
 
-func (w *Writer) attemptSetImageTag(ctx context.Context, application, environment, tag string) (Result, error) {
+func (w *Writer) attemptSetImageTag(ctx context.Context, change ImageTagChange) (DeployResult, error) {
 	dir, err := os.MkdirTemp("", "iidp-platform-")
 	if err != nil {
-		return Result{}, err
+		return DeployResult{}, err
 	}
 	defer os.RemoveAll(dir)
 
 	repo, err := git.Clone(ctx, w.URL, Branch, dir, w.Auth)
 	if err != nil {
-		return Result{}, fmt.Errorf("cloning %s: %w", platform.Repository, err)
+		return DeployResult{}, fmt.Errorf("cloning %s: %w", platform.Repository, err)
 	}
-	// Purely informational: platform.yaml's githubApp.installationId, when
-	// the wizard recorded one, documents which installation this command
-	// is expected to run as. Nothing here depends on it (see
-	// docs/implementation-notes/12-deploy-workflow.md).
-	documentedInstallationID, hasDocumentedInstallationID := PeekGitHubAppInstallationID(dir)
 
-	// ErrApplicationMissing is the same error internal/platformrepo/capability.go
-	// wraps for add-capability's "unknown Application" refusal.
-	appDir := filepath.Join(dir, filepath.FromSlash(ApplicationsDir), application)
+	appDir := filepath.Join(dir, filepath.FromSlash(ApplicationsDir), change.Application)
 	switch _, err := os.Stat(appDir); {
 	case errors.Is(err, fs.ErrNotExist):
-		return Result{}, fmt.Errorf("%w: %q has no directory under %s/ in %s", ErrApplicationMissing, application, ApplicationsDir, platform.Repository)
+		return DeployResult{}, fmt.Errorf("%w: %q has no directory under %s/ in %s", ErrApplicationMissing, change.Application, ApplicationsDir, platform.Repository)
 	case err != nil:
-		return Result{}, fmt.Errorf("checking for the Application: %w", err)
+		return DeployResult{}, fmt.Errorf("checking for the Application: %w", err)
 	}
 
-	resolved, err := resolveEnvironment(appDir, environment)
+	environment, err := change.Environment(dir)
 	if err != nil {
-		return Result{}, err
+		return DeployResult{}, err
 	}
-
-	envDir := EnvironmentDir(application, resolved)
-	switch _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(envDir))); {
-	case errors.Is(err, fs.ErrNotExist):
-		return Result{}, fmt.Errorf("%w: %s has no %s Environment for %q (expected %s/)", ErrEnvironmentMissing, platform.Repository, resolved, application, envDir)
-	case err != nil:
-		return Result{}, fmt.Errorf("checking for the Environment: %w", err)
+	live, err := HasEnvironment(dir, change.Application, environment)
+	if err != nil {
+		return DeployResult{}, err
+	}
+	envDir := EnvironmentDir(change.Application, environment)
+	if !live {
+		return DeployResult{}, fmt.Errorf("%w: %s has no %s Environment for %q (expected %s/application.yaml)", ErrEnvironmentMissing, platform.Repository, environment, change.Application, envDir)
 	}
 
 	valuesRelPath := path.Join(envDir, "values.yaml")
 	valuesAbs := filepath.Join(dir, filepath.FromSlash(valuesRelPath))
 	data, err := os.ReadFile(valuesAbs)
 	if err != nil {
-		return Result{}, fmt.Errorf("reading %s: %w", valuesRelPath, err)
+		return DeployResult{}, fmt.Errorf("reading %s: %w", valuesRelPath, err)
 	}
-	data, _, err = render.SetImageTag(data, tag)
+	data, changed, err := render.SetImageTag(data, change.Tag)
 	if err != nil {
-		return Result{}, fmt.Errorf("%s: %w", valuesRelPath, err)
+		return DeployResult{}, fmt.Errorf("%s: %w", valuesRelPath, err)
+	}
+	res := DeployResult{Environment: environment, File: valuesRelPath}
+	if !changed {
+		res.Unchanged = true
+		return res, nil
 	}
 	if err := os.WriteFile(valuesAbs, data, 0o644); err != nil {
-		return Result{}, err
+		return DeployResult{}, err
 	}
 
 	if err := repo.Add(ctx, valuesRelPath); err != nil {
-		return Result{}, err
+		return DeployResult{}, err
 	}
-	message := fmt.Sprintf("Deploy %s %s %s", application, resolved, tag)
+	message := fmt.Sprintf("Deploy %s %s %s", change.Application, environment, change.Tag)
+	if change.Body != "" {
+		message += "\n\n" + change.Body
+	}
 	if err := repo.Commit(ctx, message); err != nil {
-		return Result{}, err
+		return DeployResult{}, err
 	}
 	if w.BeforePush != nil {
 		if err := w.BeforePush(); err != nil {
-			return Result{}, err
+			return DeployResult{}, err
 		}
 	}
 	if err := repo.Push(ctx, Branch); err != nil {
 		if errors.Is(err, git.ErrPushRejected) {
-			return Result{}, err
+			return DeployResult{}, err
 		}
-		return Result{}, fmt.Errorf("pushing to %s: %w\nIf this is a permission error, the GitHub App needs contents: write on %s", platform.Repository, err, platform.Repository)
+		return DeployResult{}, fmt.Errorf("pushing to %s: %w\nIf this is a permission error, the GitHub App needs contents: write on %s", platform.Repository, err, platform.Repository)
 	}
-	res := Result{Files: []string{valuesRelPath}, Environment: resolved}
-	if hasDocumentedInstallationID {
-		res.DocumentedGitHubAppInstallationID = documentedInstallationID
+	res.Commit, err = repo.Head(ctx)
+	if err != nil {
+		return DeployResult{}, err
 	}
 	return res, nil
 }
 
-// resolveEnvironment turns environment (prod, staging or EnvironmentAuto)
-// into the Environment SetImageTag actually writes: EnvironmentAuto
-// resolves to staging when appDir (the Application's directory in the
-// already-cloned Platform repository) has one, prod otherwise. prod and
-// staging pass through validated as themselves.
-func resolveEnvironment(appDir, environment string) (string, error) {
-	if environment != EnvironmentAuto {
-		if err := ValidateEnvironmentName(environment); err != nil {
-			return "", err
-		}
-		return environment, nil
+// HasEnvironment reports whether application has a live environment (an
+// application.yaml ArgoCD applies) in the clone of the Platform repository
+// at dir.
+func HasEnvironment(dir, application, environment string) (bool, error) {
+	if err := ValidateEnvironmentName(environment); err != nil {
+		return false, err
 	}
-	switch _, err := os.Stat(filepath.Join(appDir, "staging")); {
+	switch _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(EnvironmentDir(application, environment)), "application.yaml")); {
 	case err == nil:
-		return "staging", nil
+		return true, nil
 	case errors.Is(err, fs.ErrNotExist):
-		return "prod", nil
+		return false, nil
 	default:
-		return "", fmt.Errorf("checking for a staging Environment: %w", err)
+		return false, fmt.Errorf("checking for the %s Environment: %w", environment, err)
 	}
 }
