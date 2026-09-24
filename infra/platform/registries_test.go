@@ -1,7 +1,8 @@
 package platform_test
 
 // Tests for issue #59: cloud-init writes k3s's registries.yaml, the node's
-// GHCR pull credential, before k3s starts.
+// GHCR pull credential, before k3s starts. And for #61: it also writes the
+// Deploy gate's copy of the token, a Secret manifest iidp-bootstrap applies.
 //
 // Two renders of the same template. renderTemplate below substitutes the
 // template's ${name} values in Go and runs everywhere, CI's Go job
@@ -145,9 +146,69 @@ func assertRegistriesYAML(t *testing.T, rendered, wantUser, wantToken string) {
 	}
 }
 
+const gatePullSecretPath = "/etc/iidp/ghcr-pull-token.yaml"
+
+// assertGatePullSecret checks the Deploy gate's copy of the token (#61):
+// cloud-init writes the manifest of Secret argocd/ghcr-pull-token, with
+// the given username and token under the keys the gate's chart mounts, to
+// a root-only file, and iidp-bootstrap applies that file before the root
+// Application, so the gate finds the Secret when ArgoCD first installs it.
+func assertGatePullSecret(t *testing.T, rendered, wantUser, wantToken string) {
+	t.Helper()
+	var cfg cloudConfig
+	if err := yaml.Unmarshal([]byte(rendered), &cfg); err != nil {
+		t.Fatalf("the rendered cloud-config is not valid YAML: %v", err)
+	}
+	found := 0
+	for _, f := range cfg.WriteFiles {
+		if f.Path != gatePullSecretPath {
+			continue
+		}
+		found++
+		if f.Permissions != "0600" || f.Owner != "root:root" {
+			t.Errorf("%s is %s %s, want 0600 root:root: it holds the token", gatePullSecretPath, f.Permissions, f.Owner)
+		}
+		if f.Encoding != "b64" {
+			t.Fatalf("%s has encoding %q, want b64", gatePullSecretPath, f.Encoding)
+		}
+		content, err := base64.StdEncoding.DecodeString(f.Content)
+		if err != nil {
+			t.Fatalf("%s content is not valid base64: %v", gatePullSecretPath, err)
+		}
+		var secret struct {
+			APIVersion string `yaml:"apiVersion"`
+			Kind       string `yaml:"kind"`
+			Metadata   struct {
+				Name      string `yaml:"name"`
+				Namespace string `yaml:"namespace"`
+			} `yaml:"metadata"`
+			StringData map[string]string `yaml:"stringData"`
+		}
+		if err := yaml.Unmarshal(content, &secret); err != nil {
+			t.Fatalf("%s is not valid YAML: %v\n---\n%s", gatePullSecretPath, err, content)
+		}
+		if secret.APIVersion != "v1" || secret.Kind != "Secret" || secret.Metadata.Name != "ghcr-pull-token" || secret.Metadata.Namespace != "argocd" {
+			t.Errorf("%s is %s %s %s/%s, want the v1 Secret argocd/ghcr-pull-token the gate's chart mounts", gatePullSecretPath, secret.APIVersion, secret.Kind, secret.Metadata.Namespace, secret.Metadata.Name)
+		}
+		if len(secret.StringData) != 2 || secret.StringData["username"] != wantUser || secret.StringData["token"] != wantToken {
+			t.Errorf("%s stringData = %v, want exactly username %q and the token", gatePullSecretPath, secret.StringData, wantUser)
+		}
+	}
+	if found != 1 {
+		t.Fatalf("write_files has %d entries for %s, want 1", found, gatePullSecretPath)
+	}
+
+	apply := strings.Index(rendered, "kubectl apply --server-side -f "+gatePullSecretPath)
+	root := strings.Index(rendered, "name: platform\n")
+	if apply < 0 || root < 0 || apply > root {
+		t.Errorf("iidp-bootstrap must apply %s before the root Application (apply at %d, root Application at %d)", gatePullSecretPath, apply, root)
+	}
+}
+
 func TestCloudInitWritesRegistriesYAMLBeforeK3sStarts(t *testing.T) {
 	const user, token = "platform-admin", "ghp_TestToken0123456789abcdefABCDEF0123"
 	registries := "configs:\n  ghcr.io:\n    auth:\n      username: " + user + "\n      password: " + token + "\n"
+	gateSecret := "apiVersion: v1\nkind: Secret\nmetadata:\n  name: ghcr-pull-token\n  namespace: argocd\ntype: Opaque\nstringData:\n  username: " + user + "\n  token: " + token + "\n"
 	rendered := renderTemplate(t, readCloudInitTemplate(t), map[string]string{
 		"k3s_version":                              "v1.36.4+k3s1",
 		"argocd_chart_version":                     "10.9.2",
@@ -159,8 +220,10 @@ func TestCloudInitWritesRegistriesYAMLBeforeK3sStarts(t *testing.T) {
 		"platform_repo_github_app_installation_id": "78901234",
 		"platform_repo_github_app_private_key_b64": base64.StdEncoding.EncodeToString([]byte("-----BEGIN RSA PRIVATE KEY-----\nx\n-----END RSA PRIVATE KEY-----\n")),
 		"registries_yaml_b64":                      base64.StdEncoding.EncodeToString([]byte(registries)),
+		"ghcr_pull_secret_yaml_b64":                base64.StdEncoding.EncodeToString([]byte(gateSecret)),
 	})
 	assertRegistriesYAML(t, rendered, user, token)
+	assertGatePullSecret(t, rendered, user, token)
 }
 
 // TestOpenTofuRendersRegistriesYAML renders the real user data: bootstrap.tf,
@@ -233,6 +296,7 @@ ghcr_pull_token    = "`+token+`"
 		t.Fatalf("tofu output -raw user_data: %v", err)
 	}
 	assertRegistriesYAML(t, string(rendered), user, token)
+	assertGatePullSecret(t, string(rendered), user, token)
 }
 
 func writeFile(t *testing.T, path, content string) {

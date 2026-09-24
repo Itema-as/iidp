@@ -146,9 +146,12 @@ variable "platform_repo_github_app_private_key" {
 # pulls from outside Actions, never a GitHub App token, so this is one
 # classic token with only the read:packages scope. cloud-init writes both
 # values into k3s's /etc/rancher/k3s/registries.yaml (local.registries_yaml
-# in bootstrap.tf) before k3s first starts. Like the App key above, a change
-# here never reaches a running node through tofu apply alone: see "Adding
-# or rotating the GHCR pull token" in infra/README.md. No default: the
+# in bootstrap.tf) before k3s first starts, and into the Secret
+# argocd/ghcr-pull-token (local.ghcr_pull_secret_yaml), the Deploy gate's
+# copy, with which it checks that an image tag exists (#61). Like the App
+# key above, a change here never reaches a running node through tofu
+# apply alone: see "Adding or rotating the GHCR pull token" in
+# infra/README.md. No default: the
 # token belongs to one GitHub account (the Platform admin's at first, a
 # machine user's after #56).
 

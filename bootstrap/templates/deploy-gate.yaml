@@ -5,7 +5,10 @@
 # runs in the argocd namespace because that is where the iidp-deploy App's
 # key already is: the Secret platform-repo-github-app cloud-init writes for
 # ArgoCD, which the gate mounts
-# (docs/implementation-notes/60-deploy-gate.md).
+# (docs/implementation-notes/60-deploy-gate.md). It also mounts
+# ghcr-pull-token, the GHCR pull token cloud-init writes next to it, to
+# check that an image tag exists
+# (docs/implementation-notes/61-image-check.md).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -33,6 +36,7 @@ spec:
         githubAPI: {{ .Values.deployGate.githubAPI | quote }}
         platformRepository: {{ .Values.deployGate.platformRepository | quote }}
         appSecret: {{ .Values.deployGate.appSecret }}
+        ghcrSecret: {{ .Values.deployGate.ghcrSecret }}
   destination:
     {{- include "iidp-bootstrap.destination" . | nindent 4 }}
     namespace: argocd

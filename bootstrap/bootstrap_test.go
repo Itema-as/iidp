@@ -259,6 +259,9 @@ func TestDeployGateFollowsTheBootstrapAndThePlatformValues(t *testing.T) {
 	if got := get[string](t, values, "appSecret"); got != "platform-repo-github-app" {
 		t.Errorf("appSecret = %q, want ArgoCD's Platform-repository credential", got)
 	}
+	if got := get[string](t, values, "ghcrSecret"); got != "ghcr-pull-token" {
+		t.Errorf("ghcrSecret = %q, want the GHCR pull token cloud-init writes", got)
+	}
 }
 
 // The kind fixture's platform.yaml swaps GitHub for the harness's
@@ -300,6 +303,7 @@ func TestDeployGateComponentRendersTheGate(t *testing.T) {
 		"IIDP_GATE_OIDC_ISSUER":   "https://token.actions.githubusercontent.com",
 		"IIDP_GATE_PLATFORM_REPO": "https://github.com/Itema-as/iidp-platform.git",
 		"IIDP_GATE_APP_DIR":       "/var/run/iidp-deploy-gate/app",
+		"IIDP_GATE_GHCR_DIR":      "/var/run/iidp-deploy-gate/ghcr",
 	} {
 		if env[name] != want {
 			t.Errorf("env %s = %q, want %q", name, env[name], want)
@@ -309,24 +313,42 @@ func TestDeployGateComponentRendersTheGate(t *testing.T) {
 		t.Errorf("cpu request = %q, want 5m: the node and the kind runner are near their CPU request limits", got)
 	}
 
-	var secret object
-	for _, v := range get[[]any](t, pod, "volumes") {
-		if m := v.(object); m["name"] == "app" {
-			secret = get[object](t, m, "secret")
+	// Each Secret is mounted with only the keys the gate reads, at the
+	// directory its environment variable names.
+	mounts := map[string]string{}
+	for _, m := range get[[]any](t, container, "volumeMounts") {
+		mounts[m.(object)["name"].(string)] = fmt.Sprint(m.(object)["mountPath"])
+	}
+	for _, want := range []struct{ volume, secretName, keys, mountPath, why string }{
+		{"app", "platform-repo-github-app", "githubAppID,githubAppInstallationID,githubAppPrivateKey", env["IIDP_GATE_APP_DIR"], "ArgoCD's Platform-repository credential: only the App's id, installation id and key"},
+		{"ghcr", "ghcr-pull-token", "username,token", env["IIDP_GATE_GHCR_DIR"], "the GHCR pull token cloud-init writes"},
+	} {
+		var secret object
+		for _, v := range get[[]any](t, pod, "volumes") {
+			if m := v.(object); m["name"] == want.volume {
+				secret = get[object](t, m, "secret")
+			}
 		}
-	}
-	if secret == nil {
-		t.Fatalf("no app volume")
-	}
-	if got := get[string](t, secret, "secretName"); got != "platform-repo-github-app" {
-		t.Errorf("secretName = %q, want ArgoCD's Platform-repository credential", got)
-	}
-	var items []string
-	for _, item := range get[[]any](t, secret, "items") {
-		items = append(items, item.(object)["key"].(string))
-	}
-	if got := strings.Join(items, ","); got != "githubAppID,githubAppInstallationID,githubAppPrivateKey" {
-		t.Errorf("secret items = %s, want only the App's id, installation id and key", got)
+		if secret == nil {
+			t.Errorf("no %s volume", want.volume)
+			continue
+		}
+		if got := get[string](t, secret, "secretName"); got != want.secretName {
+			t.Errorf("%s secretName = %q, want %s", want.volume, got, want.why)
+		}
+		if _, optional := secret["optional"]; optional {
+			t.Errorf("the %s volume is optional; the gate must not start without it", want.volume)
+		}
+		var items []string
+		for _, item := range get[[]any](t, secret, "items") {
+			items = append(items, item.(object)["key"].(string))
+		}
+		if got := strings.Join(items, ","); got != want.keys {
+			t.Errorf("%s secret items = %s, want %s: %s", want.volume, got, want.keys, want.why)
+		}
+		if mounts[want.volume] != want.mountPath {
+			t.Errorf("the %s volume is mounted at %q, want %q", want.volume, mounts[want.volume], want.mountPath)
+		}
 	}
 
 	ingress, ok := objects["Ingress/iidp-deploy-gate"]

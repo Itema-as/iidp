@@ -37,8 +37,8 @@ import (
 // gone afterwards. Last (testDeployGate) it proves #60: a deploy through the
 // Deploy gate, authenticated by an OIDC token from the harness's fake
 // issuer, lands in the Platform repository and brochure-prod syncs it,
-// while a call from another repository and one from a disallowed ref are
-// refused.
+// while a call from another repository, one from a disallowed ref and
+// (#61) one with a tag Docker Hub does not have are refused.
 //
 // Run with:
 //
@@ -177,9 +177,11 @@ const brochureRepositoryID = 700000001
 // testDeployGate proves #60 end to end: the Deploy gate the bootstrap
 // installed, reached through Traefik at deploy.<baseDomain> with a token
 // from the harness's fake issuer, refuses a call from another repository
-// of the org and a call from a ref that may not deploy, then deploys
-// brochure's first image from main. The commit lands in the Platform
-// repository authored by the token's actor and committed by the App, and
+// of the org, a call from a ref that may not deploy and (#61) a tag its
+// image repository does not have, then deploys brochure's first image
+// from main, a tag the gate has checked on Docker Hub. The commit lands in
+// the Platform repository authored by the token's actor and committed by
+// the App, and
 // brochure-prod syncs it: the Environment that rendered nothing
 // (testUnreleasedEnvironments) now answers HTTP 200.
 func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer *FakeIssuer) {
@@ -213,6 +215,13 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 	status, msg = call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/feature"), "1.27-alpine")
 	if status != http.StatusForbidden || !strings.Contains(msg, "refs/heads/feature") {
 		t.Errorf("a call from refs/heads/feature: HTTP %d %q, want 403 naming the ref", status, msg)
+	}
+	// brochure's own repository, from main, with a tag Docker Hub does not
+	// have: the gate's image check (#61) asks the real registry, as it
+	// does for the deploy below.
+	status, msg = call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/main"), "iidp-e2e-no-such-tag")
+	if status != http.StatusUnprocessableEntity || !strings.Contains(msg, "docker.io/library/nginx:iidp-e2e-no-such-tag does not exist") {
+		t.Errorf("a tag that was never pushed: HTTP %d %q, want 422 naming the image", status, msg)
 	}
 
 	// The deploy. brochure has no staging, so main deploys to prod.

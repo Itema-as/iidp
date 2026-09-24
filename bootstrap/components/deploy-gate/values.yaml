@@ -41,6 +41,13 @@ platformRepository: https://github.com/Itema-as/iidp-platform.git
 # githubAppInstallationID, githubAppPrivateKey).
 appSecret: platform-repo-github-app
 
+# The Secret holding the GHCR pull token the gate checks that a private
+# image tag exists with, in the same namespace (keys username and token).
+# cloud-init writes it from the same OpenTofu variables as the node's
+# registries.yaml (infra/README.md, "Adding or rotating the GHCR pull
+# token"; docs/implementation-notes/61-image-check.md).
+ghcrSecret: ghcr-pull-token
+
 # Small on purpose: the node, and the kind runner, are near their CPU
 # request limits. A deploy is one shallow clone and one push.
 resources:

@@ -3,8 +3,11 @@
 # mounts that Secret as a volume: a pod can only mount a Secret of its own
 # namespace, and a volume needs no Kubernetes API access, so the pod runs
 # without a service account token and no Role grants anything
-# (docs/implementation-notes/60-deploy-gate.md). The files are read on every
-# call, so a rotated key is picked up without a restart.
+# (docs/implementation-notes/60-deploy-gate.md). It mounts the GHCR pull
+# token's Secret the same way, to check that an image tag exists before
+# committing it (docs/implementation-notes/61-image-check.md). The files are
+# read on every call, so a rotated key or token is picked up without a
+# restart.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,6 +52,8 @@ spec:
               value: {{ .Values.githubOrgId | int64 | toString | quote }}
             - name: IIDP_GATE_APP_DIR
               value: /var/run/iidp-deploy-gate/app
+            - name: IIDP_GATE_GHCR_DIR
+              value: /var/run/iidp-deploy-gate/ghcr
             - name: IIDP_GATE_OIDC_ISSUER
               value: {{ .Values.oidc.issuer | quote }}
             {{- with .Values.oidc.jwksURL }}
@@ -86,6 +91,9 @@ spec:
             - name: app
               mountPath: /var/run/iidp-deploy-gate/app
               readOnly: true
+            - name: ghcr
+              mountPath: /var/run/iidp-deploy-gate/ghcr
+              readOnly: true
             # git's clones of the Platform repository.
             - name: tmp
               mountPath: /tmp
@@ -101,6 +109,15 @@ spec:
                 path: githubAppInstallationID
               - key: githubAppPrivateKey
                 path: githubAppPrivateKey
+        - name: ghcr
+          secret:
+            secretName: {{ .Values.ghcrSecret }}
+            defaultMode: 0440
+            items:
+              - key: username
+                path: username
+              - key: token
+                path: token
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi

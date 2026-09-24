@@ -75,6 +75,11 @@ deployGate:
   # namespace, written by cloud-init: the gate reads the iidp-deploy App's
   # id, installation id and key from it.
   appSecret: platform-repo-github-app
+  # The GHCR pull token (keys username and token), in the argocd
+  # namespace, written by cloud-init from the same OpenTofu variables as
+  # the node's registries.yaml: the gate checks that an image tag exists
+  # with it before committing the tag.
+  ghcrSecret: ghcr-pull-token
 
 # Where this chart lives, for the component Applications that point back at
 # it (bootstrap/components/*). The Platform repository sets both from ArgoCD's

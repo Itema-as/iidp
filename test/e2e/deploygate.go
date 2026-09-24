@@ -30,6 +30,9 @@ import (
 // (test/e2e/testdata/fakegithub), an in-cluster stand-in for both GitHub
 // Actions' OIDC issuer and the three GitHub REST calls the gate makes. The
 // fixture Platform repository's platform.yaml points the gate at all three.
+// The image check is not stood in for: the gate asks Docker Hub itself
+// whether brochure's nginx tag exists, the registry the node pulls it
+// from.
 const (
 	deployGateImage = "iidp-e2e.local/deploy-gate:dev"
 	fakeGitHubImage = "iidp-e2e.local/fake-github:dev"
@@ -102,7 +105,9 @@ func (f *FakeIssuer) Sign(claims map[string]any) (string, error) {
 // and loads it into the node, creates the GitHub App credential Secret
 // cloud-init writes on the Platform (argocd/platform-repo-github-app, but
 // without the label that would make ArgoCD use it: the harness's git server
-// takes no credential), and runs fakegithub with a fresh OIDC signing key
+// takes no credential) and the GHCR pull token Secret
+// (argocd/ghcr-pull-token, with a token that is never used), and runs
+// fakegithub with a fresh OIDC signing key
 // and App key. It runs before the root Application, so the gate's first
 // pod finds everything it needs.
 func (c *Cluster) InstallDeployGateStandIns(ctx context.Context) (*FakeIssuer, error) {
@@ -160,6 +165,20 @@ func (c *Cluster) InstallDeployGateStandIns(ctx context.Context) (*FakeIssuer, e
 		return nil, fmt.Errorf("render the App credential Secret: %w\n%s", err, secret)
 	}
 	if err := c.Apply(ctx, secret); err != nil {
+		return nil, err
+	}
+	// The GHCR pull token cloud-init writes for the gate. The gate needs
+	// it to start, but never sends it here: the only images it checks in
+	// kind are brochure's, on Docker Hub, which it asks anonymously, and
+	// it sends the token to ghcr.io alone
+	// (docs/implementation-notes/61-image-check.md).
+	pullSecret, err := c.Kubectl(ctx, "-n", "argocd", "create", "secret", "generic", "ghcr-pull-token",
+		"--from-literal=username=iidp-e2e", "--from-literal=token=ghp_notarealtoken",
+		"--dry-run=client", "-o", "yaml")
+	if err != nil {
+		return nil, fmt.Errorf("render the GHCR pull token Secret: %w\n%s", err, pullSecret)
+	}
+	if err := c.Apply(ctx, pullSecret); err != nil {
 		return nil, err
 	}
 

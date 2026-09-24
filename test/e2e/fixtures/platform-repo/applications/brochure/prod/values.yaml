@@ -7,7 +7,9 @@
 # TestBootstrap then deploys its first image through the Deploy gate
 # (testDeployGate), which writes image.tag. kind has no GHCR, so the image
 # repository is nginx, which a Static site's chart serves on port 80 and
-# shop's Environments have already pulled.
+# shop's Environments have already pulled. The gate checks the tag on
+# Docker Hub before committing it, anonymously, the way it checks a public
+# image (docs/implementation-notes/61-image-check.md).
 application:
   name: brochure
 environment: prod
