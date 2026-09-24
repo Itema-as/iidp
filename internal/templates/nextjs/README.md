@@ -39,3 +39,26 @@ from `main` or a `v*` tag, before it commits anything. The gate's address,
 Images stay private in GHCR: the workflow pushes them with its own
 `GITHUB_TOKEN`, and the Platform pulls them with its own read-only
 credential.
+
+## Migrations
+
+`iidp.yaml` holds the migration command, if this Application has a
+Postgres database:
+
+```yaml
+migrationCommand: npx prisma migrate deploy
+```
+
+It runs before every rollout, in each Environment this Application deploys
+to: a one-off container from the image just built, with `DATABASE_URL` and
+the Application's environment and secrets set, under `sh -c` (one line;
+chain steps with `&&`). If it fails, the rollout stops and the previous
+version keeps running.
+
+`iidp ci set-image` reads `iidp.yaml` from the commit it deploys, and the
+promote job checks out the tagged commit to do the same, so the command
+always matches the code it migrates: staging gets it on the push to
+`main`, prod with the `v*` tag. Remove the line to run no migration. The
+database comes from the Postgres Capability
+(`iidp app add-capability {{.Name}} --postgres`); a command without it is
+refused.

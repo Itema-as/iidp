@@ -1,0 +1,12 @@
+# The iidp.yaml of shop's Application repository, at the commit the kind
+# e2e deploys (testMigrationCommandFromIidpYAML). The test reads it with the
+# same code iidp ci set-image uses and sends its migrationCommand to the
+# Deploy gate with the image tag, as the deploy workflow does. The gate
+# writes it into shop's prod values.yaml, and the test asserts that the
+# migration Job ran this command: its last word is a marker the Job's log
+# must show.
+#
+# Like the fixture Platform repository's own command for shop, it fails
+# unless DATABASE_URL is set and shop's CloudNativePG read-write Service
+# accepts connections.
+migrationCommand: test -n "$DATABASE_URL" && nc -z -w 5 shop-db-rw 5432 && echo "migrated by the command in iidp.yaml"

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/Itema-as/iidp/internal/appconfig"
 	"github.com/Itema-as/iidp/internal/apprepo"
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/github"
@@ -88,8 +89,9 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 			"commented Dockerfile stub for --framework other), and pushes the first\n" +
 			"commit. With --path adopt --repo " + platform.Org + "/<name>, it instead opens a\n" +
 			"pull request on that existing repository, adding only a Dockerfile (when\n" +
-			"it has none, generated from its detected framework) and the deploy\n" +
-			"workflow. Only repositories in " + platform.Org + " can be Applications: transfer\n" +
+			"it has none, generated from its detected framework), the deploy workflow\n" +
+			"and iidp.yaml, which holds the migration command each deploy sends the\n" +
+			"Platform. Only repositories in " + platform.Org + " can be Applications: transfer\n" +
 			"one there before adopting it. Both paths bind the Application to its\n" +
 			"repository by GitHub's numeric ids, so a rename keeps it deployable.\n" +
 			"Without --path, it writes only the prod Environment to the Platform\n" +
@@ -123,7 +125,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f.StringVar(&opts.probePath, "probe-path", "/", "Path the readiness and liveness probes request")
 	f.BoolVar(&opts.yes, "yes", false, "Skip the confirmation (nothing is asked yet; accepted so scripts keep working once the wizard asks)")
 	f.BoolVar(&opts.postgres, "postgres", false, "Add a Postgres database Capability: DATABASE_URL injected into every Environment, continuous backups")
-	f.StringVar(&opts.migrationCommand, "migration-command", "", "Shell command run before every rollout with DATABASE_URL set (requires --postgres); detected from Prisma, Drizzle or an npm migrate script when omitted")
+	f.StringVar(&opts.migrationCommand, "migration-command", "", "Shell command run before every rollout with DATABASE_URL set, written to the Application repository's iidp.yaml (requires --postgres); detected from Prisma, Drizzle or an npm migrate script when omitted")
 	f.StringVar(&opts.appDir, "app-dir", "", "Directory to detect the migration command in (default: the generated template with --path create, or the current directory when it has a package.json)")
 	_ = f.MarkHidden("app-dir")
 	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod: its own address, its own database, the same Capabilities")
@@ -250,32 +252,29 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			if err != nil {
 				return fmt.Errorf("%s/%s: %w", plan.repoOwner, plan.repoName, err)
 			}
-			if plan.postgres && !plan.migrationCommandSet && preview.MigrationOK {
-				summaryMigration = preview.Migration.Command
-			}
+			summaryMigration = preview.Detection.MigrationCommand(plan.postgres, plan.migrationCommand, plan.migrationCommandSet)
 			adoptFiles = preview.Detection.Files()
 		}
 		if err := checkPostgresKind(plan.postgres, summaryKind); err != nil {
 			return err
 		}
 		app := platformrepo.Application{
-			Name:             plan.name,
-			Kind:             summaryKind,
-			Size:             plan.size,
-			ImageRepository:  image,
-			Port:             plan.port,
-			ProbePath:        plan.probePath,
-			Postgres:         plan.postgres,
-			MigrationCommand: summaryMigration,
-			Staging:          plan.staging,
-			Domains:          plan.domains,
-			Login:            plan.login,
+			Name:            plan.name,
+			Kind:            summaryKind,
+			Size:            plan.size,
+			ImageRepository: image,
+			Port:            plan.port,
+			ProbePath:       plan.probePath,
+			Postgres:        plan.postgres,
+			Staging:         plan.staging,
+			Domains:         plan.domains,
+			Login:           plan.login,
 		}
 		preview, err := platformWriter.PreviewApplication(cmd.Context(), app)
 		if err != nil {
 			return err
 		}
-		printSummary(out, plan, app, preview, adoptFiles)
+		printSummary(out, plan, app, summaryMigration, preview, adoptFiles)
 		proceed, err := p.YesNo("Proceed?", true)
 		if err != nil {
 			return err
@@ -300,10 +299,11 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 
 		creator := &apprepo.Creator{Client: ghClient, Auth: auth}
 		appRepo, err = creator.Create(cmd.Context(), apprepo.Application{
-			Name:          plan.name,
-			Framework:     plan.framework,
-			Private:       plan.private,
-			DeployGateURL: cfg.DeployGateURL(),
+			Name:             plan.name,
+			Framework:        plan.framework,
+			Private:          plan.private,
+			DeployGateURL:    cfg.DeployGateURL(),
+			MigrationCommand: migrationCommand,
 		})
 		if err != nil {
 			if appRepo.URL != "" {
@@ -340,26 +340,31 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		// cloned, and a refusal must never come after the pull request
 		// already exists (docs/implementation-notes/15-cli-adopt-path.md).
 		adoptResult, err = adopter.Adopt(cmd.Context(), apprepo.AdoptRequest{
-			Owner:         plan.repoOwner,
-			Name:          plan.repoName,
-			AppName:       plan.name,
-			Kind:          kind,
-			DeployGateURL: cfg.DeployGateURL(),
-			Postgres:      plan.postgres,
-			Scopes:        scopes,
+			Owner:               plan.repoOwner,
+			Name:                plan.repoName,
+			AppName:             plan.name,
+			Kind:                kind,
+			DeployGateURL:       cfg.DeployGateURL(),
+			Postgres:            plan.postgres,
+			Scopes:              scopes,
+			MigrationCommand:    plan.migrationCommand,
+			MigrationCommandSet: plan.migrationCommandSet,
 		})
 		if err != nil {
 			return err
 		}
 		kind = adoptResult.Kind
+		migrationCommand = adoptResult.MigrationCommand
 		if !plan.migrationCommandSet {
 			switch {
 			case plan.postgres && adoptResult.MigrationOK:
-				migrationCommand = adoptResult.Migration.Command
 				fmt.Fprintf(out, "Detected %s in %s/%s; migration command: %s\n", adoptResult.Migration.Tool, plan.repoOwner, plan.repoName, migrationCommand)
 			case plan.postgres:
-				fmt.Fprintln(out, "No migration tooling detected; postgres.migrationCommand is left empty. Set --migration-command if the Application has migrations.")
+				fmt.Fprintf(out, "No migration tooling detected; %s sets no migration command. Add one there if the Application has migrations.\n", appconfig.FileName)
 			}
+		}
+		if adoptResult.HasAppConfig && migrationCommand != "" {
+			fmt.Fprintf(out, "%s/%s already has %s, which Adopt leaves as it is. Make sure it has this line:\n  %s\n", plan.repoOwner, plan.repoName, appconfig.FileName, appconfig.MigrationCommandLine(migrationCommand))
 		}
 
 		fmt.Fprintf(out, "\nOpened a pull request on %s, branch %s: %s\n", adoptResult.RepoURL, adoptResult.Branch, adoptResult.PullRequestURL)
@@ -383,18 +388,17 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	}
 
 	app := platformrepo.Application{
-		Name:             plan.name,
-		Kind:             kind,
-		Size:             plan.size,
-		ImageRepository:  image,
-		Port:             plan.port,
-		ProbePath:        plan.probePath,
-		Postgres:         plan.postgres,
-		MigrationCommand: migrationCommand,
-		Staging:          plan.staging,
-		Domains:          plan.domains,
-		Login:            plan.login,
-		Repository:       binding,
+		Name:            plan.name,
+		Kind:            kind,
+		Size:            plan.size,
+		ImageRepository: image,
+		Port:            plan.port,
+		ProbePath:       plan.probePath,
+		Postgres:        plan.postgres,
+		Staging:         plan.staging,
+		Domains:         plan.domains,
+		Login:           plan.login,
+		Repository:      binding,
 	}
 
 	fmt.Fprintf(out, "\nWriting the prod Environment to %s...\n", platform.Repository)
@@ -404,7 +408,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	fmt.Fprintf(out, "  Port:   %d\n", app.Port)
 	fmt.Fprintf(out, "  Probe:  %s\n", app.ProbePath)
 	if app.Postgres {
-		fmt.Fprintf(out, "  Postgres: enabled (migration command: %q)\n", app.MigrationCommand)
+		fmt.Fprintln(out, "  Postgres: enabled")
 	}
 	if app.Staging {
 		fmt.Fprintln(out, "  Staging:  a second Environment, its own address and database")
@@ -437,10 +441,34 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		fmt.Fprintf(out, "\nPull request: %s\n", adoptResult.PullRequestURL)
 	}
 	printCreated(out, plan.name, res)
+	if plan.postgres {
+		switch {
+		case plan.path == pathCreate && migrationCommand != "":
+			fmt.Fprintf(out, "\nMigration command, in the Application repository's %s: %s\nEach deploy sends it to the Platform with the image it belongs to.\n", appconfig.FileName, migrationCommand)
+		case plan.path == pathAdopt && migrationCommand != "" && !adoptResult.HasAppConfig:
+			fmt.Fprintf(out, "\nMigration command, in the pull request's %s: %s\nEach deploy sends it to the Platform with the image it belongs to.\n", appconfig.FileName, migrationCommand)
+		case plan.path != pathCreate && plan.path != pathAdopt:
+			printMigrationCommandToAdd(out, plan.name, migrationCommand)
+		}
+	}
 	if binding == nil {
 		fmt.Fprintf(out, "\nThis Application is not bound to an Application repository, so no repository can deploy it. Once its repository is in %s, bind it: %s\n", platform.Org, bindCommand(plan.name, platform.Org+"/<repository>"))
 	}
 	return nil
+}
+
+// printMigrationCommandToAdd tells the developer what to put in iidp.yaml
+// when the CLI cannot write it there itself: add-capability --postgres, and
+// app create without --path. Neither writes the migration command to the
+// Platform repository: the Deploy gate does, from iidp.yaml, with the image
+// it belongs to (docs/implementation-notes/66-migration-command-in-repo.md).
+func printMigrationCommandToAdd(out io.Writer, name, command string) {
+	fmt.Fprintf(out, "\nThe migration command lives in %s at the root of %s's Application repository: the deploy workflow sends it to the Platform with every deploy, so it always matches the code it migrates.\n", appconfig.FileName, name)
+	if command != "" {
+		fmt.Fprintf(out, "Add this line to %s and push:\n  %s\n", appconfig.FileName, appconfig.MigrationCommandLine(command))
+		return
+	}
+	fmt.Fprintf(out, "If %s has migrations, add a line like this to %s and push:\n  %s\n", name, appconfig.FileName, appconfig.MigrationCommandLine("npx prisma migrate deploy"))
 }
 
 // bindCommand is the iidp app bind invocation that binds name to repo,
@@ -648,6 +676,9 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if o.migrationCommand != "" && !o.postgres {
 		return createPlan{}, errors.New("--migration-command requires --postgres: there is no database to migrate")
 	}
+	if err := appconfig.ValidateMigrationCommand(o.migrationCommand); err != nil {
+		return createPlan{}, fmt.Errorf("--migration-command: %w", err)
+	}
 	// For Adopt, kind can still be "" here (it must be derived from
 	// detection, which needs the repository cloned); checkPostgresKind is a
 	// no-op against an empty Kind, and this check runs again, with the
@@ -777,7 +808,7 @@ func detectMigrationCommand(plan createPlan, out io.Writer) (string, error) {
 		return "", err
 	}
 	if !ok {
-		fmt.Fprintln(out, "No migration tooling detected; postgres.migrationCommand is left empty. Set --migration-command if the Application has migrations.")
+		fmt.Fprintln(out, "No migration tooling detected, so no migration command. Set --migration-command if the Application has migrations.")
 		return "", nil
 	}
 	fmt.Fprintf(out, "Detected %s; migration command: %s\n", det.Tool, det.Command)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Itema-as/iidp/internal/appconfig"
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/migrate"
 	"github.com/Itema-as/iidp/internal/platform"
@@ -41,7 +42,9 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 			"already exists, a domain already listed, the same size) is refused,\n" +
 			"naming it, and nothing is written.\n\n" +
 			"--postgres enables Postgres in every Environment the Application already\n" +
-			"has. --staging adds a second Environment next to prod, copying prod's\n" +
+			"has, and prints the migrationCommand line to add to iidp.yaml in the\n" +
+			"Application repository (--migration-command, or detected): each deploy\n" +
+			"sends it to the Platform with its image. --staging adds a second Environment next to prod, copying prod's\n" +
 			"values (its secrets are not copied). --domain (repeatable) adds a custom\n" +
 			"domain to prod. --size changes the size of every Environment. --login\n" +
 			"requires Itema (Entra ID) sign-in on the Platform addresses, in every\n" +
@@ -54,7 +57,7 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&opts.postgres, "postgres", false, "Add the Postgres Capability: DATABASE_URL injected into every Environment, continuous backups")
-	f.StringVar(&opts.migrationCommand, "migration-command", "", "Shell command run before every rollout with DATABASE_URL set (requires --postgres); detected from Prisma, Drizzle or an npm migrate script when omitted")
+	f.StringVar(&opts.migrationCommand, "migration-command", "", "Shell command run before every rollout with DATABASE_URL set, printed as the line to add to iidp.yaml (requires --postgres); detected from Prisma, Drizzle or an npm migrate script when omitted")
 	f.StringVar(&opts.appDir, "app-dir", "", "Directory to detect the migration command in (default: the current directory when it has a package.json)")
 	_ = f.MarkHidden("app-dir")
 	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod, copying prod's values (its secrets are not copied)")
@@ -80,6 +83,9 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 	if opts.migrationCommand != "" && !opts.postgres {
 		return fmt.Errorf("--migration-command requires --postgres: there is no database to migrate")
 	}
+	if err := appconfig.ValidateMigrationCommand(opts.migrationCommand); err != nil {
+		return fmt.Errorf("--migration-command: %w", err)
+	}
 	if opts.size != "" && !slices.Contains(sizes, opts.size) {
 		return fmt.Errorf("unknown size %q: --size must be %s", opts.size, strings.Join(sizes, ", "))
 	}
@@ -102,18 +108,23 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 
 	writer := &platformrepo.Writer{URL: opts.platformRepo, Auth: git.Auth{Token: token}, BeforePush: deps.BeforePush}
 	res, err := writer.AddCapabilities(cmd.Context(), name, platformrepo.Capabilities{
-		Postgres:         opts.postgres,
-		MigrationCommand: migrationCommand,
-		Staging:          opts.staging,
-		Domains:          opts.domains,
-		Size:             opts.size,
-		Login:            opts.login,
+		Postgres: opts.postgres,
+		Staging:  opts.staging,
+		Domains:  opts.domains,
+		Size:     opts.size,
+		Login:    opts.login,
 	}, out)
 	if err != nil {
 		return err
 	}
 
 	printAddCapabilityResult(out, name, res)
+	// add-capability cannot write to the developer's repository, and the
+	// Platform must not take a command before the image that can run it,
+	// so it prints the line instead.
+	if opts.postgres {
+		printMigrationCommandToAdd(out, name, migrationCommand)
+	}
 	return nil
 }
 
@@ -176,7 +187,7 @@ func detectAddCapabilityMigrationCommand(postgres bool, migrationCommand, appDir
 		return "", err
 	}
 	if !ok {
-		fmt.Fprintln(out, "No migration tooling detected; postgres.migrationCommand is left empty. Set --migration-command if the Application has migrations.")
+		fmt.Fprintln(out, "No migration tooling detected, so no migration command. Set --migration-command if the Application has migrations.")
 		return "", nil
 	}
 	fmt.Fprintf(out, "Detected %s; migration command: %s\n", det.Tool, det.Command)

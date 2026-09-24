@@ -13,7 +13,13 @@
 //
 //	POST /v1/deploy
 //	Authorization: Bearer <OIDC token>
-//	{"application": "shop", "environment": "auto", "tag": "<sha or version>"}
+//	{"application": "shop", "environment": "auto", "tag": "<sha or version>",
+//	 "migrationCommand": "<from iidp.yaml; optional>"}
+//
+// The same commit may also set the Environment's migration command, from
+// the calling repository's iidp.yaml: the one other thing a deploy may
+// change, and only for an Environment with Postgres
+// (docs/implementation-notes/66-migration-command-in-repo.md).
 //
 // It answers 200 with what it wrote, or an error status with
 // {"error": "<what was refused and why>"}, which iidp ci set-image prints
@@ -36,6 +42,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Itema-as/iidp/internal/appconfig"
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/github"
 	"github.com/Itema-as/iidp/internal/githubapp"
@@ -61,6 +68,12 @@ type Request struct {
 	// the ref and the Platform repository.
 	Environment string `json:"environment"`
 	Tag         string `json:"tag"`
+	// MigrationCommand is the migrationCommand of the Application
+	// repository's iidp.yaml at the commit deployed. Absent (nil, no iidp.yaml)
+	// leaves the Environment's postgres.migrationCommand as it is; "" (an
+	// iidp.yaml without one) clears it; anything else sets it, in the same
+	// commit as the tag. See internal/appconfig.
+	MigrationCommand *string `json:"migrationCommand,omitempty"`
 }
 
 // Response is what a successful call wrote.
@@ -72,8 +85,12 @@ type Response struct {
 	File string `json:"file"`
 	// Commit is the Platform repository commit, "" when Unchanged.
 	Commit string `json:"commit,omitempty"`
-	// Unchanged is true when the Environment already ran Tag.
+	// Unchanged is true when the Environment already ran Tag, with the
+	// migration command asked for.
 	Unchanged bool `json:"unchanged,omitempty"`
+	// MigrationCommandChanged is true when Commit changed the
+	// Environment's migration command.
+	MigrationCommandChanged bool `json:"migrationCommandChanged,omitempty"`
 }
 
 // ErrorResponse is the body of every refusal.
@@ -203,6 +220,8 @@ func (g *Gate) serveDeploy(w http.ResponseWriter, r *http.Request) {
 			status = ref.status
 		case errors.Is(err, platformrepo.ErrApplicationMissing), errors.Is(err, platformrepo.ErrEnvironmentMissing):
 			status = http.StatusNotFound
+		case errors.Is(err, platformrepo.ErrPostgresMissing):
+			status = http.StatusConflict
 		}
 		g.log().Warn("deploy refused", append(attrs, "status", status, "error", err.Error())...)
 		writeJSON(w, status, ErrorResponse{Error: err.Error()})
@@ -245,6 +264,11 @@ func (g *Gate) deploy(r *http.Request) (Response, oidc.Claims, Request, error) {
 	if !tagPattern.MatchString(req.Tag) {
 		return Response{}, claims, req, refuse(http.StatusBadRequest, "image tag %q is not a valid tag: letters, digits, _, . and -, at most 128 characters, not starting with . or -", req.Tag)
 	}
+	if req.MigrationCommand != nil {
+		if err := appconfig.ValidateMigrationCommand(*req.MigrationCommand); err != nil {
+			return Response{}, claims, req, refuse(http.StatusBadRequest, "%v", err)
+		}
+	}
 
 	if !claims.RepositoryOwnerID.Is(g.OrgID) {
 		return Response{}, claims, req, refuse(http.StatusForbidden, "refused: %s belongs to %s (owner id %s), and only repositories in %s (owner id %d) can deploy to the Platform", claims.Repository, claims.RepositoryOwner, claims.RepositoryOwnerID, platform.Org, g.OrgID)
@@ -286,9 +310,10 @@ func (g *Gate) deploy(r *http.Request) (Response, oidc.Claims, Request, error) {
 	body := fmt.Sprintf("Through the Deploy gate, for %s (repository id %s) at %s,\n%s, workflow %s.",
 		claims.Repository, claims.RepositoryID, claims.SHA, claims.Ref, claims.WorkflowRef)
 	res, err := writer.SetImageTag(r.Context(), platformrepo.ImageTagChange{
-		Application: req.Application,
-		Tag:         req.Tag,
-		Body:        body,
+		Application:      req.Application,
+		Tag:              req.Tag,
+		MigrationCommand: req.MigrationCommand,
+		Body:             body,
 		Environment: func(dir string) (string, error) {
 			environment, err := g.authorize(dir, claims, req, promote)
 			if err != nil {
@@ -301,12 +326,13 @@ func (g *Gate) deploy(r *http.Request) (Response, oidc.Claims, Request, error) {
 		return Response{}, claims, req, err
 	}
 	return Response{
-		Application: req.Application,
-		Environment: res.Environment,
-		Tag:         req.Tag,
-		File:        res.File,
-		Commit:      res.Commit,
-		Unchanged:   res.Unchanged,
+		Application:             req.Application,
+		Environment:             res.Environment,
+		Tag:                     req.Tag,
+		File:                    res.File,
+		Commit:                  res.Commit,
+		Unchanged:               res.Unchanged,
+		MigrationCommandChanged: res.MigrationCommandChanged,
 	}, claims, req, nil
 }
 

@@ -31,12 +31,12 @@ var ErrCapabilityExists = errors.New("Capability already present")
 // from its zero value before calling in; AddCapabilities then refuses each
 // one that is already present.
 type Capabilities struct {
-	// Postgres and MigrationCommand enable the Postgres Capability in every
-	// Environment the Application already has. MigrationCommand is only
-	// meaningful with Postgres; when empty, an existing Environment's
-	// migrationCommand (blank, on one freshly created) is left as is.
-	Postgres         bool
-	MigrationCommand string
+	// Postgres enables the Postgres Capability in every Environment the
+	// Application already has. It never sets a migration command: that
+	// comes from the Application repository's iidp.yaml, through the Deploy
+	// gate, with the image it belongs to
+	// (docs/implementation-notes/66-migration-command-in-repo.md).
+	Postgres bool
 	// Staging adds a second Environment next to prod, copying prod's
 	// values (docs/implementation-notes/17-cli-add-capability-delete.md).
 	Staging bool
@@ -266,7 +266,7 @@ func applyCapabilitiesToEnvironment(dir, application, environment string, caps C
 
 	changed := false
 	if caps.Postgres {
-		data, err = render.EnablePostgres(data, caps.MigrationCommand, cfg.BackupsBucket, cfg.ObjectStorageEndpoint)
+		data, err = render.EnablePostgres(data, cfg.BackupsBucket, cfg.ObjectStorageEndpoint)
 		if err != nil {
 			return nil, nil, err
 		}

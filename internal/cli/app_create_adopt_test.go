@@ -93,7 +93,7 @@ func TestAppAdoptWithoutDockerfileDetectsNextJSAndGeneratesIt(t *testing.T) {
 	}
 
 	cloneURL := gh.cloneURL(platform.Org, "shop")
-	wantFiles := []string{"Dockerfile", ".dockerignore", ".github/workflows/deploy.yaml"}
+	wantFiles := []string{"Dockerfile", ".dockerignore", ".github/workflows/deploy.yaml", "iidp.yaml"}
 	assertOnlyAddedFiles(t, cloneURL, apprepo.AdoptBranch, wantFiles)
 
 	branchClone := cloneBranch(t, cloneURL, apprepo.AdoptBranch)
@@ -239,14 +239,14 @@ func TestAppAdoptWithExistingDockerfileIsNeverModifiedAndRequiresKind(t *testing
 		}
 	})
 
-	t.Run("with --kind, only the deploy workflow is added", func(t *testing.T) {
+	t.Run("with --kind, only the deploy workflow and iidp.yaml are added", func(t *testing.T) {
 		_, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
 			"--path", "adopt", "--repo", platform.Org+"/shop", "--kind", "web-service")
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
 		}
 		cloneURL := gh.cloneURL(platform.Org, "shop")
-		assertOnlyAddedFiles(t, cloneURL, apprepo.AdoptBranch, []string{".github/workflows/deploy.yaml"})
+		assertOnlyAddedFiles(t, cloneURL, apprepo.AdoptBranch, []string{".github/workflows/deploy.yaml", "iidp.yaml"})
 
 		branchClone := cloneBranch(t, cloneURL, apprepo.AdoptBranch)
 		dockerfile, err := os.ReadFile(filepath.Join(branchClone, "Dockerfile"))
@@ -415,9 +415,84 @@ func TestAppAdoptDetectsMigrationToolingFromTheClone(t *testing.T) {
 	if !strings.Contains(stdout, "Prisma") {
 		t.Errorf("stdout lacks the detected migration tooling:\n%s", stdout)
 	}
+	// The detected command goes into the pull request's iidp.yaml, next to
+	// the deploy workflow; the Platform's is left for the Deploy gate.
+	cloneURL := gh.cloneURL(platform.Org, "shop")
+	assertOnlyAddedFiles(t, cloneURL, apprepo.AdoptBranch, []string{"Dockerfile", ".dockerignore", ".github/workflows/deploy.yaml", "iidp.yaml"})
+	appConfig := readYAML(t, filepath.Join(cloneBranch(t, cloneURL, apprepo.AdoptBranch), "iidp.yaml"))
+	if got := lookup(t, appConfig, "migrationCommand"); got != "npx prisma migrate deploy" {
+		t.Errorf("iidp.yaml migrationCommand = %v, want the detected Prisma command", got)
+	}
+	prs := gh.pullRequestsTo(platform.Org, "shop")
+	if len(prs) != 1 || !strings.Contains(prs[0].Body, "`iidp.yaml`") || !strings.Contains(prs[0].Body, "`npx prisma migrate deploy`") {
+		t.Errorf("the pull request does not describe iidp.yaml and its command: %+v", prs)
+	}
 	values := readYAML(t, filepath.Join(cloneMain(t, platformURL), "applications/shop/prod/values.yaml"))
-	if got := lookup(t, values, "postgres", "migrationCommand"); got != "npx prisma migrate deploy" {
-		t.Errorf("values.yaml postgres.migrationCommand = %v, want the detected Prisma command", got)
+	if got := lookup(t, values, "postgres", "migrationCommand"); got != "" {
+		t.Errorf("values.yaml postgres.migrationCommand = %v, want it left for the Deploy gate", got)
+	}
+}
+
+func TestAppAdoptWritesAGivenMigrationCommandAndLeavesAnExistingIidpYAMLAlone(t *testing.T) {
+	t.Run("given", func(t *testing.T) {
+		platformURL := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+		gh := newFakeGitHub(t)
+		gh.seedAdoptRepository(t, platform.Org, "shop", "main", map[string]string{
+			"package.json":         nextJSPackageJSON,
+			"prisma/schema.prisma": adoptedPrismaSchema,
+		})
+		stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+			"--path", "adopt", "--repo", platform.Org+"/shop", "--postgres", "--migration-command", "npm run db:migrate")
+		if code != 0 {
+			t.Fatalf("exit code = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+		}
+		appConfig := readYAML(t, filepath.Join(cloneBranch(t, gh.cloneURL(platform.Org, "shop"), apprepo.AdoptBranch), "iidp.yaml"))
+		if got := lookup(t, appConfig, "migrationCommand"); got != "npm run db:migrate" {
+			t.Errorf("iidp.yaml migrationCommand = %v, want the given command over the detected one", got)
+		}
+	})
+
+	t.Run("existing", func(t *testing.T) {
+		platformURL := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+		gh := newFakeGitHub(t)
+		const existing = "migrationCommand: ./migrate.sh\n"
+		cloneURL, _ := gh.seedAdoptRepository(t, platform.Org, "shop", "main", map[string]string{
+			"package.json":         nextJSPackageJSON,
+			"prisma/schema.prisma": adoptedPrismaSchema,
+			"iidp.yaml":            existing,
+		})
+		stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+			"--path", "adopt", "--repo", platform.Org+"/shop", "--postgres")
+		if code != 0 {
+			t.Fatalf("exit code = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+		}
+		assertOnlyAddedFiles(t, cloneURL, apprepo.AdoptBranch, []string{"Dockerfile", ".dockerignore", ".github/workflows/deploy.yaml"})
+		if got := readFile(t, filepath.Join(cloneBranch(t, cloneURL, apprepo.AdoptBranch), "iidp.yaml")); got != existing {
+			t.Errorf("the existing iidp.yaml was modified:\n%s", got)
+		}
+		if !strings.Contains(stdout, "already has iidp.yaml, which Adopt leaves as it is. Make sure it has this line:\n  migrationCommand: npx prisma migrate deploy\n") {
+			t.Errorf("stdout does not point at the existing iidp.yaml:\n%s", stdout)
+		}
+	})
+}
+
+// Without Postgres a command could not run anywhere, so Adopt writes
+// iidp.yaml without one, even when it detects migration tooling.
+func TestAppAdoptWithoutPostgresWritesNoMigrationCommand(t *testing.T) {
+	platformURL := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	gh := newFakeGitHub(t)
+	gh.seedAdoptRepository(t, platform.Org, "shop", "main", map[string]string{
+		"package.json":         nextJSPackageJSON,
+		"prisma/schema.prisma": adoptedPrismaSchema,
+	})
+	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--path", "adopt", "--repo", platform.Org+"/shop")
+	if code != 0 {
+		t.Fatalf("exit code = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	appConfig := readFile(t, filepath.Join(cloneBranch(t, gh.cloneURL(platform.Org, "shop"), apprepo.AdoptBranch), "iidp.yaml"))
+	if strings.Contains(appConfig, "\nmigrationCommand:") {
+		t.Errorf("iidp.yaml sets a migration command without Postgres:\n%s", appConfig)
 	}
 }
 

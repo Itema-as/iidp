@@ -917,3 +917,41 @@ func TestAppCreatePathAddsTheDeployWorkflow(t *testing.T) {
 		t.Errorf("stdout lacks the dev-build iidp version note:\n%s", stdout)
 	}
 }
+
+// The migration command lives in the Application repository's iidp.yaml,
+// which the deploy workflow sends the Deploy gate with every deploy; app
+// create writes it there, not into the Platform repository
+// (docs/implementation-notes/66-migration-command-in-repo.md).
+func TestAppCreatePathWritesTheMigrationCommandIntoIidpYAML(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"given", []string{"--postgres", "--migration-command", "npm run migrate"}, "\nmigrationCommand: npm run migrate\n"},
+		{"without Postgres", nil, "\n# migrationCommand: npx prisma migrate deploy\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			platformURL := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+			gh := newFakeGitHub(t)
+
+			stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+				append([]string{"--name", "shop", "--path", "create", "--framework", "nextjs"}, tc.args...)...)
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+			}
+
+			appConfig := readFile(t, filepath.Join(cloneAppRepo(t, gh, platform.Org, "shop"), "iidp.yaml"))
+			if !strings.Contains(appConfig, tc.want) || !strings.Contains(appConfig, "runs before every rollout") {
+				t.Errorf("iidp.yaml lacks %q or its explanation:\n%s", tc.want, appConfig)
+			}
+			if !strings.Contains(stdout, "  iidp.yaml\n") {
+				t.Errorf("stdout does not list iidp.yaml among the pushed files:\n%s", stdout)
+			}
+			values := readYAML(t, filepath.Join(cloneMain(t, platformURL), "applications/shop/prod/values.yaml"))
+			if got := lookup(t, values, "postgres", "migrationCommand"); got != "" {
+				t.Errorf("values.yaml postgres.migrationCommand = %v, want it left for the Deploy gate", got)
+			}
+		})
+	}
+}

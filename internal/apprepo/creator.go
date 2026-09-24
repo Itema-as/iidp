@@ -39,6 +39,9 @@ type Application struct {
 	// DeployGateURL is the Platform's Deploy gate, rendered into the
 	// deploy workflow (templates.Data.DeployGateURL).
 	DeployGateURL string
+	// MigrationCommand is written into the repository's iidp.yaml; "" for
+	// none.
+	MigrationCommand string
 }
 
 // Result is what Create wrote and where. On an error after the repository
@@ -88,10 +91,11 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 	defer os.RemoveAll(dir)
 	iidpVersion := templateIidpVersion()
 	files, err := templates.Render(app.Framework, templates.Data{
-		Name:          app.Name,
-		Owner:         strings.ToLower(owner),
-		IidpVersion:   iidpVersion,
-		DeployGateURL: app.DeployGateURL,
+		Name:             app.Name,
+		Owner:            strings.ToLower(owner),
+		IidpVersion:      iidpVersion,
+		DeployGateURL:    app.DeployGateURL,
+		MigrationCommand: app.MigrationCommand,
 	}, dir)
 	if err != nil {
 		return Result{}, err

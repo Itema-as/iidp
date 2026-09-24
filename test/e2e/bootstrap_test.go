@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Itema-as/iidp/internal/appconfig"
 )
 
 // TestBootstrap proves that, given a Platform repository, ArgoCD installs
@@ -38,7 +40,10 @@ import (
 // Deploy gate, authenticated by an OIDC token from the harness's fake
 // issuer, lands in the Platform repository and brochure-prod syncs it,
 // while a call from another repository, one from a disallowed ref and
-// (#61) one with a tag Docker Hub does not have are refused.
+// (#61) one with a tag Docker Hub does not have are refused. After it
+// (testMigrationCommandFromIidpYAML) it proves #66: a deploy of shop
+// carrying the migration command from its Application repository's
+// iidp.yaml sets it with the tag, and the migration Job runs it.
 //
 // Run with:
 //
@@ -168,11 +173,104 @@ func TestBootstrap(t *testing.T) {
 	// Last, once shop-staging's CPU requests are gone: brochure-prod's
 	// first image adds a workload to the node.
 	testDeployGate(ctx, t, cluster, issuer)
+	testMigrationCommandFromIidpYAML(ctx, t, cluster, issuer)
 }
 
-// brochureRepositoryID is the repository id the fixture binds brochure to
-// (applications/brochure/repository.yaml).
-const brochureRepositoryID = 700000001
+// brochureRepositoryID and shopRepositoryID are the repository ids the
+// fixture binds brochure and shop to (applications/<name>/repository.yaml).
+const (
+	brochureRepositoryID = 700000001
+	shopRepositoryID     = 700000002
+)
+
+// shopDeployTag is the image testMigrationCommandFromIidpYAML deploys to
+// shop-prod: another nginx Alpine tag than the fixture's 1.27-alpine, so
+// the Deployment changes too. ArgoCD leaves hooks out of its diff, so a
+// commit that changed only the migration Job would not sync on its own; a
+// real deploy always changes the tag with it. It must exist on Docker Hub:
+// the gate checks every new tag against the image's registry (#61).
+const shopDeployTag = "1.27.0-alpine"
+
+// testMigrationCommandFromIidpYAML proves #66 end to end: the migration
+// command in shop's Application repository (the fixture
+// test/e2e/fixtures/shop-repository/iidp.yaml, read with the code iidp ci
+// set-image uses) travels with a deploy through the Deploy gate, lands in
+// shop's prod values.yaml in the same commit as the tag, and is what the
+// migration Job then runs. A command for brochure, which has no Postgres,
+// is refused first.
+func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster *Cluster, issuer *FakeIssuer) {
+	t.Helper()
+	appConfig, ok, err := appconfig.Read(filepath.Join(cluster.RepoRoot, "test", "e2e", "fixtures", "shop-repository"))
+	if err != nil || !ok || appConfig.MigrationCommand == "" {
+		t.Fatalf("reading the fixture iidp.yaml: ok = %v, command = %q, err = %v", ok, appConfig.MigrationCommand, err)
+	}
+	command := appConfig.MigrationCommand
+	call := func(repository string, repositoryID int64, application, tag string) (int, map[string]any) {
+		t.Helper()
+		token, err := issuer.Sign(issuer.Claims(repository, repositoryID, "refs/heads/main"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, body, err := cluster.CallDeployGateWithMigration(ctx, token, application, "auto", tag, &command)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("Deploy gate: HTTP %d %v", status, body)
+		return status, body
+	}
+
+	// brochure has no Postgres: nothing to migrate, so nothing is written.
+	status, body := call("Itema-as/brochure", brochureRepositoryID, "brochure", "1.27-alpine")
+	if msg, _ := body["error"].(string); status != http.StatusConflict || !strings.Contains(msg, "Add the Postgres Capability first") {
+		t.Errorf("a migration command for brochure: HTTP %d %v, want 409 asking for the Postgres Capability first", status, body)
+	}
+
+	// shop's deploy. Its staging Environment was deleted
+	// (testDeleteEnvironment), so main deploys to prod.
+	status, body = call("Itema-as/shop", shopRepositoryID, "shop", shopDeployTag)
+	if status != http.StatusOK || body["environment"] != "prod" || body["migrationCommandChanged"] != true {
+		t.Fatalf("the deploy of shop with its iidp.yaml: HTTP %d %v, want 200, prod and the migration command changed", status, body)
+	}
+
+	err = cluster.ReadRepository(ctx, "iidp-platform", func(dir string) error {
+		git := func(args ...string) string {
+			out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+			if err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+			return strings.TrimSpace(string(out))
+		}
+		if got := git("log", "-1", "--format=%s"); got != "Deploy shop prod "+shopDeployTag {
+			t.Errorf("the Platform repository's head is %q, want shop's deploy (and nothing from the refused call)", got)
+		}
+		if got := git("log", "-1", "--format=%b"); !strings.Contains(got, "Migration command, from iidp.yaml: "+command) {
+			t.Errorf("the deploy's body is %q, want it to name the new migration command", got)
+		}
+		if got := git("show", "--stat", "--format=", "HEAD"); !strings.Contains(got, "applications/shop/prod/values.yaml") || !strings.Contains(got, "1 file changed") {
+			t.Errorf("the deploy changed:\n%s\nwant only shop's prod values.yaml, tag and command together", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// shop-prod syncs the commit: the migration Job, recreated for the
+	// sync, runs the command from iidp.yaml before the new image rolls out.
+	if err := cluster.RefreshApplication(ctx, "shop-prod"); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := cluster.WaitForJobRunning(ctx, "shop-prod", "shop-migrate", command, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs, "migrated by the command in iidp.yaml") {
+		t.Errorf("the migration Job's log is %q, want the marker the command in iidp.yaml echoes", logs)
+	}
+	if err := cluster.WaitForApplications(ctx, map[string]Expectation{"shop-prod": Healthy}, 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // testDeployGate proves #60 end to end: the Deploy gate the bootstrap
 // installed, reached through Traefik at deploy.<baseDomain> with a token

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -280,5 +281,97 @@ func TestCISetImageRefusesBadArgumentsBeforeAnyCall(t *testing.T) {
 	}
 	if len(tokens.audiences) != 0 || gate.callCount() != 0 {
 		t.Errorf("made %d token requests and %d gate calls, want none", len(tokens.audiences), gate.callCount())
+	}
+}
+
+// ci set-image reads iidp.yaml from the checkout it runs in, the commit
+// being deployed, and sends its migration command with the tag
+// (docs/implementation-notes/66-migration-command-in-repo.md).
+func TestCISetImageSendsTheMigrationCommandFromIidpYAML(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		file    string // "" means no iidp.yaml at all
+		present bool
+		want    string
+		says    string
+	}{
+		{"a command", "# comment\nmigrationCommand: npx prisma migrate deploy\n", true, "npx prisma migrate deploy", "Migration command from iidp.yaml: npx prisma migrate deploy"},
+		{"a folded command", "migrationCommand: >\n  npm run migrate\n  && npm run seed\n", true, "npm run migrate && npm run seed", "npm run migrate && npm run seed"},
+		{"no line", "# migrationCommand: npx prisma migrate deploy\n", true, "", "iidp.yaml sets no migration command"},
+		{"an empty command", "migrationCommand: \"\"\n", true, "", "iidp.yaml sets no migration command"},
+		{"a null command", "migrationCommand:\n", true, "", "iidp.yaml sets no migration command"},
+		{"no iidp.yaml", "", false, "", "No iidp.yaml here"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newFakeActionsTokenService(t)
+			gate := newFakeGate(t, gateResponse{http.StatusOK, deployed})
+			t.Setenv("IIDP_DEPLOY_GATE_URL", gate.srv.URL)
+			dir := t.TempDir()
+			if tc.file != "" {
+				if err := os.WriteFile(filepath.Join(dir, "iidp.yaml"), []byte(tc.file), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Chdir(dir)
+
+			stdout, stderr, code := setImage(t, "shop", "auto", "abc123")
+			if code != 0 || gate.callCount() != 1 {
+				t.Fatalf("exit code = %d, gate calls = %d\n%s", code, gate.callCount(), stderr)
+			}
+			got, present := gate.calls[0].body["migrationCommand"]
+			if present != tc.present || got != tc.want {
+				t.Errorf("migrationCommand sent = %q (present: %v), want %q (present: %v)", got, present, tc.want, tc.present)
+			}
+			if !strings.Contains(stdout, tc.says) {
+				t.Errorf("stdout = %q, want %q", stdout, tc.says)
+			}
+		})
+	}
+}
+
+func TestCISetImageRefusesABadIidpYAMLBeforeAnyCall(t *testing.T) {
+	for _, tc := range []struct {
+		name, file, content, want string
+	}{
+		{"an unknown setting", "iidp.yaml", "migrationComand: npm run migrate\n", `unknown setting "migrationComand"`},
+		{"a list", "iidp.yaml", "migrationCommand: [npm, run, migrate]\n", "must be a string"},
+		{"two lines", "iidp.yaml", "migrationCommand: |\n  npm run migrate\n  npm run seed\n", "must be one line"},
+		{"not YAML", "iidp.yaml", "migrationCommand: [\n", "not valid YAML"},
+		{"the other spelling", "iidp.yml", "migrationCommand: npm run migrate\n", "rename it to iidp.yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokens := newFakeActionsTokenService(t)
+			gate := newFakeGate(t, gateResponse{http.StatusOK, deployed})
+			t.Setenv("IIDP_DEPLOY_GATE_URL", gate.srv.URL)
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, tc.file), []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(dir)
+
+			_, stderr, code := setImage(t, "shop", "auto", "abc123")
+			if code == 0 || !strings.Contains(stderr, tc.want) {
+				t.Errorf("exit code = %d, stderr = %q, want %q", code, stderr, tc.want)
+			}
+			if len(tokens.audiences) != 0 || gate.callCount() != 0 {
+				t.Errorf("made %d token requests and %d gate calls, want none", len(tokens.audiences), gate.callCount())
+			}
+		})
+	}
+}
+
+func TestCISetImageSaysWhenTheMigrationCommandChanged(t *testing.T) {
+	newFakeActionsTokenService(t)
+	gate := newFakeGate(t, gateResponse{http.StatusOK, `{"application":"shop","environment":"staging","tag":"abc123","file":"applications/shop/staging/values.yaml","commit":"0123456789abcdef0123","migrationCommandChanged":true}`})
+	t.Setenv("IIDP_DEPLOY_GATE_URL", gate.srv.URL)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "iidp.yaml"), []byte("migrationCommand: npm run migrate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	stdout, stderr, code := setImage(t, "shop", "auto", "abc123")
+	if code != 0 || !strings.Contains(stdout, "The migration command changed with it") {
+		t.Errorf("exit code = %d, stdout = %q, stderr = %q", code, stdout, stderr)
 	}
 }

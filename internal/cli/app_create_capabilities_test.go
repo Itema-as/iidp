@@ -103,10 +103,29 @@ func TestAppCreateExplicitMigrationCommandOverridesDetection(t *testing.T) {
 	if strings.Contains(stdout, "Detected") {
 		t.Errorf("stdout = %q, want no detection message: the explicit flag must win outright", stdout)
 	}
-	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
-	if got := lookup(t, values, "postgres", "migrationCommand"); got != "custom-migrate.sh" {
-		t.Errorf("values.yaml postgres.migrationCommand = %v, want custom-migrate.sh", got)
+	// Without --path there is no Application repository to write iidp.yaml
+	// into, so the command is printed as the line to add there; the
+	// Platform's is left for the Deploy gate
+	// (docs/implementation-notes/66-migration-command-in-repo.md).
+	if !strings.Contains(stdout, "Add this line to iidp.yaml and push:\n  migrationCommand: custom-migrate.sh\n") {
+		t.Errorf("stdout = %q, want the iidp.yaml line with the explicit command", stdout)
 	}
+	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
+	if got := lookup(t, values, "postgres", "migrationCommand"); got != "" {
+		t.Errorf("values.yaml postgres.migrationCommand = %v, want it left for the Deploy gate", got)
+	}
+}
+
+func TestAppCreateRefusesAMigrationCommandThatIsNotOneLine(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+
+	_, stderr, code := createApplication(t, url, cli.Dependencies{},
+		"--name", "shop", "--kind", "web-service", "--postgres", "--migration-command", "npm run migrate\nnpm run seed")
+
+	if code == 0 || !strings.Contains(stderr, "must be one line") {
+		t.Errorf("exit code = %d, stderr = %q, want a refusal saying it must be one line", code, stderr)
+	}
+	assertNoApplications(t, url)
 }
 
 func TestAppCreateDetectsMigrationTooling(t *testing.T) {
@@ -158,8 +177,11 @@ func TestAppCreateDetectsMigrationTooling(t *testing.T) {
 				t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
 			}
 			values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
-			if got := lookup(t, values, "postgres", "migrationCommand"); got != tc.wantCommand {
-				t.Errorf("values.yaml postgres.migrationCommand = %v, want %q", got, tc.wantCommand)
+			if got := lookup(t, values, "postgres", "migrationCommand"); got != "" {
+				t.Errorf("values.yaml postgres.migrationCommand = %v, want it left for the Deploy gate", got)
+			}
+			if tc.wantCommand != "" && !strings.Contains(stdout, "  migrationCommand: "+tc.wantCommand+"\n") {
+				t.Errorf("stdout = %q, want the detected command as the iidp.yaml line to add", stdout)
 			}
 			if tc.wantTool != "" {
 				if !strings.Contains(stdout, "Detected") || !strings.Contains(stdout, tc.wantTool) {
@@ -459,7 +481,7 @@ func TestAppCreateAllCapabilitiesCombined(t *testing.T) {
 	}{
 		{prodValues, []any{"size"}, "medium"},
 		{prodValues, []any{"postgres", "enabled"}, true},
-		{prodValues, []any{"postgres", "migrationCommand"}, "npm run migrate"},
+		{prodValues, []any{"postgres", "migrationCommand"}, ""},
 		{stagingValues, []any{"postgres", "enabled"}, true},
 		{stagingValues, []any{"size"}, "medium"},
 	} {

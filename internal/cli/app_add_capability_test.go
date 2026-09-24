@@ -397,9 +397,42 @@ func TestAppAddCapabilityDetectsMigrationCommand(t *testing.T) {
 	if !strings.Contains(stdout, "Detected") || !strings.Contains(stdout, "Prisma") {
 		t.Errorf("stdout = %q, want it to report detecting Prisma", stdout)
 	}
+	// add-capability cannot write the developer's repository, so it prints
+	// the line to add to iidp.yaml, and leaves the Platform's command to
+	// the Deploy gate: setting it now would run it against the image
+	// already deployed, which may not have the tooling
+	// (docs/implementation-notes/66-migration-command-in-repo.md).
+	if !strings.Contains(stdout, "Add this line to iidp.yaml and push:\n  migrationCommand: npx prisma migrate deploy\n") {
+		t.Errorf("stdout = %q, want the iidp.yaml line to add", stdout)
+	}
 	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
-	if got := lookup(t, values, "postgres", "migrationCommand"); got != "npx prisma migrate deploy" {
-		t.Errorf("migrationCommand = %v, want the detected Prisma command", got)
+	if got := lookup(t, values, "postgres", "migrationCommand"); got != "" {
+		t.Errorf("migrationCommand = %v, want it left for the Deploy gate to write", got)
+	}
+}
+
+func TestAppAddCapabilityPostgresSaysHowToAddAMigrationCommandWhenNoneIsFound(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url)
+
+	stdout, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--postgres", "--app-dir", t.TempDir())
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "If shop has migrations, add a line like this to iidp.yaml and push:\n  migrationCommand: npx prisma migrate deploy\n") {
+		t.Errorf("stdout = %q, want an example iidp.yaml line", stdout)
+	}
+}
+
+func TestAppAddCapabilityRefusesAMigrationCommandThatIsNotOneLine(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url)
+
+	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--postgres", "--migration-command", "npm run migrate\nnpm run seed")
+
+	if code == 0 || !strings.Contains(stderr, "must be one line") {
+		t.Errorf("exit code = %d, stderr = %q, want a refusal saying it must be one line", code, stderr)
 	}
 }
 
@@ -437,7 +470,7 @@ func TestAppAddCapabilityAllCapabilitiesCombined(t *testing.T) {
 		want any
 	}{
 		{prodValues, []any{"postgres", "enabled"}, true},
-		{prodValues, []any{"postgres", "migrationCommand"}, "npm run migrate"},
+		{prodValues, []any{"postgres", "migrationCommand"}, ""},
 		{prodValues, []any{"size"}, "medium"},
 		{prodValues, []any{"domains", 0}, "butikk.app.itma.no"},
 		{stagingValues, []any{"postgres", "enabled"}, true},
@@ -452,5 +485,8 @@ func TestAppAddCapabilityAllCapabilitiesCombined(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "https://shop-staging.app.itma.no") {
 		t.Errorf("stdout = %q, want the staging address", stdout)
+	}
+	if !strings.Contains(stdout, "  migrationCommand: npm run migrate\n") {
+		t.Errorf("stdout = %q, want the given command as the iidp.yaml line to add", stdout)
 	}
 }

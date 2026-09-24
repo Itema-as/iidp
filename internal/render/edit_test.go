@@ -1,8 +1,11 @@
 package render_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Itema-as/iidp/internal/render"
 )
@@ -81,7 +84,7 @@ func TestAddSecretNameIsIdempotent(t *testing.T) {
 }
 
 func TestEnablePostgresSetsEnabledAndPlatformFields(t *testing.T) {
-	out, err := render.EnablePostgres([]byte(testValuesYAML), "npm run migrate", "itema-iidp-db-backups", "https://hel1.your-objectstorage.com")
+	out, err := render.EnablePostgres([]byte(testValuesYAML), "itema-iidp-db-backups", "https://hel1.your-objectstorage.com")
 	if err != nil {
 		t.Fatalf("EnablePostgres: %v", err)
 	}
@@ -90,25 +93,100 @@ func TestEnablePostgresSetsEnabledAndPlatformFields(t *testing.T) {
 	}
 	for _, want := range []string{
 		"postgres:\n    enabled: true\n",
-		"migrationCommand: npm run migrate\n",
 		"platform:\n    baseDomain: app.itma.no\n    backupsBucket: itema-iidp-db-backups\n    objectStorageEndpoint: https://hel1.your-objectstorage.com\n",
 	} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
 	}
+	// The migration command is the Deploy gate's to write, from the
+	// Application repository's iidp.yaml.
+	if strings.Contains(string(out), "migrationCommand") {
+		t.Errorf("EnablePostgres set a migration command:\n%s", out)
+	}
 }
 
-func TestEnablePostgresLeavesAnEmptyMigrationCommandAlone(t *testing.T) {
-	out, err := render.EnablePostgres([]byte(testValuesYAML), "", "bucket", "https://endpoint.example.com")
+const postgresValuesYAML = `# shop's prod values
+image:
+    repository: ghcr.io/itema-as/shop
+    tag: abc
+postgres:
+    enabled: true
+    migrationCommand: ""
+    backupRetention: 30d
+`
+
+func TestSetMigrationCommandSetsChangesAndClears(t *testing.T) {
+	out, changed, err := render.SetMigrationCommand([]byte(postgresValuesYAML), "npx prisma migrate deploy && echo 'done: yes'")
+	if err != nil || !changed {
+		t.Fatalf("SetMigrationCommand: changed = %v, err = %v", changed, err)
+	}
+	if !strings.HasPrefix(string(out), "# shop's prod values") || !strings.Contains(string(out), "backupRetention: 30d") || !strings.Contains(string(out), "tag: abc") {
+		t.Errorf("the rest of the document was not kept:\n%s", out)
+	}
+	if got := lookupValues(t, out, "postgres", "migrationCommand"); got != "npx prisma migrate deploy && echo 'done: yes'" {
+		t.Errorf("migrationCommand = %v", got)
+	}
+
+	same, changed, err := render.SetMigrationCommand(out, "npx prisma migrate deploy && echo 'done: yes'")
+	if err != nil || changed || string(same) != string(out) {
+		t.Errorf("setting the same command: changed = %v, err = %v, want an untouched document", changed, err)
+	}
+
+	cleared, changed, err := render.SetMigrationCommand(out, "")
+	if err != nil || !changed {
+		t.Fatalf("clearing: changed = %v, err = %v", changed, err)
+	}
+	// Cleared to "", not to null: the value app create writes.
+	if !strings.Contains(string(cleared), `migrationCommand: ""`) {
+		t.Errorf("the cleared command is not \"\":\n%s", cleared)
+	}
+}
+
+func TestSetMigrationCommandKeepsNumberLikeCommandsStrings(t *testing.T) {
+	out, _, err := render.SetMigrationCommand([]byte(postgresValuesYAML), "true")
 	if err != nil {
-		t.Fatalf("EnablePostgres: %v", err)
+		t.Fatal(err)
 	}
-	// testValuesYAML has no postgres block at all yet; with an empty
-	// migrationCommand, EnablePostgres must not invent one.
-	if strings.Contains(string(out), "migrationCommand") {
-		t.Errorf("migrationCommand should not be set when the argument is empty:\n%s", out)
+	if got := lookupValues(t, out, "postgres", "migrationCommand"); got != "true" {
+		t.Errorf("migrationCommand = %#v, want the string \"true\"", got)
 	}
+}
+
+func TestSetMigrationCommandRefusesAnEnvironmentWithoutPostgres(t *testing.T) {
+	for name, values := range map[string]string{
+		"no postgres block": testValuesYAML,
+		"postgres off":      strings.Replace(postgresValuesYAML, "enabled: true", "enabled: false", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := render.SetMigrationCommand([]byte(values), "npm run migrate"); !errors.Is(err, render.ErrNoPostgres) {
+				t.Errorf("err = %v, want ErrNoPostgres", err)
+			}
+			// Clearing what is not there changes nothing, and is not an error.
+			out, changed, err := render.SetMigrationCommand([]byte(values), "")
+			if err != nil || changed || string(out) != values {
+				t.Errorf("clearing: changed = %v, err = %v, want an untouched document", changed, err)
+			}
+		})
+	}
+}
+
+// lookupValues parses a values document and walks it by keys.
+func lookupValues(t *testing.T, data []byte, path ...string) any {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parsing:\n%s\n%v", data, err)
+	}
+	var cur any = doc
+	for _, key := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			t.Fatalf("%v: not a mapping at %q", path, key)
+		}
+		cur = m[key]
+	}
+	return cur
 }
 
 func TestEnablePostgresPreservesExistingSecretsList(t *testing.T) {
@@ -116,7 +194,7 @@ func TestEnablePostgresPreservesExistingSecretsList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := render.EnablePostgres(withSecret, "", "bucket", "https://endpoint.example.com")
+	out, err := render.EnablePostgres(withSecret, "bucket", "https://endpoint.example.com")
 	if err != nil {
 		t.Fatalf("EnablePostgres: %v", err)
 	}

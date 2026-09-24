@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Itema-as/iidp/internal/appconfig"
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/github"
 	"github.com/Itema-as/iidp/internal/migrate"
@@ -54,15 +55,20 @@ type Detection struct {
 	// generate or not, Adopt never writes over it
 	// (docs/implementation-notes/15-cli-adopt-path.md).
 	HasDeployWorkflow bool
-	Migration         migrate.Detection
-	MigrationOK       bool
+	// HasAppConfig is true when the repository already has an iidp.yaml
+	// (templates.AppConfigPath). Like the deploy workflow, an existing one
+	// is never written over.
+	HasAppConfig bool
+	Migration    migrate.Detection
+	MigrationOK  bool
 }
 
 // Files reports which paths Adopt would add for this Detection: a
-// Dockerfile and .dockerignore when none exists, and the deploy workflow
-// when none exists there — sorted, the same order Adopt itself writes
-// them in. A preview (the wizard's summary) uses this to list exactly what
-// the pull request will add before anything happens.
+// Dockerfile and .dockerignore when none exists, the deploy workflow when
+// none exists there, and iidp.yaml when there is none — sorted, the same
+// order Adopt itself writes them in. A preview (the wizard's summary) uses
+// this to list exactly what the pull request will add before anything
+// happens.
 func (d Detection) Files() []string {
 	var files []string
 	if !d.HasDockerfile {
@@ -71,8 +77,27 @@ func (d Detection) Files() []string {
 	if !d.HasDeployWorkflow {
 		files = append(files, templates.DeployWorkflowPath)
 	}
+	if !d.HasAppConfig {
+		files = append(files, templates.AppConfigPath)
+	}
 	sort.Strings(files)
 	return files
+}
+
+// MigrationCommand is the migration command Adopt writes into iidp.yaml:
+// the developer's own when given (set, even as ""), otherwise, with
+// Postgres, the one detected in the repository. Without Postgres a
+// command could not run anywhere, and the Deploy gate would refuse it, so
+// none is written.
+func (d Detection) MigrationCommand(postgres bool, given string, set bool) string {
+	switch {
+	case set:
+		return given
+	case postgres && d.MigrationOK:
+		return d.Migration.Command
+	default:
+		return ""
+	}
 }
 
 // ResolveKind decides the Kind Adopt will use. explicit (the developer's
@@ -184,6 +209,11 @@ type AdoptRequest struct {
 	// DeployGateURL is the Platform's Deploy gate, rendered into the
 	// deploy workflow when Adopt adds one (templates.Data.DeployGateURL).
 	DeployGateURL string
+	// MigrationCommand and MigrationCommandSet are the developer's
+	// --migration-command, and whether it was given at all. Adopt writes
+	// Detection.MigrationCommand's answer into the iidp.yaml it adds.
+	MigrationCommand    string
+	MigrationCommandSet bool
 }
 
 // AdoptResult is what Adopt wrote and opened.
@@ -200,6 +230,10 @@ type AdoptResult struct {
 	// Binding is the adopted repository's ids, as GitHub reported them,
 	// for the Platform repository to bind the Application to.
 	Binding platformrepo.RepositoryBinding
+	// MigrationCommand is the migration command resolved for iidp.yaml
+	// (Detection.MigrationCommand): the one written when Adopt added the
+	// file, or the one the developer should check an existing file for.
+	MigrationCommand string
 }
 
 // Adopt reads req.Owner/req.Name through the GitHub API, refuses it when
@@ -207,8 +241,9 @@ type AdoptResult struct {
 // AdoptBranch already present, clones the default
 // branch, detects what is missing (refusing a token without the workflow
 // scope when that includes the deploy workflow), writes only that (a Dockerfile and
-// .dockerignore when none exists, the deploy workflow unless one already
-// exists there — identical or not, Adopt never modifies an existing file),
+// .dockerignore when none exists, the deploy workflow and iidp.yaml unless
+// one already exists there — identical or not, Adopt never modifies an
+// existing file),
 // commits as the developer, pushes AdoptBranch and opens a pull request
 // against the default branch.
 func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, error) {
@@ -258,7 +293,7 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 
 	files := det.Files()
 	if len(files) == 0 {
-		return AdoptResult{}, fmt.Errorf("%w: %s/%s already has a Dockerfile and a deploy workflow", ErrNothingToAdd, req.Owner, req.Name)
+		return AdoptResult{}, fmt.Errorf("%w: %s/%s already has a Dockerfile, a deploy workflow and %s", ErrNothingToAdd, req.Owner, req.Name, templates.AppConfigPath)
 	}
 	if !det.HasDeployWorkflow {
 		if err := CheckWorkflowScope(req.Scopes); err != nil {
@@ -267,7 +302,8 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 	}
 
 	iidpVersion := templateIidpVersion()
-	data := templates.Data{Name: req.AppName, Owner: strings.ToLower(req.Owner), IidpVersion: iidpVersion, DeployGateURL: req.DeployGateURL}
+	migrationCommand := det.MigrationCommand(req.Postgres, req.MigrationCommand, req.MigrationCommandSet)
+	data := templates.Data{Name: req.AppName, Owner: strings.ToLower(req.Owner), IidpVersion: iidpVersion, DeployGateURL: req.DeployGateURL, MigrationCommand: migrationCommand}
 
 	if !det.HasDockerfile {
 		if _, err := templates.RenderDockerfile(det.Framework, data, dir); err != nil {
@@ -280,6 +316,11 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 			return AdoptResult{}, err
 		}
 		if err := os.WriteFile(dest, templates.RenderDeployWorkflow(data), 0o644); err != nil {
+			return AdoptResult{}, err
+		}
+	}
+	if !det.HasAppConfig {
+		if err := os.WriteFile(filepath.Join(dir, templates.AppConfigPath), templates.RenderAppConfig(data), 0o644); err != nil {
 			return AdoptResult{}, err
 		}
 	}
@@ -301,21 +342,22 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 		Title: "Add the iidp deploy pipeline",
 		Head:  AdoptBranch,
 		Base:  repo.DefaultBranch,
-		Body:  pullRequestBody(req, files, det),
+		Body:  pullRequestBody(req, files, det, migrationCommand),
 	})
 	if err != nil {
 		return AdoptResult{}, err
 	}
 
 	return AdoptResult{
-		RepoURL:        "https://github.com/" + req.Owner + "/" + req.Name,
-		PullRequestURL: prURL,
-		DefaultBranch:  repo.DefaultBranch,
-		Branch:         AdoptBranch,
-		Files:          files,
-		Kind:           kind,
-		Detection:      det,
-		Binding:        binding,
+		RepoURL:          "https://github.com/" + req.Owner + "/" + req.Name,
+		PullRequestURL:   prURL,
+		DefaultBranch:    repo.DefaultBranch,
+		Branch:           AdoptBranch,
+		Files:            files,
+		Kind:             kind,
+		Detection:        det,
+		Binding:          binding,
+		MigrationCommand: migrationCommand,
 	}, nil
 }
 
@@ -348,6 +390,7 @@ func detectDir(dir string) (Detection, error) {
 		det.Framework = fw
 	}
 	det.HasDeployWorkflow = fileExists(filepath.Join(dir, filepath.FromSlash(templates.DeployWorkflowPath)))
+	det.HasAppConfig = fileExists(filepath.Join(dir, templates.AppConfigPath))
 	m, ok, err := migrate.Detect(dir)
 	if err != nil {
 		return Detection{}, err
@@ -404,7 +447,7 @@ func detectFramework(dir string) (templates.Framework, error) {
 // pullRequestBody describes what each added file does and what happens on
 // merge, per docs/design.md's Adopt paragraph and
 // docs/implementation-notes/12-deploy-workflow.md's write-back.
-func pullRequestBody(req AdoptRequest, files []string, det Detection) string {
+func pullRequestBody(req AdoptRequest, files []string, det Detection, migrationCommand string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "iidp adopts %s onto Itema's Platform. This pull request adds only what is missing; nothing else in the repository is created, modified or deleted.\n\n", req.AppName)
 	b.WriteString("## What each file does\n\n")
@@ -416,10 +459,20 @@ func pullRequestBody(req AdoptRequest, files []string, det Detection) string {
 			b.WriteString("- `.dockerignore`: keeps the build context small and the image free of files it does not need.\n")
 		case templates.DeployWorkflowPath:
 			b.WriteString("- `.github/workflows/deploy.yaml`: on a push to the default branch, builds the image with buildx, pushes it to GHCR tagged with the commit SHA, and writes that tag into the Platform repository (`iidp ci set-image`); on a `v*` tag, retags the same image with the version, with no rebuild, and promotes it to prod. **The first merged run of this workflow is what deploys the Application for the first time.**\n")
+		case templates.AppConfigPath:
+			if migrationCommand != "" {
+				fmt.Fprintf(&b, "- `%s`: settings the deploy workflow sends the Platform with every deploy, from the commit it deploys. It sets the migration command, `%s`, which runs before every rollout, in the new image, with `DATABASE_URL` set.\n", templates.AppConfigPath, migrationCommand)
+			} else {
+				fmt.Fprintf(&b, "- `%s`: settings the deploy workflow sends the Platform with every deploy, from the commit it deploys. It sets no migration command yet; its comments say how to add one.\n", templates.AppConfigPath)
+			}
 		}
 	}
 	if det.MigrationOK {
-		fmt.Fprintf(&b, "\nDetected %s in the repository; if the Postgres Capability is enabled, its migration command is set to `%s`.\n", det.Migration.Tool, det.Migration.Command)
+		if req.Postgres {
+			fmt.Fprintf(&b, "\nDetected %s in the repository.\n", det.Migration.Tool)
+		} else {
+			fmt.Fprintf(&b, "\nDetected %s in the repository. The Application has no Postgres Capability, so `%s` sets no migration command; add `%s` there once it has one.\n", det.Migration.Tool, templates.AppConfigPath, appconfig.MigrationCommandLine(det.Migration.Command))
+		}
 	}
 	return b.String()
 }

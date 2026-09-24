@@ -39,3 +39,7 @@ We decided that an Application repository's CI can do exactly one thing to the P
 - GitHub Environments don't exist in private repositories on Free, so the gate never relies on the OIDC `environment` claim.
 - ADR-0002 still holds. The CLI never talks to Kubernetes, and developers still change the Platform repository only through the CLI. `ci set-image` now asks the gate to write rather than writing git itself.
 - `docs/design.md`'s Delivery and Access rows, and `docs/implementation-notes/12-deploy-workflow.md`'s credential sections, describe the Phase 1 mechanism this replaces.
+
+## Note (#66): the gate also sets the caller's own migration command
+
+A deploy may now carry the migration command from the Application repository's `iidp.yaml`, and the gate writes it into `postgres.migrationCommand` in the same commit as the tag, so the command always matches the image it runs in. It is set only for the Environment the same checks let the caller deploy, only where Postgres is enabled, and only as one line of at most 1024 bytes. This does not widen what CI can do. CI already controls the whole image, and the image already runs with `DATABASE_URL` and the Application's secrets, so any command it could put in `migrationCommand` it could already run from the image's own entrypoint. The migration Job runs from that same image, in the Environment's own namespace, with the same environment the Application's containers get, and nothing more. See `docs/implementation-notes/66-migration-command-in-repo.md`.
