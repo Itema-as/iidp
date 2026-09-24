@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -449,5 +450,79 @@ func TestCISetImageNeverReadsThePlatformRepositoryAnonymously(t *testing.T) {
 	}
 	if fake.installationsRequestCount() != 1 || fake.tokenRequestCount() != 1 {
 		t.Errorf("installations requests = %d, token requests = %d, want 1 and 1", fake.installationsRequestCount(), fake.tokenRequestCount())
+	}
+}
+
+// A GitHub-hosted runner has no git identity: nothing in the environment,
+// no user.name or user.email in any config, and an empty account name for
+// git to guess one from. The deploy write-back failed there on the first
+// real run ("Author identity unknown") while every test passed, because
+// the tests always supplied an identity. It must commit as the user whose
+// push or tag started the workflow, so the Platform repository's log
+// records who deployed what.
+func TestCISetImageCommitsAsTheWorkflowActorOnARunnerWithNoGitIdentity(t *testing.T) {
+	url := newPlatformRepository(t, testPlatformYAML)
+	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
+
+	withoutGitIdentity(t)
+	t.Setenv("GITHUB_ACTOR", "octocat")
+	t.Setenv("GITHUB_ACTOR_ID", "583231")
+	key, keyPEM := generateTestKeyPair(t)
+	setCIAppEnv(t, 4242, keyPEM)
+	fake := newFakeGitHubApp(t, &key.PublicKey, 4242, platform.Org, 99, "inst-token-abc")
+
+	stdout, stderr, code := setImage(t, url, cli.Dependencies{GitHubAPI: fake.srv.URL}, "shop", "prod", "abc123sha")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	clone := cloneMain(t, url)
+	want := "octocat <583231+octocat@users.noreply.github.com>"
+	for _, format := range []string{"%an <%ae>", "%cn <%ce>"} {
+		if got := strings.TrimSpace(gitRun(t, clone, "log", "-1", "--format="+format)); got != want {
+			t.Errorf("git log --format=%q = %q, want %q", format, got, want)
+		}
+	}
+}
+
+// Outside Actions (an admin running the command by hand) there is no
+// workflow actor, and the commit keeps git's own configured identity.
+func TestCISetImageKeepsGitsOwnIdentityOutsideActions(t *testing.T) {
+	url := newPlatformRepository(t, testPlatformYAML)
+	createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
+
+	for _, k := range []string{"GITHUB_ACTOR", "GITHUB_ACTOR_ID"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	key, keyPEM := generateTestKeyPair(t)
+	setCIAppEnv(t, 4242, keyPEM)
+	fake := newFakeGitHubApp(t, &key.PublicKey, 4242, platform.Org, 99, "inst-token-abc")
+
+	stdout, stderr, code := setImage(t, url, cli.Dependencies{GitHubAPI: fake.srv.URL}, "shop", "prod", "abc123sha")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	clone := cloneMain(t, url)
+	if got := strings.TrimSpace(gitRun(t, clone, "log", "-1", "--format=%an <%ae>")); got != "Test Developer <developer@example.com>" {
+		t.Errorf("author = %q, want git's configured identity", got)
+	}
+}
+
+// withoutGitIdentity makes git behave as on a fresh GitHub runner: no
+// identity in the environment or any config file, and user.useConfigOnly
+// so git refuses to guess one from the account and host name, as it
+// otherwise quietly would on a developer's machine.
+func withoutGitIdentity(t *testing.T) {
+	t.Helper()
+	cfg := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(cfg, []byte("[user]\n\tuseConfigOnly = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
 	}
 }
