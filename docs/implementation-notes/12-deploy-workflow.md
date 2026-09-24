@@ -1,5 +1,7 @@
 # #12 Deploy workflow and CI write-back subcommand
 
+> **Superseded in part by [ADR-0005](../adr/0005-private-application-repositories-on-github-free.md).** The org Actions secret and variable carrying the `iidp-deploy` App key, and CI committing to the Platform repository itself, don't work for private repositories on GitHub Free and gave every Application repository write access to the whole Platform repository. Deploys now go through the Deploy gate, and images stay private in GHCR. The sections below record the Phase 1 mechanism as built.
+
 Questions that came up while building `.github/workflows/deploy.yaml`, `iidp ci set-image` and the GitHub App installation-token flow that authenticates it, the options considered, and the answer chosen for each. Sources (the GitHub REST API's App-authentication endpoints, `docker/build-push-action`, `docker/login-action`, `docker/setup-buildx-action`, `docker buildx imagetools`) were checked with Context7 on 2026-09-21.
 
 ## How `iidp ci set-image` authenticates before it has any credential — without reading `platform.yaml` first
