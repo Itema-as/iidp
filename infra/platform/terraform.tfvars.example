@@ -1,6 +1,7 @@
 # Copy to terraform.tfvars (gitignored) and fill in. Secrets can also be passed
 # as TF_VAR_hcloud_token. The state backend reads its own credentials from
-# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY; see backend.tf.
+# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, which `source ../tofu-env.sh`
+# loads from infra/state-bucket/terraform.tfvars; see backend.tf.
 
 hcloud_token   = "..."
 ssh_public_key = "ssh-ed25519 AAAA... admin@example"

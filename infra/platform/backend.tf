@@ -4,7 +4,8 @@
 # override at init time with -backend-config="bucket=..." and
 # -backend-config="endpoints={s3=\"https://<location>.your-objectstorage.com\"}".
 #
-# Credentials are read from AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
+# Credentials are read from AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY;
+# `source ../tofu-env.sh` loads them from infra/state-bucket/terraform.tfvars.
 # The skip_* flags turn off checks that only make sense against AWS itself;
 # Hetzner Object Storage speaks S3 but has no STS, IAM or metadata service.
 terraform {

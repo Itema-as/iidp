@@ -27,6 +27,8 @@ Run it for real from a clone of this repository, with the Platform repository cl
 
 Requires `tofu`, `gh`, `sops`, `ssh`, `jq`, `curl` and bash >= 4.3 (macOS ships bash 3.2; `brew install bash` and invoke it explicitly if `bash --version` shows 3.x). `az` is optional: without it, the Entra stage prints the exact app registration to create by hand and asks for the resulting tenant id, client id and secret instead of creating it automatically. `--no-push` writes and commits the Platform repository without pushing; see `scripts/bootstrap-wizard.sh --help` for every flag, and `docs/implementation-notes/05-bootstrap-wizard.md` for why it is built the way it is.
 
+The wizard exports the state backend credentials only inside its own process, so a `tofu` command in `infra/platform` run afterwards, from any other terminal, needs them loaded first: see [Loading the state backend credentials](#loading-the-state-backend-credentials).
+
 The sections below are the same steps done by hand, for when the wizard cannot run (no Hetzner/Cloudflare/Grafana/GitHub access from the current machine, or a step it got wrong needs redoing on its own) or when you want to see what each command actually does before trusting the wizard with it.
 
 ## Prerequisites
@@ -48,13 +50,12 @@ tofu init
 tofu apply
 ```
 
-Step 2, the node. The S3 backend reads the same Object Storage keys from the standard AWS environment variables:
+Step 2, the node. The S3 backend reads the same Object Storage keys from the standard AWS environment variables, which `tofu-env.sh` loads from the file step 1 just filled in (see [the next section](#loading-the-state-backend-credentials)):
 
 ```sh
 cd infra/platform
 cp terraform.tfvars.example terraform.tfvars   # fill in hcloud_token, ssh_public_key and the platform_repo_github_app_* values
-export AWS_ACCESS_KEY_ID=<object storage access key>
-export AWS_SECRET_ACCESS_KEY=<object storage secret key>
+source ../tofu-env.sh
 tofu init
 tofu apply
 ```
@@ -67,24 +68,82 @@ ssh root@$(tofu output -raw node_public_ipv4) tail -f /var/log/iidp-bootstrap.lo
 
 If you changed `state_bucket_name` or `location` in step 1, the backend block in [`platform/backend.tf`](platform/backend.tf) has to agree. Either edit it or pass `-backend-config` at init time; the comment in that file shows both.
 
+## Loading the state backend credentials
+
+`infra/platform` keeps its state in the state bucket, and its S3 backend reads the Object Storage keys from `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (a backend block cannot read OpenTofu variables; see [`platform/backend.tf`](platform/backend.tf)). Nothing sets them in a new terminal: the bootstrap wizard exports them only inside its own process. Without them every `tofu` command in `infra/platform` fails, even `tofu output`, with `No valid credential sources found`.
+
+[`tofu-env.sh`](tofu-env.sh) loads them from `state-bucket/terraform.tfvars`, where the wizard (or step 1 above) already wrote them as `object_storage_access_key` and `object_storage_secret_key`, so the keys are never typed or pasted into shell history. Source it at the start of every terminal session that runs `tofu` against the Platform:
+
+```sh
+cd infra/platform
+source ../tofu-env.sh
+```
+
+- It exports the two variables into the current shell and prints neither key. It works in bash and zsh.
+- It fails with a message naming the file, or the missing key, when `state-bucket/terraform.tfvars` does not exist or still holds the example's `"..."` placeholders. It exports nothing in that case.
+- Source it rather than running it: a script that runs in its own process cannot change your shell's environment, so running it only prints a reminder.
+- `IIDP_STATE_TFVARS=<path> source ../tofu-env.sh` reads a different file, for example when the tfvars are kept outside the checkout.
+- On a machine where `infra/platform` has never been initialised (a fresh clone), run `tofu init` once after sourcing it.
+
+`infra/state-bucket` does not need it: that root keeps its state in a local file and reads the same keys as ordinary variables from its own `terraform.tfvars`.
+
+Every recipe below starts with those two lines, run from the root of your clone of this repository, so each works from a new terminal.
+
 ## Retrieving the age public key
 
 The bootstrap generates an age key pair on the node the first time it runs and stores the private key only in the Secret `sops-age` (key `keys.txt`) in namespace `argocd`, which is the layout KSOPS mounts into the ArgoCD repo server. The public key is written to `/root/age.pub`. The output `age_public_key_command` prints the exact command:
 
 ```sh
+cd infra/platform
+source ../tofu-env.sh
 tofu output -raw age_public_key_command
 # ssh root@<ip> cat /root/age.pub
 ```
 
+Run the command it prints, or run it in one go with `ssh root@$(tofu output -raw node_public_ipv4) cat /root/age.pub`.
+
 That public key goes into `platform.yaml` in the Platform repository; the CLI encrypts every Platform secret with it. The private key never leaves the cluster.
 
-## Fetching the kubeconfig
+## Reaching the Kubernetes API
 
-Only the Platform admin holds one:
+Only the Platform admin holds a kubeconfig. The node's firewall ([`platform/hetzner.tf`](platform/hetzner.tf)) opens only ports 22, 80 and 443, so the Kubernetes API on port 6443 cannot be reached from outside the node, by design. `kubectl` reaches it through an SSH tunnel instead. The kubeconfig k3s writes already points at `https://127.0.0.1:6443`, and the API server's certificate is valid for `127.0.0.1`, so the file is used as it is and TLS still verifies through the tunnel.
+
+**1. Fetch the kubeconfig**, once (and again after [a rebuild](#rebuilding-the-node), which creates a new cluster with new certificates). It holds the cluster-admin client key, so it is made readable only by you before anything is written into it:
 
 ```sh
-ssh root@<ip> cat /etc/rancher/k3s/k3s.yaml | sed "s/127.0.0.1/<ip>/" > ~/.kube/iidp.yaml
+cd infra/platform
+source ../tofu-env.sh
+mkdir -p ~/.kube
+touch ~/.kube/iidp.yaml && chmod 600 ~/.kube/iidp.yaml
+ssh root@$(tofu output -raw node_public_ipv4) cat /etc/rancher/k3s/k3s.yaml > ~/.kube/iidp.yaml
 ```
+
+**2. Open the tunnel** in a terminal of its own and leave it running while you use `kubectl`. `Ctrl-C` closes it:
+
+```sh
+cd infra/platform
+source ../tofu-env.sh
+ssh -N -o ExitOnForwardFailure=yes -L 6443:127.0.0.1:6443 root@$(tofu output -raw node_public_ipv4)
+```
+
+`-N` runs no remote command, so the connection only forwards local port 6443 to the API server on the node. `ExitOnForwardFailure=yes` makes `ssh` exit with an error if the local port can't be used, instead of staying connected with no forward.
+
+**3. Use `kubectl`** in any other terminal:
+
+```sh
+KUBECONFIG=~/.kube/iidp.yaml kubectl get nodes
+```
+
+Or `export KUBECONFIG=~/.kube/iidp.yaml` once per terminal. `argocd --core` reads the same kubeconfig.
+
+**If local port 6443 is taken** (the tunnel exits with `bind [127.0.0.1]:6443: Address already in use`, typically because another local cluster such as Docker Desktop, k3d or Rancher Desktop listens there), forward a different local port and point the kubeconfig's server at it. k3s names the cluster in its kubeconfig `default`:
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes -L 16443:127.0.0.1:6443 root@$(tofu output -raw node_public_ipv4)
+KUBECONFIG=~/.kube/iidp.yaml kubectl config set-cluster default --server=https://127.0.0.1:16443
+```
+
+The `ssh` line goes in the tunnel terminal, after the same `cd` and `source` lines as in step 2. The certificate check only looks at the address, not the port, so TLS still verifies.
 
 ## Bumping k3s or ArgoCD
 
@@ -94,6 +153,8 @@ Upgrades are deliberate, manual steps (ADR-0001) and they happen **in place**. T
 2. Apply the same versions on the node by re-running the bootstrap with them in the environment:
 
    ```sh
+   cd infra/platform
+   source ../tofu-env.sh
    ssh root@$(tofu output -raw node_public_ipv4) \
      K3S_VERSION=$(tofu output -raw k3s_version) \
      ARGOCD_CHART_VERSION=$(tofu output -raw argocd_chart_version) \
@@ -113,8 +174,10 @@ The same in-place pattern as version bumps, for the same reason: the credential 
 2. Apply it on the node by re-running the bootstrap with the new key, base64-encoded, in the environment:
 
    ```sh
+   cd infra/platform
+   source ../tofu-env.sh
    ssh root@$(tofu output -raw node_public_ipv4) \
-     PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64=$(base64 < new-key.pem | tr -d '\n') \
+     PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64=$(base64 < /path/to/new-key.pem | tr -d '\n') \
      iidp-bootstrap
    ```
 
@@ -122,19 +185,38 @@ The same in-place pattern as version bumps, for the same reason: the credential 
 
 ## Rebuilding the node
 
-Only for disaster recovery, after confirming the database backups in the backup bucket are current. A rebuild **destroys every local volume, so every Application database on the node, and the age key**:
+Only for disaster recovery, after confirming the database backups in the backup bucket are current. A rebuild **destroys every local volume, so every Application database on the node, and the age key**.
+
+**Before the rebuild, save the age key.** With [the tunnel](#reaching-the-kubernetes-api) open to the current node, write it to a file outside this (public) repository's checkout, made readable only by you before the key goes into it. Treat that file as the crown jewels:
 
 ```sh
+touch ~/iidp-sops-age.yaml && chmod 600 ~/iidp-sops-age.yaml
+KUBECONFIG=~/.kube/iidp.yaml kubectl -n argocd get secret sops-age -o yaml > ~/iidp-sops-age.yaml
+```
+
+**Rebuild.** Close the tunnel first; it points at the node that is about to go:
+
+```sh
+cd infra/platform
+source ../tofu-env.sh
 tofu apply -replace=hcloud_server.node
 ```
 
-Before running it, save the age key: `kubectl -n argocd get secret sops-age -o yaml > sops-age.yaml` (treat that file as the crown jewels). After the new node is up, put it back and restart the repo server:
+**After the new node is up, put the key back and restart the repo server.** The new node is a new cluster with its own certificates, so fetch its kubeconfig and open a tunnel to it again ([steps 1 and 2](#reaching-the-kubernetes-api)). If `ssh` refuses with `REMOTE HOST IDENTIFICATION HAS CHANGED`, the new server was given the old address; the host key changed with the rebuild, so drop the old one with `ssh-keygen -R <ip>` and connect again. Then:
 
 ```sh
+export KUBECONFIG=~/.kube/iidp.yaml
 kubectl -n argocd delete secret sops-age
-kubectl apply -f sops-age.yaml
+kubectl apply -f ~/iidp-sops-age.yaml
 kubectl -n argocd rollout restart deployment argocd-repo-server
-ssh root@<ip> iidp-bootstrap   # refreshes /root/age.pub from the restored Secret
+```
+
+and refresh `/root/age.pub` on the node from the restored Secret:
+
+```sh
+cd infra/platform
+source ../tofu-env.sh
+ssh root@$(tofu output -raw node_public_ipv4) iidp-bootstrap
 ```
 
 If the key is gone, every SOPS-encrypted secret in the Platform repository has to be re-encrypted for the new public key with `iidp secret set`. Application databases are restored from their continuous backups once CloudNativePG is back.
@@ -149,10 +231,10 @@ If the key is gone, every SOPS-encrypted secret in the Platform repository has t
 tofu fmt -check -recursive infra
 (cd infra/state-bucket && tofu init -backend=false && tofu validate)
 (cd infra/platform && tofu init -backend=false && tofu validate)
-go test ./infra/platform/...
+go test ./infra/...
 ```
 
-This is what [`.github/workflows/infra.yaml`](../.github/workflows/infra.yaml) and the main Go CI job run on every pull request that touches `infra/`. It needs no secrets: `tofu validate` (unlike `plan`/`apply`) does not require variables to have values, even required ones with no default, so `platform_repo_github_app_private_key` and its siblings need nothing here. The `go test` above reads the cloud-init template as text instead of rendering it through OpenTofu, since reproducing `templatefile()`'s own template syntax in Go was judged not worth it for what that test checks (see `docs/implementation-notes/41-argocd-platform-repo-credential.md`). Whether the node actually boots into a healthy cluster, and whether ArgoCD actually reads the Platform repository, can only be seen with a real `tofu apply`.
+This is what [`.github/workflows/infra.yaml`](../.github/workflows/infra.yaml) and the main Go CI job run on every pull request that touches `infra/`. The `go test` includes `test/tofu-env/run.sh`, which sources [`tofu-env.sh`](tofu-env.sh) against fixture files under bash and, when it is installed, zsh (`bash test/tofu-env/run.sh` runs it on its own). None of it needs secrets: `tofu validate` (unlike `plan`/`apply`) does not require variables to have values, even required ones with no default, so `platform_repo_github_app_private_key` and its siblings need nothing here. Its cloud-init test (`infra/platform`) reads the template as text instead of rendering it through OpenTofu, since reproducing `templatefile()`'s own template syntax in Go was judged not worth it for what that test checks (see `docs/implementation-notes/41-argocd-platform-repo-credential.md`). Whether the node actually boots into a healthy cluster, and whether ArgoCD actually reads the Platform repository, can only be seen with a real `tofu apply`.
 
 ## Swapping the hosting provider
 
