@@ -389,26 +389,31 @@ HTTP_STATUS=""
 HTTP_BODY=""
 
 http_get() { _http GET "$1" "${2:-}"; }
-http_post() { _http POST "$1" "${2:-}" "${3:-}"; }
+# http_post URL AUTH_HEADER BODY [HEADER...]. BODY is sent byte for byte
+# (--data-binary); a BODY of "@FILE" sends that file's content instead, for
+# a body a shell string can't hold (the NUL byte of an empty remote write).
+http_post() { _http POST "$1" "${2:-}" "${3:-}" "${@:4}"; }
 
 _http() {
   local method="$1" url="$2" auth_header="${3:-}" body="${4:-}"
+  local -a extra_headers=("${@:5}")
   if [[ "$DRY_RUN" == "1" ]]; then
     dry "would $method $url"
     HTTP_STATUS=200; HTTP_BODY="{}"
     return 0
   fi
   if [[ "${IIDP_WIZARD_FAKE:-0}" == "1" ]]; then
-    _fake_http "$method" "$url"
+    _fake_http "$method" "$url" "$auth_header" "$body"
     return 0
   fi
-  local tmp status
+  local tmp status header
   tmp=$(mktemp "${TMPDIR:-/tmp}/iidp-wizard.XXXXXX")
   local -a curl_args=(-sS -o "$tmp" -w '%{http_code}')
   [[ -n "$auth_header" ]] && curl_args+=(-H "$auth_header")
+  for header in "${extra_headers[@]}"; do curl_args+=(-H "$header"); done
   if [[ "$method" == "POST" ]]; then
     curl_args+=(-X POST)
-    [[ -n "$body" ]] && curl_args+=(-d "$body")
+    [[ -n "$body" ]] && curl_args+=(--data-binary "$body")
   fi
   curl_args+=("$url")
   status=$(curl "${curl_args[@]}") || { rm -f "$tmp"; die "network call failed: $method $url"; }
@@ -420,7 +425,7 @@ _http() {
 # Canned responses for the shell test suite. Only the shapes the validators
 # below actually read are filled in.
 _fake_http() {
-  local method="$1" url="$2"
+  local method="$1" url="$2" auth_header="${3:-}" body="${4:-}"
   case "$url" in
     *api.hetzner.cloud/v1/servers*)
       if [[ "${IIDP_WIZARD_FAKE_HETZNER_TOKEN:-fake-token}" == "${HETZNER_TOKEN:-}" ]]; then
@@ -438,6 +443,32 @@ _fake_http() {
       ;;
     *api.cloudflare.com/client/v4/zones*)
       HTTP_STATUS=200; HTTP_BODY='{"success":true,"result":[{"id":"fakezoneid","name":"itma.no"}]}'
+      ;;
+    https://*.grafana.net*)
+      # Like the real Grafana Cloud gateway, the path is checked before the
+      # credentials: a bare host answers 405 (what Alloy got), any other
+      # wrong path 404. Instance ids are numbers; the token must match.
+      local rest="${url#*://}" path="/" creds=""
+      [[ "$rest" == */* ]] && path="/${rest#*/}"
+      case "$path" in
+        /loki/api/v1/push|/api/prom/push)
+          creds=$(printf '%s' "${auth_header#Authorization: Basic }" | base64 -d 2>/dev/null || true)
+          if [[ "${creds%%:*}" =~ ^[0-9]+$ && "${creds#*:}" == "${IIDP_WIZARD_FAKE_GRAFANA_TOKEN:-fake-token}" ]]; then
+            HTTP_STATUS=204; HTTP_BODY=''
+          else
+            HTTP_STATUS=401; HTTP_BODY='{"status":"error","error":"authentication error: invalid token"}'
+          fi
+          ;;
+        /) HTTP_STATUS=405; HTTP_BODY='' ;;
+        *) HTTP_STATUS=404; HTTP_BODY='404 page not found' ;;
+      esac
+      ;;
+    https://login.microsoftonline.com/*/oauth2/v2.0/token)
+      if [[ "&${body}&" == *"&client_secret=${IIDP_WIZARD_FAKE_ENTRA_SECRET:-fake-secret-value}&"* ]]; then
+        HTTP_STATUS=200; HTTP_BODY='{"token_type":"Bearer","expires_in":3599,"access_token":"fake-access-token"}'
+      else
+        HTTP_STATUS=401; HTTP_BODY='{"error":"invalid_client","error_description":"AADSTS7000215: Invalid client secret provided. Ensure the secret being sent in the request is the client secret value, not the client secret ID, for a secret added to app '"'"'00000000-0000-0000-0000-000000000000'"'"'. Trace ID: fake Correlation ID: fake Timestamp: fake","error_codes":[7000215]}'
+      fi
       ;;
     *)
       HTTP_STATUS=200; HTTP_BODY='{}'
@@ -466,6 +497,59 @@ check_cloudflare_zone_readable() { # check_cloudflare_zone_readable TOKEN ZONE -
   [[ "$DRY_RUN" == "1" ]] && { dry "would GET https://api.cloudflare.com/client/v4/zones?name=${zone}"; return 0; }
   http_get "https://api.cloudflare.com/client/v4/zones?name=${zone}" "Authorization: Bearer $token"
   [[ "$HTTP_STATUS" == "200" ]] && echo "$HTTP_BODY" | jq -e '.success == true and ((.result | length) > 0)' >/dev/null 2>&1
+}
+
+# check_grafana_push KIND URL USER TOKEN -> 0 when Grafana Cloud accepts it.
+# KIND is loki or prometheus. Pushes nothing at all: Loki gets a push with
+# no streams, Prometheus a remote write with no series (an empty protobuf
+# WriteRequest, snappy-compressed, which is the single byte 0x00). Grafana
+# Cloud's gateway checks the path before the credentials, so a wrong URL
+# answers 404/405 and wrong credentials 401/403, whatever the body.
+# HTTP_STATUS and HTTP_BODY are left for the caller to explain a refusal.
+check_grafana_push() {
+  local kind="$1" url="$2" user="$3" token="$4" auth body_file
+  [[ "$DRY_RUN" == "1" ]] && { dry "would POST an empty $kind push to $url"; return 0; }
+  auth="Authorization: Basic $(printf '%s:%s' "$user" "$token" | base64 | tr -d '\n')"
+  if [[ "$kind" == "loki" ]]; then
+    http_post "$url" "$auth" '{"streams":[]}' "Content-Type: application/json"
+  else
+    body_file=$(mktemp "${TMPDIR:-/tmp}/iidp-wizard.XXXXXX")
+    printf '\0' > "$body_file"
+    http_post "$url" "$auth" "@$body_file" "Content-Type: application/x-protobuf" \
+      "Content-Encoding: snappy" "X-Prometheus-Remote-Write-Version: 0.1.0"
+    rm -f "$body_file"
+  fi
+  [[ "$HTTP_STATUS" == 2?? ]]
+}
+
+uri_encode() { jq -rn --arg v "$1" '$v|@uri'; }
+
+# check_entra_client_credentials TENANT CLIENT_ID SECRET -> 0 when Entra
+# issues a token for them. A client-credentials token for Microsoft Graph
+# needs no API permission granted, only a working tenant, client id and
+# secret together, so it proves exactly the three values Dex and
+# oauth2-proxy will sign in with.
+check_entra_client_credentials() {
+  local tenant="$1" client_id="$2" secret="$3"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dry "would POST client credentials to https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token"
+    return 0
+  fi
+  http_post "https://login.microsoftonline.com/$(uri_encode "$tenant")/oauth2/v2.0/token" "" \
+    "grant_type=client_credentials&client_id=$(uri_encode "$client_id")&client_secret=$(uri_encode "$secret")&scope=$(uri_encode "https://graph.microsoft.com/.default")"
+  [[ "$HTTP_STATUS" == "200" ]] && echo "$HTTP_BODY" | jq -e '(.access_token // "") != ""' >/dev/null 2>&1
+}
+
+# http_error_excerpt -> one short line explaining HTTP_BODY: the JSON error
+# message when there is one (Entra's without its trace ids), else the body.
+http_error_excerpt() {
+  local msg
+  msg=$(echo "$HTTP_BODY" | jq -r '.error_description // .error // .message // empty' 2>/dev/null) || msg=""
+  [[ -n "$msg" ]] || msg="$HTTP_BODY"
+  msg="${msg%% Trace ID:*}"
+  msg=$(printf '%s' "$msg" | tr '\n\r' '  ')
+  (( ${#msg} > 300 )) && msg="${msg:0:300}..."
+  printf '%s' "${msg:-no response body}"
 }
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -910,14 +994,73 @@ stage_grafana() {
   fi
 
   say "Alloy on the node ships logs and metrics to Grafana Cloud's free tier."
-  print_url "https://grafana.com/orgs"
-  step "Open your stack > Details, and the connection instructions for Prometheus and Loki."
-  ask GRAFANA_PROM_URL "Prometheus remote_write URL:"
+  say "Sign in; the Cloud Portal opens on your organisation and lists its stacks."
+  print_url "https://grafana.com/auth/sign-in"
+  step "Your stack's Prometheus card > Details: the remote write endpoint and the username (instance id)."
+  ask GRAFANA_PROM_URL "Prometheus remote write URL:"
   ask GRAFANA_PROM_USER "Prometheus username (instance id):"
-  ask GRAFANA_LOKI_URL "Loki push URL:"
-  ask GRAFANA_LOKI_USER "Loki username (instance id):"
-  step "My Account > Access Policies > Create access policy with metrics:write and logs:write, then create a token for it."
+  step "Your stack's Loki card > Details: the URL and the user (instance id). The bare host shown there is fine."
+  ask GRAFANA_LOKI_URL "Loki URL:"
+  ask GRAFANA_LOKI_USER "Loki user (instance id):"
+  step "Security > Access Policies > Create access policy: realm your stack, scopes metrics:write and logs:write."
+  step "Then Add token on that policy."
   ask_secret GRAFANA_ACCESS_TOKEN "Paste the access token:"
+
+  local given
+  given="$GRAFANA_PROM_URL"
+  GRAFANA_PROM_URL=$(grafana_push_url prometheus "$given")
+  [[ "$GRAFANA_PROM_URL" != "$given" ]] && log_choice "Prometheus push URL: $GRAFANA_PROM_URL"
+  given="$GRAFANA_LOKI_URL"
+  GRAFANA_LOKI_URL=$(grafana_push_url loki "$given")
+  [[ "$GRAFANA_LOKI_URL" != "$given" ]] && log_choice "Loki push URL: $GRAFANA_LOKI_URL"
+
+  # Encrypted, these can only be replaced by re-running the whole wizard
+  # (the age private key lives only in the cluster), so prove them first.
+  verify_grafana_push prometheus "$GRAFANA_PROM_URL" "$GRAFANA_PROM_USER" "$GRAFANA_ACCESS_TOKEN"
+  verify_grafana_push loki "$GRAFANA_LOKI_URL" "$GRAFANA_LOKI_USER" "$GRAFANA_ACCESS_TOKEN"
+}
+
+# grafana_push_url KIND URL -> the push URL Alloy needs. KIND is loki or
+# prometheus. The Cloud Portal shows Loki's URL as a bare host, and Alloy
+# pushing to "/" gets 405 on every batch, so a bare host (or Prometheus's
+# query base, /api/prom) gets its push path appended. A URL with any other
+# path is left alone, bar trailing slashes; a missing scheme becomes https.
+grafana_push_url() {
+  local kind="$1" url="$2" rest path=""
+  url="${url#"${url%%[![:space:]]*}"}"
+  url="${url%"${url##*[![:space:]]}"}"
+  [[ "$url" == *://* ]] || url="https://$url"
+  while [[ "$url" == */ ]]; do url="${url%/}"; done
+  rest="${url#*://}"
+  [[ "$rest" == */* ]] && path="/${rest#*/}"
+  case "$kind:$path" in
+    loki:) url+="/loki/api/v1/push" ;;
+    prometheus:) url+="/api/prom/push" ;;
+    prometheus:/api/prom) url+="/push" ;;
+  esac
+  printf '%s' "$url"
+}
+
+# verify_grafana_push KIND URL USER TOKEN: check_grafana_push, dying with what
+# to fix when Grafana Cloud refuses. Nothing is encrypted until every stage
+# has run, so a refusal here costs only the answers given so far.
+verify_grafana_push() {
+  local kind="$1" url="$2" user="$3" token="$4" name scope
+  if [[ "$kind" == "loki" ]]; then name="Loki" scope="logs:write"; else name="Prometheus" scope="metrics:write"; fi
+  if check_grafana_push "$kind" "$url" "$user" "$token"; then
+    ok "$name accepted an empty push to $url as user $user"
+    return 0
+  fi
+  case "$HTTP_STATUS" in
+    404|405)
+      die "$url is not a $name push URL (HTTP $HTTP_STATUS). Copy it from the stack's $name Details page and re-run; nothing has been encrypted." ;;
+    401|403)
+      die "$name refused user $user or the token (HTTP $HTTP_STATUS: $(http_error_excerpt)). The user is the instance id on the stack's $name Details page, and the token's access policy needs $scope with the stack as its realm. Re-run with the right values; nothing has been encrypted." ;;
+    *)
+      warn "$name answered an empty push to $url with HTTP $HTTP_STATUS: $(http_error_excerpt)"
+      confirm "That is neither a known yes nor a known no. Encrypt these $name values anyway?" \
+        || die "stopped before encrypting anything; check the $name values and re-run" ;;
+  esac
 }
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1055,7 +1198,8 @@ OAUTH2_PROXY_HOST=""
 # entra_register_app NAME REDIRECT_URI DEFAULT_TENANT OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET
 # Creates the app registration via az_create_entra_app when az is available
 # and logged in, otherwise prints what to create by hand and asks for the
-# three resulting values. OUT_* are namerefs (bash >= 4.3), same convention
+# three resulting values, refusing them unless Entra issues a token for
+# them (an encrypted secret can't be fixed later). OUT_* are namerefs (bash >= 4.3), same convention
 # as az_create_entra_app itself, which this wraps.
 entra_register_app() {
   local name="$1" redirect_uri="$2" default_tenant="$3"
@@ -1076,9 +1220,22 @@ entra_register_app() {
     note "  Certificates & secrets: new client secret"
     ask reg_tenant "Tenant id:" "$default_tenant"
     ask reg_client_id "Client id:"
-    ask_secret reg_client_secret "Client secret:"
+    step "Certificates & secrets lists each secret's Value and its Secret ID: copy the Value (shown only right after creating it)."
+    ask_secret reg_client_secret "Client secret (the Value):"
+    # The Secret ID is a GUID; a secret Value never is. Pasting the ID is
+    # what broke ArgoCD's first real Entra login (AADSTS7000215).
+    if is_guid "$reg_client_secret"; then
+      die "that's the Secret ID; paste the Value. The Value is shown only right after creating the secret: if it's hidden now, create a new secret. Nothing has been encrypted."
+    fi
+    if check_entra_client_credentials "$reg_tenant" "$reg_client_id" "$reg_client_secret"; then
+      ok "Entra issued a token for $name's tenant, client id and secret"
+    else
+      die "Entra refused $name's tenant, client id or secret (HTTP $HTTP_STATUS: $(http_error_excerpt)). A secret created a moment ago can take a minute to work. Re-run with the right values; nothing has been encrypted."
+    fi
   fi
 }
+
+is_guid() { [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 
 stage_entra() {
   stage "Entra ID"
@@ -1639,7 +1796,11 @@ closing_summary() {
   printf '\n%s%s  ✓ Platform bootstrap complete%s\n\n' "$BOLD" "$GREEN" "$RESET" >&2
   note "ArgoCD:        ${ARGOCD_URL:-<not set>}"
   note "Node IPv4:     ${NODE_IP:-<not set>}"
-  note "Kubeconfig:    ssh root@${NODE_IP:-<node-ip>} cat /etc/rancher/k3s/k3s.yaml | sed \"s/127.0.0.1/${NODE_IP:-<node-ip>}/\" > ~/.kube/iidp.yaml"
+  # The firewall keeps 6443 closed, so kubectl goes through an SSH tunnel and
+  # the kubeconfig keeps k3s's own 127.0.0.1 (its certificate covers it).
+  note "Kubeconfig:    ssh root@${NODE_IP:-<node-ip>} cat /etc/rancher/k3s/k3s.yaml > ~/.kube/iidp.yaml"
+  note "API tunnel:    ssh -N -L 6443:127.0.0.1:6443 root@${NODE_IP:-<node-ip>}, then kubectl as usual"
+  note "               (infra/README.md, \"Reaching the Kubernetes API\")"
 
   if [[ -z "$CLOUDFLARE_ZONE" ]] || ! confirm "Does ${BASE_DOMAIN:-the base domain} already resolve through Cloudflare?"; then
     MANUAL_STEPS+=("Make sure ${BASE_DOMAIN:-the base domain} resolves once external-dns has created its first record (see bootstrap/README.md and bootstrap/components/tls)")

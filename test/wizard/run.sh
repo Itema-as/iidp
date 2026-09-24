@@ -432,6 +432,74 @@ t_start "check_cloudflare_zone_readable succeeds against the fake response"
 ( in_wizard "check_cloudflare_zone_readable 'fake-token' 'itma.no'" )
 assert_success "$?"
 
+# ── Grafana Cloud push URLs and the credential probe (#47) ──────────────
+
+# The Cloud Portal shows Loki's URL as a bare host; pasted as shown, Alloy
+# pushed to "/" and got 405 on every batch.
+t_start "grafana_push_url appends the Loki push path to a bare host"
+out=$(in_wizard "grafana_push_url loki 'https://logs-prod-025.grafana.net'")
+assert_eq "$out" "https://logs-prod-025.grafana.net/loki/api/v1/push"
+
+t_start "grafana_push_url appends the Loki push path to a bare host with a trailing slash"
+out=$(in_wizard "grafana_push_url loki 'https://logs-prod-025.grafana.net/'")
+assert_eq "$out" "https://logs-prod-025.grafana.net/loki/api/v1/push"
+
+t_start "grafana_push_url leaves a full Loki push URL unchanged"
+out=$(in_wizard "grafana_push_url loki 'https://logs-prod-025.grafana.net/loki/api/v1/push'")
+assert_eq "$out" "https://logs-prod-025.grafana.net/loki/api/v1/push"
+
+t_start "grafana_push_url drops a trailing slash after a full Loki push URL"
+out=$(in_wizard "grafana_push_url loki 'https://logs-prod-025.grafana.net/loki/api/v1/push/'")
+assert_eq "$out" "https://logs-prod-025.grafana.net/loki/api/v1/push"
+
+t_start "grafana_push_url appends the Prometheus push path to a bare host"
+out=$(in_wizard "grafana_push_url prometheus 'https://prometheus-prod-24-prod-eu-west-2.grafana.net/'")
+assert_eq "$out" "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/push"
+
+t_start "grafana_push_url completes the Prometheus query base /api/prom to its push URL"
+out=$(in_wizard "grafana_push_url prometheus 'https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom'")
+assert_eq "$out" "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/push"
+
+t_start "grafana_push_url leaves a full Prometheus push URL unchanged"
+out=$(in_wizard "grafana_push_url prometheus 'https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/push'")
+assert_eq "$out" "https://prometheus-prod-24-prod-eu-west-2.grafana.net/api/prom/push"
+
+t_start "grafana_push_url adds https:// to a host pasted without a scheme"
+out=$(in_wizard "grafana_push_url loki ' logs-prod-025.grafana.net '")
+assert_eq "$out" "https://logs-prod-025.grafana.net/loki/api/v1/push"
+
+t_start "check_grafana_push succeeds for a push URL, a numeric user and the fake token"
+( in_wizard "check_grafana_push loki 'https://logs-prod-000.grafana.net/loki/api/v1/push' 123456 fake-token" )
+assert_success "$?"
+( in_wizard "check_grafana_push prometheus 'https://prometheus-prod-00-prod-eu-west-0.grafana.net/api/prom/push' 654321 fake-token" )
+assert_success "$?"
+
+t_start "check_grafana_push answers 405 for a bare host and 401 for a wrong token"
+out=$(in_wizard "check_grafana_push loki 'https://logs-prod-000.grafana.net' 123456 fake-token || true; echo \$HTTP_STATUS")
+assert_eq "$out" "405"
+out=$(in_wizard "check_grafana_push prometheus 'https://prometheus-prod-00-prod-eu-west-0.grafana.net/api/prom/push' 654321 wrong-token || true; echo \$HTTP_STATUS")
+assert_eq "$out" "401"
+
+# ── Entra client credentials (#47) ──────────────────────────────────────
+
+t_start "is_guid recognises a secret ID and not a secret value"
+( in_wizard "is_guid 3f2504e0-4f89-11d3-9a0c-0305e82c3301" )
+assert_success "$?"
+if in_wizard "is_guid 'Abc8Q~0123456789abcdefghijklmnopqrstuvwxy'"; then
+  t_fail "a secret value was taken for a GUID"
+else
+  t_pass
+fi
+
+t_start "check_entra_client_credentials succeeds for the fake secret and fails for any other"
+( in_wizard "check_entra_client_credentials 11111111-1111-1111-1111-111111111111 22222222-2222-2222-2222-222222222222 fake-secret-value" )
+assert_success "$?"
+if in_wizard "check_entra_client_credentials 11111111-1111-1111-1111-111111111111 22222222-2222-2222-2222-222222222222 wrong-secret"; then
+  t_fail "expected a non-zero exit"
+else
+  t_pass
+fi
+
 # ── idempotency: re-running a stage keeps an already-encrypted secret ────
 
 t_start "stage_github_app keeps an existing githubApp.id, never calls gh again, and writes the tfvars credential (#41)"
@@ -596,6 +664,124 @@ t_start "stage_cloudflare asks for and validates a token when none is encrypted 
 assert_contains "$out" "token validated against /user/tokens/verify"
 assert_contains "$out" "zone itma.no is readable"
 assert_contains "$out" "token=[fake-token]"
+
+# stage_grafana with the answers in $1 (KEY=value lines), in a fresh
+# Platform repository with no encrypted Grafana secret yet. Sets out and rc.
+run_stage_grafana() {
+  local d answers
+  d=$(scratch_dir)
+  mkdir -p "$d/platform-repo/bootstrap/sops"
+  answers=$(scratch_dir)/answers.env
+  printf '%s\n' "$1" > "$answers"
+  out=$(in_wizard "
+    PLATFORM_REPO='$d/platform-repo'
+    IIDP_WIZARD_ANSWERS='$answers'
+    stage_grafana
+    echo \"prom=[\${GRAFANA_PROM_URL}] loki=[\${GRAFANA_LOKI_URL}]\"
+  " 2>&1)
+  rc=$?
+}
+
+t_start "stage_grafana links to the sign-in page and says where each value lives"
+run_stage_grafana "GRAFANA_URL=https://itema.grafana.net
+GRAFANA_PROM_URL=https://prometheus-prod-00-prod-eu-west-0.grafana.net
+GRAFANA_PROM_USER=654321
+GRAFANA_LOKI_URL=https://logs-prod-000.grafana.net
+GRAFANA_LOKI_USER=123456
+GRAFANA_ACCESS_TOKEN=fake-token"
+assert_contains "$out" "https://grafana.com/auth/sign-in"
+assert_not_contains "$out" "https://grafana.com/orgs"
+assert_contains "$out" "Prometheus card > Details"
+assert_contains "$out" "Loki card > Details"
+assert_contains "$out" "Security > Access Policies"
+assert_contains "$out" "metrics:write and logs:write"
+t_start "stage_grafana (bare hosts, good credentials) exits 0"
+assert_success "$rc"
+t_start "stage_grafana appends the push paths to bare hosts before storing them"
+assert_contains "$out" "prom=[https://prometheus-prod-00-prod-eu-west-0.grafana.net/api/prom/push]"
+assert_contains "$out" "loki=[https://logs-prod-000.grafana.net/loki/api/v1/push]"
+t_start "stage_grafana proves both push URLs with the credentials"
+assert_contains "$out" "Prometheus accepted an empty push"
+assert_contains "$out" "Loki accepted an empty push"
+
+t_start "stage_grafana keeps full push URLs unchanged"
+run_stage_grafana "GRAFANA_PROM_URL=https://prometheus-prod-00-prod-eu-west-0.grafana.net/api/prom/push
+GRAFANA_PROM_USER=654321
+GRAFANA_LOKI_URL=https://logs-prod-000.grafana.net/loki/api/v1/push
+GRAFANA_LOKI_USER=123456
+GRAFANA_ACCESS_TOKEN=fake-token"
+assert_success "$rc"
+assert_contains "$out" "prom=[https://prometheus-prod-00-prod-eu-west-0.grafana.net/api/prom/push]"
+assert_contains "$out" "loki=[https://logs-prod-000.grafana.net/loki/api/v1/push]"
+
+t_start "stage_grafana refuses a URL that is not a push URL"
+run_stage_grafana "GRAFANA_PROM_URL=https://prometheus-prod-00-prod-eu-west-0.grafana.net/api/prom/api/v1/query
+GRAFANA_PROM_USER=654321
+GRAFANA_LOKI_URL=https://logs-prod-000.grafana.net
+GRAFANA_LOKI_USER=123456
+GRAFANA_ACCESS_TOKEN=fake-token"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "is not a Prometheus push URL (HTTP 404)"
+assert_not_contains "$out" "prom=["
+
+t_start "stage_grafana refuses a wrong token"
+run_stage_grafana "GRAFANA_PROM_URL=https://prometheus-prod-00-prod-eu-west-0.grafana.net
+GRAFANA_PROM_USER=654321
+GRAFANA_LOKI_URL=https://logs-prod-000.grafana.net
+GRAFANA_LOKI_USER=123456
+GRAFANA_ACCESS_TOKEN=wrong-token"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "Prometheus refused user 654321 or the token (HTTP 401: authentication error: invalid token)"
+assert_not_contains "$out" "prom=["
+
+t_start "stage_grafana refuses a wrong user"
+run_stage_grafana "GRAFANA_PROM_URL=https://prometheus-prod-00-prod-eu-west-0.grafana.net
+GRAFANA_PROM_USER=654321
+GRAFANA_LOKI_URL=https://logs-prod-000.grafana.net
+GRAFANA_LOKI_USER=itema-logs
+GRAFANA_ACCESS_TOKEN=fake-token"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "Loki refused user itema-logs or the token (HTTP 401"
+assert_not_contains "$out" "loki=["
+
+# entra_register_app's manual path (az is never used under IIDP_WIZARD_FAKE)
+# with the answers in $1. Sets out and rc.
+run_entra_register_app() {
+  local answers
+  answers=$(scratch_dir)/answers.env
+  printf '%s\n' "$1" > "$answers"
+  out=$(in_wizard "
+    IIDP_WIZARD_ANSWERS='$answers'
+    entra_register_app iidp-argocd https://argocd.app.itma.no/api/dex/callback '' T C S
+    echo \"tenant=[\$T] client=[\$C] secret=[\$S]\"
+  " 2>&1)
+  rc=$?
+}
+
+t_start "entra_register_app (manual) accepts values Entra issues a token for"
+run_entra_register_app "reg_tenant=11111111-1111-1111-1111-111111111111
+reg_client_id=22222222-2222-2222-2222-222222222222
+reg_client_secret=fake-secret-value"
+assert_success "$rc"
+assert_contains "$out" "Entra issued a token for iidp-argocd"
+assert_contains "$out" "secret=[fake-secret-value]"
+
+t_start "entra_register_app (manual) refuses a Secret ID pasted as the secret"
+run_entra_register_app "reg_tenant=11111111-1111-1111-1111-111111111111
+reg_client_id=22222222-2222-2222-2222-222222222222
+reg_client_secret=3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "that's the Secret ID; paste the Value"
+assert_not_contains "$out" "secret=["
+
+t_start "entra_register_app (manual) refuses values Entra does not accept"
+run_entra_register_app "reg_tenant=11111111-1111-1111-1111-111111111111
+reg_client_id=22222222-2222-2222-2222-222222222222
+reg_client_secret=wrong-secret"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "Entra refused iidp-argocd's tenant, client id or secret (HTTP 401: AADSTS7000215"
+assert_not_contains "$out" "Trace ID"
+assert_not_contains "$out" "secret=["
 
 # ── Object Storage location / objectStorageEndpoint derivation ──────────
 
