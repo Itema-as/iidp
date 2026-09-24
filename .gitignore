@@ -27,3 +27,10 @@ infra/**/.terraform/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# Saved plans (tofu plan -out=...) hold every variable value in plaintext,
+# secrets included, and this repository is public. Not anchored to infra/,
+# so a new OpenTofu directory anywhere is covered too.
+tfplan
+tfplan.*
+*.tfplan
+*.tfplan.*
