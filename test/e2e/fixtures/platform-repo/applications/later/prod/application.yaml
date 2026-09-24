@@ -1,0 +1,38 @@
+# The ArgoCD Application for later's prod Environment, which has no image
+# yet (values.yaml). The same shape as shop's, including the one deviation
+# from what the CLI writes (the chart from this repository's iidp.git, since
+# kind has no GHCR) and the sops/ source iidp app create --postgres adds.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: later-prod
+  namespace: argocd
+  labels:
+    iidp.itema.no/application: later
+    iidp.itema.no/environment: prod
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp.git
+      targetRevision: main
+      path: chart/application
+      helm:
+        valueFiles:
+          - $values/applications/later/prod/values.yaml
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+      targetRevision: main
+      ref: values
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+      targetRevision: main
+      path: applications/later/prod/sops
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: later-prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,10 @@ import (
 // whole Platform path (testFixtureApplication): the fixture Platform
 // repository's Application shop, with Postgres enabled on a prod and a
 // staging Environment, deployed through the real bootstrap and chart, its
-// migration run, and an HTTP 200 through Traefik for both hosts. Finally
+// migration run, and an HTTP 200 through Traefik for both hosts. Next
+// (testUnreleasedEnvironments) it proves that two Environments with no
+// image yet, later-prod and brochure-prod, are Synced and Healthy with
+// nothing of the chart's in their namespaces. Finally
 // (testDeleteEnvironment) it proves #39: pushing a commit that removes
 // shop's staging Environment directory, the way iidp app delete itself
 // does, makes ArgoCD delete the shop-staging Application only after its
@@ -141,7 +145,76 @@ func TestBootstrap(t *testing.T) {
 	}
 
 	testFixtureApplication(ctx, t, cluster)
+	testUnreleasedEnvironments(ctx, t, cluster)
 	testDeleteEnvironment(ctx, t, cluster)
+}
+
+// testUnreleasedEnvironments proves #47's item 13: an Environment the deploy
+// workflow has not written an image into yet (image.tag: "", what the CLI
+// writes on create) is Synced and Healthy in ArgoCD, with no comparison
+// error, and nothing of the chart's runs in it. later-prod has Postgres on
+// and the sops/ source iidp app create --postgres adds, so its only
+// resource is the backups-credentials Secret; brochure-prod has no
+// Capability and no secret, so it has no resources at all, the case whose
+// status comes from ArgoCD alone. Neither adds a workload to the node. See
+// docs/implementation-notes/47-unreleased-environment.md.
+func testUnreleasedEnvironments(ctx context.Context, t *testing.T, cluster *Cluster) {
+	t.Helper()
+	want := map[string]Expectation{
+		"later-prod":    Healthy,
+		"brochure-prod": Healthy,
+	}
+	if err := cluster.WaitForApplications(ctx, want, 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	apps, err := cluster.Applications(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, env := range []struct {
+		application, namespace string
+		resources              []string
+	}{
+		{"later-prod", "later-prod", []string{"Secret/backups-credentials"}},
+		{"brochure-prod", "brochure-prod", nil},
+	} {
+		// A ComparisonError is what an unreleased Environment showed
+		// before: the sync status alone could hide one behind a stale
+		// Synced, so the conditions are checked too.
+		if conditions := apps[env.application].Conditions; len(conditions) != 0 {
+			t.Errorf("%s has conditions %v, want none", env.application, conditions)
+		}
+
+		out, err := cluster.Kubectl(ctx, "-n", "argocd", "get", "application", env.application,
+			"-o", `jsonpath={range .status.resources[*]}{.kind}/{.name}{"\n"}{end}`)
+		if err != nil {
+			t.Fatalf("read %s's resources: %v\n%s", env.application, err, out)
+		}
+		if got := strings.Fields(out); !slices.Equal(got, env.resources) {
+			t.Errorf("%s manages %v, want %v", env.application, got, env.resources)
+		}
+
+		// And nothing of the chart's exists in the namespace: no
+		// workload, no database, no hook.
+		out, err = cluster.Kubectl(ctx, "-n", env.namespace, "get",
+			"deployments,services,ingresses,jobs,clusters.postgresql.cnpg.io,objectstores.barmancloud.cnpg.io,scheduledbackups.postgresql.cnpg.io",
+			"-o", "name")
+		if err != nil {
+			t.Fatalf("list %s: %v\n%s", env.namespace, err, out)
+		}
+		var found []string
+		for _, line := range strings.Split(out, "\n") {
+			// -o name prints kind.group/name; "No resources found in
+			// <namespace> namespace." (stderr, combined here) is not one.
+			if line = strings.TrimSpace(line); strings.Contains(line, "/") && !strings.Contains(line, " ") {
+				found = append(found, line)
+			}
+		}
+		if len(found) != 0 {
+			t.Errorf("namespace %s holds %v before the Environment's first image, want nothing of the chart's", env.namespace, found)
+		}
+	}
 }
 
 // testFixtureApplication proves the whole Platform path from the bootstrap

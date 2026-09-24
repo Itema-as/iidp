@@ -1,0 +1,26 @@
+# Values for brochure's prod Environment: a Static site with no Capability
+# and no secret that has not received its first image yet. image.tag is the
+# "" the CLI writes, so the chart renders nothing and the ArgoCD
+# Application has no resources at all. See
+# docs/implementation-notes/47-unreleased-environment.md.
+application:
+  name: brochure
+environment: prod
+platform:
+  baseDomain: app.example.test
+kind: static-site
+image:
+  repository: ghcr.io/itema-as/brochure
+  tag: ""
+size: small
+port: 3000
+probe:
+  path: /
+env: {}
+domains: []
+postgres:
+  enabled: false
+  migrationCommand: ""
+  backupRetention: 30d
+login:
+  enabled: false

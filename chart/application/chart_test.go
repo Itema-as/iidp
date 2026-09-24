@@ -42,8 +42,15 @@ func render(t *testing.T, fixture string, extraArgs ...string) map[string]object
 // successful renders and refusals.
 func helmTemplate(t *testing.T, fixture string, extraArgs ...string) (string, error) {
 	t.Helper()
+	return helmTemplateFile(t, filepath.Join("testdata", fixture), extraArgs...)
+}
+
+// helmTemplateFile is helmTemplate for a values file at any path, for
+// values the test produces itself rather than a fixture.
+func helmTemplateFile(t *testing.T, valuesFile string, extraArgs ...string) (string, error) {
+	t.Helper()
 	requireTool(t, "helm")
-	args := append([]string{"template", "test-release", ".", "--values", filepath.Join("testdata", fixture)}, extraArgs...)
+	args := append([]string{"template", "test-release", ".", "--values", valuesFile}, extraArgs...)
 	cmd := exec.Command("helm", args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -374,6 +381,7 @@ func TestRenderingRefusesInvalidValues(t *testing.T) {
 		{"refuse-unknown-size.yaml", `size must be one of large, medium, small, got "xlarge"`},
 		{"refuse-unknown-kind.yaml", `kind must be web-service or static-site, got "cron-job"`},
 		{"refuse-missing-name.yaml", `application.name is required`},
+		{"refuse-missing-repository.yaml", `image.repository is required`},
 		{"refuse-bad-name.yaml", `application.name must be lowercase letters, digits and dashes, start with a letter and be at most 55 characters, got "1shop"`},
 		{"refuse-env-sets-port.yaml", `env must not set PORT; it is injected from port`},
 	}

@@ -143,7 +143,7 @@ It removes each Environment's `applications/<name>/prod/application.yaml` and `.
 
 `iidp ci set-image <app> <prod|staging|auto> <tag>` is run by the deploy workflow, not by developers: it writes `tag` into `image.tag` of the named Environment's `values.yaml` (`auto` targets `staging` when the Application has one and `prod` otherwise, decided from the Platform repository) and commits `Deploy <app> <environment> <tag>`. It authenticates as the org's GitHub App without ever reading the (private) Platform repository first: the app id from `IIDP_DEPLOY_APP_ID` (an org Actions variable), the private key from `IIDP_DEPLOY_APP_PRIVATE_KEY` (a PEM) or `IIDP_DEPLOY_APP_PRIVATE_KEY_FILE` (a path to one), and the installation id discovered from GitHub itself; `gh auth login` is not consulted.
 
-The Environment deploys once a deploy workflow writes the first image tag.
+The Environment deploys once a deploy workflow writes the first image tag. Until then ArgoCD shows it as Synced and Healthy with nothing running: with `--staging`, that is prod until the first `v*` tag promotes staging's image ([`chart/application/README.md`](chart/application/README.md#an-environment-without-an-image)).
 
 ## Repository layout
 

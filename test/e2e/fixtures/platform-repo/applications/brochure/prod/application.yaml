@@ -1,0 +1,35 @@
+# The ArgoCD Application for brochure's prod Environment, which has no image
+# yet (values.yaml) and renders no resources at all. The same shape as
+# shop's, with the chart from this repository's iidp.git since kind has no
+# GHCR, and no sops/ source: brochure has no secrets.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: brochure-prod
+  namespace: argocd
+  labels:
+    iidp.itema.no/application: brochure
+    iidp.itema.no/environment: prod
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp.git
+      targetRevision: main
+      path: chart/application
+      helm:
+        valueFiles:
+          - $values/applications/brochure/prod/values.yaml
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: brochure-prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

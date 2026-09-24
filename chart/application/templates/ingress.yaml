@@ -1,5 +1,6 @@
 {{- include "application.validate" . -}}
 {{- $domains := include "application.domains" . | fromJson -}}
+{{- if include "application.released" . }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -40,3 +41,4 @@ spec:
     - host: {{ . }}
       {{- include "application.ingressPaths" $ | nindent 6 }}
     {{- end }}
+{{- end }}

@@ -327,12 +327,53 @@ func TestOnlyTheDeploymentPodsMatchTheServiceAndEveryPodIsAttributed(t *testing.
 	}
 }
 
+func TestASyncNeverPrunesTheDatabase(t *testing.T) {
+	// The database's objects carry Prune=false, so a values file that
+	// stops rendering them (an image tag or postgres.enabled removed by
+	// hand) leaves the database running instead of deleting it. Nothing
+	// carries Delete=false: ArgoCD's cascade deletion honours that one,
+	// and iidp app delete must still remove the database after the final
+	// backup. See docs/implementation-notes/47-unreleased-environment.md.
+	const syncOptions = "argocd.argoproj.io/sync-options"
+	cases := []struct {
+		fixture string
+		kept    []string
+	}{
+		{"postgres-prod.yaml", []string{"Cluster/shop-db", "ObjectStore/shop-db", "ScheduledBackup/shop-db"}},
+		{"postgres-staging.yaml", []string{"Cluster/shop-staging-db", "ObjectStore/shop-staging-db", "ScheduledBackup/shop-staging-db"}},
+		{"prod-small.yaml", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.fixture, func(t *testing.T) {
+			objects := render(t, tc.fixture)
+			var kept []string
+			for _, key := range keys(objects) {
+				options, _ := annotationsOf(t, objects[key])[syncOptions].(string)
+				if strings.Contains(options, "Delete=false") {
+					t.Errorf("%s has %s %q; the Environment's deletion would leave it behind", key, syncOptions, options)
+				}
+				if options == "" {
+					continue
+				}
+				if options != "Prune=false" {
+					t.Errorf("%s has %s %q, want Prune=false or none", key, syncOptions, options)
+				}
+				kept = append(kept, key)
+			}
+			if !slices.Equal(kept, tc.kept) {
+				t.Errorf("objects kept on prune = %v, want %v", kept, tc.kept)
+			}
+		})
+	}
+}
+
 func TestRenderingRefusesPostgresValuesItCannotHonour(t *testing.T) {
 	cases := []struct {
 		fixture, message string
 	}{
 		{"refuse-migration-without-postgres.yaml", `postgres.migrationCommand needs postgres.enabled: true; there is no database to migrate`},
 		{"refuse-postgres-missing-bucket.yaml", `platform.backupsBucket is required when postgres.enabled`},
+		{"refuse-postgres-missing-endpoint.yaml", `platform.objectStorageEndpoint is required when postgres.enabled`},
 		{"refuse-env-sets-database-url.yaml", `env must not set DATABASE_URL; the Postgres Capability injects it`},
 		{"refuse-postgres-static-site.yaml", `postgres.enabled needs kind: web-service; a Static site has no server to use a database`},
 		{"refuse-postgres-final-backup-timeout.yaml", `postgres.finalBackupTimeout must be a positive whole number of seconds`},

@@ -1,5 +1,5 @@
 {{- include "application.validate" . -}}
-{{- if include "application.postgres.enabled" . }}
+{{- if and (include "application.released" .) (include "application.postgres.enabled" .) }}
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
@@ -9,10 +9,13 @@ metadata:
   annotations:
     # With the Cluster, which references it from its first reconcile.
     argocd.argoproj.io/sync-wave: "-2"
+    # Kept with the Cluster: a kept database whose ObjectStore was pruned
+    # could no longer archive WAL, which would pile up on its volume.
+    {{- include "application.postgres.keepOnPrune" . | nindent 4 }}
 spec:
   configuration:
     destinationPath: {{ include "application.postgres.backupPath" . | quote }}
-    endpointURL: {{ required "platform.objectStorageEndpoint is required when postgres.enabled" .Values.platform.objectStorageEndpoint | toString | quote }}
+    endpointURL: {{ include "application.postgres.objectStorageEndpoint" . | quote }}
     # The Object Storage keys, in a Secret the Platform puts into every
     # Environment's namespace. The chart never sees the values.
     s3Credentials:

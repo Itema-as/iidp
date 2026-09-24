@@ -1,5 +1,5 @@
 {{- include "application.validate" . -}}
-{{- if include "application.postgres.enabled" . }}
+{{- if and (include "application.released" .) (include "application.postgres.enabled" .) }}
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -10,6 +10,13 @@ metadata:
     # Applied, and healthy, before the migration Job (wave -1) and the
     # Application's objects (wave 0).
     argocd.argoproj.io/sync-wave: "-2"
+    # A sync never deletes the database, even when the values file stops
+    # rendering it (an image tag or postgres.enabled removed by hand): the
+    # Cluster is left running and the Application shows OutOfSync,
+    # "requires pruning", until someone deletes it deliberately. Deleting
+    # the Environment (iidp app delete) is not a prune and still removes
+    # it. See docs/implementation-notes/47-unreleased-environment.md.
+    {{- include "application.postgres.keepOnPrune" . | nindent 4 }}
 spec:
   # One instance: the Platform is a single node, and durability comes from
   # the continuous backup, not from replicas.

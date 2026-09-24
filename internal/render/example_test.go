@@ -67,7 +67,7 @@ func ExampleValues() {
 	}
 	fmt.Print(string(out))
 	// Output:
-	// # Values for the prod Environment of shop. image.tag is written by the deploy workflow.
+	// # Values for the prod Environment of shop. image.tag is written by the deploy workflow; until then it is empty and the Environment renders nothing.
 	// # Written by iidp; do not edit by hand.
 	// application:
 	//     name: shop

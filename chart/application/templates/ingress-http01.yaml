@@ -1,6 +1,6 @@
 {{- include "application.validate" . -}}
 {{- $domains := include "application.domains" . | fromJson -}}
-{{- if $domains.foreign }}
+{{- if and (include "application.released" .) $domains.foreign }}
 {{- /*
 The custom domains the Platform's wildcard certificate does not cover. They
 sit on their own Ingress because cert-manager's ingress-shim acts on the
