@@ -326,7 +326,8 @@ func (c *Cluster) RefreshApplication(ctx context.Context, name string) error {
 
 // fakeGitHubManifest runs fakegithub in GitServerNamespace, with its key
 // set and the App's public key from the fake-github ConfigMap. Its CPU
-// request is a few millicores for the same reason as MinIO's.
+// request is a few millicores for the same reason as the Object Storage
+// stand-in's (objectStorageManifest).
 func fakeGitHubManifest() string {
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
