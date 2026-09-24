@@ -783,6 +783,119 @@ assert_contains "$out" "Entra refused iidp-argocd's tenant, client id or secret 
 assert_not_contains "$out" "Trace ID"
 assert_not_contains "$out" "secret=["
 
+# ── GHCR pull token (#59) ───────────────────────────────────────────────
+
+t_start "http_header reads a header in any case, and tells an empty value from a missing one"
+out=$(in_wizard "
+  HTTP_HEADERS=\$'HTTP/2 200\nX-OAuth-Scopes:  read:packages, repo \nx-empty:\n'
+  echo \"[\$(http_header x-oauth-scopes)]\"
+  http_header X-Empty >/dev/null && echo empty-present
+  http_header X-Missing >/dev/null || echo missing-absent
+")
+assert_eq "$out" $'[read:packages, repo]\nempty-present\nmissing-absent'
+
+# stage_ghcr with the answers in $1 (KEY=value lines) and the extra shell
+# code in $2 run first (fake scopes, an existing tfvars file). Sets out, rc
+# and tfvars (the tfvars file's content afterwards).
+run_stage_ghcr() {
+  local d answers
+  d=$(scratch_dir)
+  mkdir -p "$d/infra-platform"
+  answers=$(scratch_dir)/answers.env
+  printf '%s\n' "$1" > "$answers"
+  out=$(in_wizard "
+    INFRA_PLATFORM_DIR='$d/infra-platform'
+    IIDP_WIZARD_ANSWERS='$answers'
+    ${2:-}
+    stage_ghcr
+    echo \"user=[\$GHCR_PULL_USERNAME]\"
+  " 2>&1)
+  rc=$?
+  tfvars=$(cat "$d/infra-platform/terraform.tfvars" 2>/dev/null || echo "MISSING")
+}
+
+t_start "stage_ghcr prints where to create a classic token, its one scope and No expiration"
+run_stage_ghcr "GHCR_PULL_TOKEN=ghp_fakeghcrtoken"
+assert_contains "$out" "https://github.com/settings/tokens/new?scopes=read:packages"
+assert_contains "$out" "Personal access tokens > Tokens (classic) > Generate new token (classic)"
+assert_contains "$out" "Expiration: No expiration"
+assert_contains "$out" "read:packages only"
+t_start "stage_ghcr accepts a classic token with read:packages and stores it with its owner's login"
+assert_success "$rc"
+assert_contains "$out" "GitHub accepts the token: classic, owned by fake-admin, with read:packages"
+assert_contains "$out" "user=[fake-admin]"
+assert_contains "$tfvars" 'ghcr_pull_username = "fake-admin"'
+assert_contains "$tfvars" 'ghcr_pull_token = "ghp_fakeghcrtoken"'
+assert_not_contains "$out" "also has:"
+
+t_start "stage_ghcr refuses a token without read:packages and stores nothing"
+run_stage_ghcr "GHCR_PULL_TOKEN=ghp_fakeghcrtoken" "IIDP_WIZARD_FAKE_GHCR_SCOPES='repo, read:org'"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "the token's scopes are [repo, read:org]; the node needs read:packages"
+assert_not_contains "$out" "user=["
+assert_not_contains "$tfvars" "ghcr_pull_token"
+
+t_start "stage_ghcr refuses a classic token with no scopes at all"
+run_stage_ghcr "GHCR_PULL_TOKEN=ghp_fakeghcrtoken" "IIDP_WIZARD_FAKE_GHCR_SCOPES=''"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "the token's scopes are [none]; the node needs read:packages"
+assert_not_contains "$tfvars" "ghcr_pull_token"
+
+t_start "stage_ghcr refuses a token GitHub reports no scopes for, as not classic"
+run_stage_ghcr "GHCR_PULL_TOKEN=ghs_appinstallationtoken" "IIDP_WIZARD_FAKE_GHCR_TOKEN=ghs_appinstallationtoken; _fake_http() { HTTP_STATUS=200; HTTP_BODY='{\"login\":\"x\"}'; HTTP_HEADERS=''; }"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "GitHub reports no scopes for this token, so it is not a classic token"
+assert_not_contains "$tfvars" "ghcr_pull_token"
+
+t_start "stage_ghcr refuses a fine-grained token before calling GitHub"
+run_stage_ghcr "GHCR_PULL_TOKEN=github_pat_11AAAAAAA0abcdefghij" "_fake_http() { echo CALLED-GITHUB; }"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "that's a fine-grained token (github_pat_...)"
+assert_not_contains "$out" "CALLED-GITHUB"
+
+t_start "stage_ghcr refuses a token GitHub does not know"
+run_stage_ghcr "GHCR_PULL_TOKEN=ghp_revokedtoken"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "GitHub refused the token (HTTP 401: Bad credentials)"
+assert_not_contains "$tfvars" "ghcr_pull_token"
+
+t_start "stage_ghcr warns about scopes beyond read:packages, and stores only when the admin agrees"
+run_stage_ghcr "GHCR_PULL_TOKEN=ghp_fakeghcrtoken" "IIDP_WIZARD_FAKE_GHCR_SCOPES='read:packages, repo'"
+assert_success "$rc"
+assert_contains "$out" "the token also has: repo"
+assert_contains "$tfvars" 'ghcr_pull_token = "ghp_fakeghcrtoken"'
+run_stage_ghcr "GHCR_PULL_TOKEN=ghp_fakeghcrtoken" "IIDP_WIZARD_FAKE_GHCR_SCOPES='read:packages, repo'; confirm() { [[ \"\$1\" != *'extra scopes'* ]]; }"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "stopped before writing the token"
+assert_not_contains "$tfvars" "ghcr_pull_token"
+
+t_start "stage_ghcr takes write:packages as covering read:packages, with the extra-scope warning"
+run_stage_ghcr "GHCR_PULL_TOKEN=ghp_fakeghcrtoken" "IIDP_WIZARD_FAKE_GHCR_SCOPES='write:packages'"
+assert_success "$rc"
+assert_contains "$out" "the token also has: write:packages"
+
+t_start "stage_ghcr keeps an existing token without asking for one, and checks it again"
+run_stage_ghcr "GHCR_PULL_TOKEN=should-not-be-asked" "tfvar_set \"\$INFRA_PLATFORM_DIR/terraform.tfvars\" ghcr_pull_token ghp_fakeghcrtoken >/dev/null"
+assert_success "$rc"
+assert_contains "$out" "keeping the existing token"
+assert_not_contains "$out" "settings/tokens/new"
+assert_contains "$out" "GitHub accepts the token"
+assert_contains "$tfvars" 'ghcr_pull_token = "ghp_fakeghcrtoken"'
+assert_contains "$tfvars" 'ghcr_pull_username = "fake-admin"'
+assert_eq "$(grep -c '^ghcr_pull_token' <<< "$tfvars")" "1"
+
+t_start "stage_ghcr refuses a kept token GitHub no longer accepts"
+run_stage_ghcr "" "tfvar_set \"\$INFRA_PLATFORM_DIR/terraform.tfvars\" ghcr_pull_token ghp_revokedsincelastrun >/dev/null"
+if [[ "$rc" != "0" ]]; then t_pass; else t_fail "expected a non-zero exit"; fi
+assert_contains "$out" "GitHub refused the token (HTTP 401"
+
+t_start "stage_ghcr asks for a new token when the admin declines to keep the existing one"
+run_stage_ghcr "GHCR_PULL_TOKEN=ghp_fakeghcrtoken" "tfvar_set \"\$INFRA_PLATFORM_DIR/terraform.tfvars\" ghcr_pull_token ghp_oldtoken >/dev/null; confirm() { [[ \"\$1\" != *'Keep it?'* ]]; }"
+assert_success "$rc"
+assert_contains "$out" "settings/tokens/new"
+assert_contains "$tfvars" 'ghcr_pull_token = "ghp_fakeghcrtoken"'
+assert_not_contains "$tfvars" "ghp_oldtoken"
+
 # ── Object Storage location / objectStorageEndpoint derivation ──────────
 
 t_start "stage_hetzner derives objectStorageEndpoint from the default location (hel1)"
@@ -1057,9 +1170,9 @@ d=$(scratch_dir)
 out=$("$WIZARD" --dry-run --platform-repo "$d/does-not-exist" 2>&1)
 rc=$?
 assert_success "$rc"
-assert_contains "$out" "Stage 1/9 · Preflight"
-assert_contains "$out" "Stage 9/9 · Done"
-for marker in "Hetzner" "Cloudflare" "Grafana Cloud" "GitHub App" "Entra ID" "OpenTofu" "Platform repository"; do
+assert_contains "$out" "Stage 1/10 · Preflight"
+assert_contains "$out" "Stage 10/10 · Done"
+for marker in "Hetzner" "Cloudflare" "Grafana Cloud" "GitHub App" "GHCR pull token" "Entra ID" "OpenTofu" "Platform repository"; do
   t_start "--dry-run mentions the $marker stage"
   assert_contains "$out" "$marker"
 done

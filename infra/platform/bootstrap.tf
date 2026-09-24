@@ -19,5 +19,27 @@ locals {
     platform_repo_github_app_id              = var.platform_repo_github_app_id
     platform_repo_github_app_installation_id = var.platform_repo_github_app_installation_id
     platform_repo_github_app_private_key_b64 = base64encode(var.platform_repo_github_app_private_key)
+    # k3s's registry configuration, written by cloud-init's write_files
+    # before k3s is installed. base64 for the same reason as the key above:
+    # a YAML document nested in the cloud-config YAML then needs no
+    # re-indenting and no escaping.
+    registries_yaml_b64 = base64encode(local.registries_yaml)
+  })
+
+  # /etc/rancher/k3s/registries.yaml: the credential for ghcr.io, so the
+  # node can pull Applications' private images (ADR-0005). One entry under
+  # configs and no mirrors: k3s generates a containerd host config for
+  # every registry listed in configs, with the registry's default endpoint
+  # and these credentials. Also the ghcr_registries_yaml output, which the
+  # rotation recipe in infra/README.md copies onto a running node.
+  registries_yaml = yamlencode({
+    configs = {
+      "ghcr.io" = {
+        auth = {
+          username = var.ghcr_pull_username
+          password = var.ghcr_pull_token
+        }
+      }
+    }
   })
 }

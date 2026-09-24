@@ -2,8 +2,9 @@
 #
 # Bootstrap wizard for the Platform admin. Walks a human through the
 # one-time human steps of setting up the iidp Platform (Hetzner, Cloudflare,
-# Grafana Cloud, a GitHub App, two Entra app registrations), then runs
-# OpenTofu and writes the Platform repository's bootstrap files.
+# Grafana Cloud, a GitHub App, the node's GHCR pull token, two Entra app
+# registrations), then runs OpenTofu and writes the Platform repository's
+# bootstrap files.
 #
 # Run from a clone of this repository, with the Platform repository cloned
 # somewhere else (default ../iidp-platform, override with --platform-repo).
@@ -53,7 +54,7 @@ else
   BOLD=""; DIM=""; RESET=""; BLUE=""; GREEN=""; YELLOW=""; RED=""
 fi
 
-TOTAL_STAGES=9
+TOTAL_STAGES=10
 _STAGE_INDEX=0
 
 _clear() { [[ -t 1 ]] || return 0; command -v tput >/dev/null 2>&1 && tput clear || printf '\033[2J\033[3J\033[H'; }
@@ -387,6 +388,7 @@ platform_yaml_get() { # platform_yaml_get FILE PATH (e.g. baseDomain or githubAp
 
 HTTP_STATUS=""
 HTTP_BODY=""
+HTTP_HEADERS=""   # the response's header lines, for http_header
 
 http_get() { _http GET "$1" "${2:-}"; }
 # http_post URL AUTH_HEADER BODY [HEADER...]. BODY is sent byte for byte
@@ -399,16 +401,18 @@ _http() {
   local -a extra_headers=("${@:5}")
   if [[ "$DRY_RUN" == "1" ]]; then
     dry "would $method $url"
-    HTTP_STATUS=200; HTTP_BODY="{}"
+    HTTP_STATUS=200; HTTP_BODY="{}"; HTTP_HEADERS=""
     return 0
   fi
   if [[ "${IIDP_WIZARD_FAKE:-0}" == "1" ]]; then
+    HTTP_HEADERS=""
     _fake_http "$method" "$url" "$auth_header" "$body"
     return 0
   fi
-  local tmp status header
+  local tmp headers_tmp status header
   tmp=$(mktemp "${TMPDIR:-/tmp}/iidp-wizard.XXXXXX")
-  local -a curl_args=(-sS -o "$tmp" -w '%{http_code}')
+  headers_tmp=$(mktemp "${TMPDIR:-/tmp}/iidp-wizard.XXXXXX")
+  local -a curl_args=(-sS -o "$tmp" -D "$headers_tmp" -w '%{http_code}')
   [[ -n "$auth_header" ]] && curl_args+=(-H "$auth_header")
   for header in "${extra_headers[@]}"; do curl_args+=(-H "$header"); done
   if [[ "$method" == "POST" ]]; then
@@ -416,10 +420,31 @@ _http() {
     [[ -n "$body" ]] && curl_args+=(--data-binary "$body")
   fi
   curl_args+=("$url")
-  status=$(curl "${curl_args[@]}") || { rm -f "$tmp"; die "network call failed: $method $url"; }
+  status=$(curl "${curl_args[@]}") || { rm -f "$tmp" "$headers_tmp"; die "network call failed: $method $url"; }
   HTTP_STATUS="$status"
   HTTP_BODY=$(cat "$tmp")
-  rm -f "$tmp"
+  HTTP_HEADERS=$(tr -d '\r' < "$headers_tmp")
+  rm -f "$tmp" "$headers_tmp"
+}
+
+# http_header NAME -> the value of response header NAME (any case) from the
+# last _http call, trimmed. Returns 1 when the header is absent, so a header
+# sent with an empty value (a classic token with no scopes gets an empty
+# X-OAuth-Scopes) can be told apart from no header at all.
+http_header() {
+  local name="${1,,}" line key value="" found=1
+  while IFS= read -r line; do
+    [[ "$line" == *:* ]] || continue
+    key="${line%%:*}"
+    if [[ "${key,,}" == "$name" ]]; then
+      value="${line#*:}"
+      value="${value#"${value%%[![:space:]]*}"}"
+      value="${value%"${value##*[![:space:]]}"}"
+      found=0
+    fi
+  done <<< "$HTTP_HEADERS"
+  printf '%s' "$value"
+  return "$found"
 }
 
 # Canned responses for the shell test suite. Only the shapes the validators
@@ -462,6 +487,23 @@ _fake_http() {
         /) HTTP_STATUS=405; HTTP_BODY='' ;;
         *) HTTP_STATUS=404; HTTP_BODY='404 page not found' ;;
       esac
+      ;;
+    https://api.github.com/user)
+      # Like the real API: a classic token gets X-OAuth-Scopes (empty when
+      # it has no scopes), a fine-grained one (github_pat_...) gets none,
+      # and a token GitHub does not know gets 401. The accepted token and
+      # its scopes are IIDP_WIZARD_FAKE_GHCR_TOKEN (default ghp_fakeghcrtoken)
+      # and IIDP_WIZARD_FAKE_GHCR_SCOPES (default read:packages, may be
+      # set empty).
+      local token="${auth_header#Authorization: Bearer }"
+      if [[ "$token" == "${IIDP_WIZARD_FAKE_GHCR_TOKEN:-ghp_fakeghcrtoken}" ]]; then
+        HTTP_STATUS=200; HTTP_BODY='{"login":"fake-admin","id":1}'
+        HTTP_HEADERS="x-oauth-scopes: ${IIDP_WIZARD_FAKE_GHCR_SCOPES-read:packages}"
+      elif [[ "$token" == github_pat_* ]]; then
+        HTTP_STATUS=200; HTTP_BODY='{"login":"fake-admin","id":1}'
+      else
+        HTTP_STATUS=401; HTTP_BODY='{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest","status":"401"}'
+      fi
       ;;
     https://login.microsoftonline.com/*/oauth2/v2.0/token)
       if [[ "&${body}&" == *"&client_secret=${IIDP_WIZARD_FAKE_ENTRA_SECRET:-fake-secret-value}&"* ]]; then
@@ -1186,7 +1228,95 @@ stage_github_app() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────
-# Stage 6: Entra
+# Stage 6: GHCR pull token
+# ──────────────────────────────────────────────────────────────────────────
+
+GHCR_PULL_TOKEN="" GHCR_PULL_USERNAME=""
+
+# verify_ghcr_pull_token TOKEN -- dies unless TOKEN is a classic personal
+# access token that GitHub accepts and that has read:packages, and sets
+# GHCR_PULL_USERNAME to its owner's login (ghcr.io's basic-auth username).
+# ghcr.io takes only a classic token for pulls from outside Actions. A
+# classic token reports its scopes in the X-OAuth-Scopes header of any
+# authenticated API response; fine-grained and GitHub App tokens get no
+# such header. GET /user answers with both the scopes and the login, and
+# changes nothing. Scopes beyond read:packages are warned about, since the
+# token sits in plaintext on the node.
+verify_ghcr_pull_token() {
+  local token="$1" scopes scope has_read=0
+  local -a extra=() _scopes=()
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dry "would GET https://api.github.com/user and check X-OAuth-Scopes for read:packages"
+    GHCR_PULL_USERNAME="<dry-run:login>"
+    return 0
+  fi
+  [[ "$token" == github_pat_* ]] \
+    && die "that's a fine-grained token (github_pat_...). ghcr.io accepts only a classic token for pulls: create one under Tokens (classic). Nothing has been written."
+  [[ "$token" =~ ^[A-Za-z0-9_]+$ ]] \
+    || die "that doesn't look like a GitHub token (a classic token starts with ghp_, and has only letters, digits and _). Nothing has been written."
+
+  http_get "https://api.github.com/user" "Authorization: Bearer $token"
+  case "$HTTP_STATUS" in
+    200) ;;
+    401) die "GitHub refused the token (HTTP 401: $(http_error_excerpt)). Copy it again, or create a new one, and re-run. Nothing has been written." ;;
+    *)   die "GitHub answered GET /user with HTTP $HTTP_STATUS: $(http_error_excerpt). Nothing has been written." ;;
+  esac
+  if ! scopes=$(http_header X-OAuth-Scopes); then
+    die "GitHub reports no scopes for this token, so it is not a classic token (fine-grained and GitHub App tokens have none, and ghcr.io refuses them for pulls). Create one under Tokens (classic) and re-run. Nothing has been written."
+  fi
+  IFS=',' read -ra _scopes <<< "$scopes"
+  for scope in "${_scopes[@]}"; do
+    scope="${scope//[[:space:]]/}"
+    [[ -z "$scope" ]] && continue
+    # write:packages includes read:packages, but is more than the node needs.
+    [[ "$scope" == "read:packages" || "$scope" == "write:packages" ]] && has_read=1
+    [[ "$scope" != "read:packages" ]] && extra+=("$scope")
+  done
+  if [[ "$has_read" != "1" ]]; then
+    die "the token's scopes are [${scopes:-none}]; the node needs read:packages. Tick read:packages (and nothing else) on the token's page, which keeps its value, and re-run. Nothing has been written."
+  fi
+  GHCR_PULL_USERNAME=$(echo "$HTTP_BODY" | jq -r '.login // empty' 2>/dev/null || true)
+  [[ -n "$GHCR_PULL_USERNAME" ]] || die "GitHub accepted the token but GET /user returned no login. Nothing has been written."
+  if (( ${#extra[@]} > 0 )); then
+    warn "the token also has: ${extra[*]}. It is stored in plaintext on the node, so it should have read:packages only (untick the rest on the token's page; its value stays the same)."
+    confirm "Store it with those extra scopes anyway?" \
+      || die "stopped before writing the token; narrow its scopes and re-run"
+  fi
+  ok "GitHub accepts the token: classic, owned by $GHCR_PULL_USERNAME, with read:packages"
+}
+
+stage_ghcr() {
+  stage "GHCR pull token"
+  local tfvars="$INFRA_PLATFORM_DIR/terraform.tfvars" existing
+  say "Applications' images are private in GHCR (ADR-0005). The node pulls them with one"
+  say "classic personal access token that can only read packages; ghcr.io refuses GitHub App"
+  say "and fine-grained tokens for pulls. OpenTofu hands it to cloud-init, which writes it into"
+  say "k3s's registries.yaml before k3s first starts."
+
+  existing=$(tfvar_get "$tfvars" ghcr_pull_token || true)
+  if [[ -n "$existing" ]] && confirm "$tfvars already has a GHCR pull token ($(mask "$existing")). Keep it?"; then
+    GHCR_PULL_TOKEN="$existing"
+    note "keeping the existing token; checking GitHub still accepts it"
+  else
+    say "Signed in to GitHub as yourself (the Platform admin; #56 moves this to a machine user),"
+    say "create a classic token:"
+    print_url "https://github.com/settings/tokens/new?scopes=read:packages&description=iidp%20node%20GHCR%20pull"
+    step "That is Settings > Developer settings > Personal access tokens > Tokens (classic) > Generate new token (classic)."
+    step "Note: iidp node GHCR pull"
+    step "Expiration: No expiration (the node has no way to warn before a token expires)"
+    step "Select scopes: read:packages only"
+    step "Generate token, then copy it (ghp_...). GitHub shows it only once."
+    ask_secret GHCR_PULL_TOKEN "Paste the token:"
+  fi
+
+  verify_ghcr_pull_token "$GHCR_PULL_TOKEN"
+  tfvar_set "$tfvars" ghcr_pull_username "$GHCR_PULL_USERNAME"
+  tfvar_set "$tfvars" ghcr_pull_token "$GHCR_PULL_TOKEN"
+  log_choice "cloud-init writes these into /etc/rancher/k3s/registries.yaml; on a running node, see infra/README.md (\"Adding or rotating the GHCR pull token\")"
+}
+
+# ──────────────────────────────────────────────────────────────────────────
+# Stage 7: Entra
 # ──────────────────────────────────────────────────────────────────────────
 
 ENTRA_ARGOCD_TENANT="" ENTRA_ARGOCD_CLIENT_ID="" ENTRA_ARGOCD_CLIENT_SECRET=""
@@ -1288,7 +1418,7 @@ stage_entra() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────
-# Stage 7: OpenTofu
+# Stage 8: OpenTofu
 # ──────────────────────────────────────────────────────────────────────────
 
 NODE_IP="" AGE_PUBLIC_KEY=""
@@ -1325,7 +1455,7 @@ stage_opentofu() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────
-# Stage 8: Platform repository
+# Stage 9: Platform repository
 # ──────────────────────────────────────────────────────────────────────────
 
 write_platform_yaml() {
@@ -1788,7 +1918,7 @@ stage_platform_repo() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────
-# Stage 9: closing summary
+# Stage 10: closing summary
 # ──────────────────────────────────────────────────────────────────────────
 
 closing_summary() {
@@ -1824,6 +1954,7 @@ main() {
   stage_cloudflare
   stage_grafana
   stage_github_app
+  stage_ghcr
   stage_entra
   stage_opentofu
   stage_platform_repo
