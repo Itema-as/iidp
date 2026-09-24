@@ -22,11 +22,14 @@ iidp version
 
 ## Usage
 
-Log in to GitHub once with the `gh` CLI; `iidp` uses that login and needs write access to the Platform repository:
+Log in to GitHub once with the `gh` CLI; `iidp` uses that login and needs write access to the Platform repository. `--path create` and `--path adopt` (below) also push the deploy workflow, `.github/workflows/deploy.yaml`, which GitHub only accepts from a login with the `workflow` scope, so add it too:
 
 ```sh
 gh auth login
+gh auth refresh -s workflow
 ```
+
+`iidp` checks the scope before it creates anything, and refuses with that same `gh auth refresh` command when it is missing. `gh auth status` lists the scopes your login has. A fine-grained personal access token (through `GH_TOKEN`) reports no scopes, so `iidp` cannot check it; it needs the Workflows repository permission (read and write).
 
 Create an Application. Every question has a flag, so the command runs in scripts. Without `--path`, it only writes the `prod` Environment to the Platform repository, the same as before this flag existed:
 

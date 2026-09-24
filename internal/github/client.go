@@ -8,14 +8,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
+	"strings"
 )
 
 // DefaultBaseURL is the GitHub REST API tests point elsewhere.
 const DefaultBaseURL = "https://api.github.com"
 
 // Client is a small GitHub REST API client for what the CLI needs beyond
-// git: finding the developer's personal login, creating the Application
-// repository and setting its default branch. BaseURL and HTTPClient are
+// git: reading the token's scopes, finding the developer's personal login,
+// creating the Application repository and setting its default branch. BaseURL and HTTPClient are
 // injectable so tests run against an in-process fake server.
 type Client struct {
 	// BaseURL is the API root. Empty means DefaultBaseURL.
@@ -195,6 +197,51 @@ func (c *Client) CreatePullRequest(ctx context.Context, owner, name string, pr P
 	return resp.HTMLURL, nil
 }
 
+// TokenScopes is what GitHub reports about the OAuth scopes of the token a
+// Client authenticates with
+// (docs/implementation-notes/47-workflow-scope.md).
+type TokenScopes struct {
+	// Known is false when GitHub reported no scopes at all: fine-grained
+	// personal access tokens and GitHub App tokens carry permissions
+	// rather than scopes, and GitHub sends no X-OAuth-Scopes header for
+	// them, so what they may push cannot be read up front.
+	Known bool
+	// Scopes are the token's scopes as GitHub listed them. Empty with
+	// Known true is a classic token with no scopes at all.
+	Scopes []string
+}
+
+// Has reports whether s lists scope. It is always false when Known is
+// false.
+func (s TokenScopes) Has(scope string) bool {
+	return slices.Contains(s.Scopes, scope)
+}
+
+// TokenScopes reads the token's OAuth scopes from the X-OAuth-Scopes
+// header GitHub sends on every authenticated response to a classic OAuth
+// or personal access token (gh auth login's own token is one), here from
+// the API root (GET /), which answers any token. gh auth status reads the
+// same header the same way.
+func (c *Client) TokenScopes(ctx context.Context) (TokenScopes, error) {
+	header, err := c.send(ctx, http.MethodGet, "/", nil, nil)
+	if err != nil {
+		return TokenScopes{}, fmt.Errorf("reading your GitHub token's scopes: %w", err)
+	}
+	values, ok := header[http.CanonicalHeaderKey("X-OAuth-Scopes")]
+	if !ok {
+		return TokenScopes{}, nil
+	}
+	scopes := TokenScopes{Known: true}
+	for _, v := range values {
+		for _, scope := range strings.Split(v, ",") {
+			if scope = strings.TrimSpace(scope); scope != "" {
+				scopes.Scopes = append(scopes.Scopes, scope)
+			}
+		}
+	}
+	return scopes, nil
+}
+
 // Installation is one GitHub App installation, as returned by
 // GET /app/installations: only the fields iidp ci set-image needs to find
 // the org's installation.
@@ -259,17 +306,24 @@ func (c *Client) httpClient() *http.Client {
 // decodes it into respBody. A non-2xx response is returned as a
 // *statusError; callers match it with IsNotFound.
 func (c *Client) do(ctx context.Context, method, path string, reqBody, respBody any) error {
+	_, err := c.send(ctx, method, path, reqBody, respBody)
+	return err
+}
+
+// send is do, also returning the response's headers for the one caller
+// that reads them (TokenScopes).
+func (c *Client) send(ctx context.Context, method, path string, reqBody, respBody any) (http.Header, error) {
 	var r io.Reader
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		r = bytes.NewReader(data)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL()+path, r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -278,20 +332,20 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody, respBody 
 	}
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &statusError{status: resp.StatusCode, body: string(bytes.TrimSpace(data))}
+		return resp.Header, &statusError{status: resp.StatusCode, body: string(bytes.TrimSpace(data))}
 	}
 	if respBody != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, respBody); err != nil {
-			return fmt.Errorf("decoding response from %s %s: %w", method, path, err)
+			return resp.Header, fmt.Errorf("decoding response from %s %s: %w", method, path, err)
 		}
 	}
-	return nil
+	return resp.Header, nil
 }
