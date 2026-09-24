@@ -1,0 +1,30 @@
+# Values for later's prod Environment: an Environment that has not received
+# its first image yet, the state iidp app create --postgres leaves prod in
+# until the deploy workflow's first write-back (with --staging, until the
+# first v* tag). image.tag is the "" the CLI writes, so the chart renders
+# nothing: no Cluster, no migration Job, no final-backup hook, no workload.
+# The only object ArgoCD applies is the backups-credentials Secret from the
+# sops/ source. See docs/implementation-notes/47-unreleased-environment.md.
+application:
+  name: later
+environment: prod
+platform:
+  baseDomain: app.example.test
+  backupsBucket: iidp-backups
+  objectStorageEndpoint: https://objectstorage.invalid
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/later
+  tag: ""
+size: small
+port: 3000
+probe:
+  path: /
+env: {}
+domains: []
+postgres:
+  enabled: true
+  migrationCommand: npx prisma migrate deploy
+  backupRetention: 30d
+login:
+  enabled: false

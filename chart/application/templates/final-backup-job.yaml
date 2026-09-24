@@ -1,5 +1,5 @@
 {{- include "application.validate" . -}}
-{{- if include "application.postgres.enabled" . }}
+{{- if and (include "application.released" .) (include "application.postgres.enabled" .) }}
 {{- $name := include "application.postgres.finalBackupName" . }}
 apiVersion: v1
 kind: ServiceAccount

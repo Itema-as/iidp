@@ -1,4 +1,5 @@
 {{- include "application.validate" . -}}
+{{- if include "application.released" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,3 +58,4 @@ spec:
               port: http
           resources:
             {{- include "application.resources" . | nindent 12 }}
+{{- end }}

@@ -135,7 +135,7 @@ func Values(env Environment) ([]byte, error) {
 		},
 		Login: loginValues{Enabled: env.Login},
 	}
-	return marshal("Values for the "+env.Environment+" Environment of "+env.Application+". image.tag is written by the deploy workflow.", v)
+	return marshal("Values for the "+env.Environment+" Environment of "+env.Application+". image.tag is written by the deploy workflow; until then it is empty and the Environment renders nothing.", v)
 }
 
 func marshal(what string, doc any) ([]byte, error) {

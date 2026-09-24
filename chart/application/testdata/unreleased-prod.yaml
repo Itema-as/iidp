@@ -1,0 +1,32 @@
+# prod of an Application created with --staging --postgres --domain, before
+# the first v* tag has promoted staging's image: image.tag is still the ""
+# the CLI writes. Every Capability that renders objects of its own is on,
+# so rendering nothing here means every template honours the gate.
+application:
+  name: shop
+environment: prod
+platform:
+  baseDomain: app.itma.no
+  backupsBucket: itema-iidp-db-backups
+  objectStorageEndpoint: https://hel1.your-objectstorage.com
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: ""
+size: small
+port: 3000
+probe:
+  path: /
+env:
+  NODE_ENV: production
+secrets:
+  - shop-stripe
+domains:
+  - butikk.app.itma.no
+  - shop.example.com
+postgres:
+  enabled: true
+  migrationCommand: npx prisma migrate deploy
+  backupRetention: 30d
+login:
+  enabled: false

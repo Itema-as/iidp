@@ -38,7 +38,12 @@ kind: web-service
 image:
   # Required, for example ghcr.io/itema-as/shop.
   repository: ""
-  # Required, the CI-written image tag (a commit SHA or a version).
+  # The CI-written image tag (a commit SHA or a version). Empty means the
+  # Environment has not received its first image yet: the chart then
+  # renders nothing at all (no workload, no database, no hooks), which
+  # ArgoCD shows as Synced and Healthy, and the first tag the deploy
+  # workflow writes renders the whole Environment. The rest of the file is
+  # still validated either way.
   tag: ""
 
 # small, medium or large. The CPU and memory each size gets is fixed in the

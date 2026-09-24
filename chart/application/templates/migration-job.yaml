@@ -1,5 +1,5 @@
 {{- include "application.validate" . -}}
-{{- if and (include "application.postgres.enabled" .) .Values.postgres.migrationCommand }}
+{{- if and (include "application.released" .) (include "application.postgres.enabled" .) .Values.postgres.migrationCommand }}
 apiVersion: batch/v1
 kind: Job
 metadata:

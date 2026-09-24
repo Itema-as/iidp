@@ -1,5 +1,5 @@
 {{- include "application.validate" . -}}
-{{- if include "application.postgres.enabled" . }}
+{{- if and (include "application.released" .) (include "application.postgres.enabled" .) }}
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
@@ -12,7 +12,7 @@ metadata:
 spec:
   configuration:
     destinationPath: {{ include "application.postgres.backupPath" . | quote }}
-    endpointURL: {{ required "platform.objectStorageEndpoint is required when postgres.enabled" .Values.platform.objectStorageEndpoint | toString | quote }}
+    endpointURL: {{ include "application.postgres.objectStorageEndpoint" . | quote }}
     # The Object Storage keys, in a Secret the Platform puts into every
     # Environment's namespace. The chart never sees the values.
     s3Credentials:

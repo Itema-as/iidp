@@ -63,11 +63,49 @@ Helm renders first. It produces no output.
 {{- if and .Values.postgres.enabled (hasKey .Values.postgres "finalBackupTimeout") (not (regexMatch "^[1-9][0-9]*$" (.Values.postgres.finalBackupTimeout | toString))) -}}
 {{- fail (printf "postgres.finalBackupTimeout must be a positive whole number of seconds, got %v" .Values.postgres.finalBackupTimeout) -}}
 {{- end -}}
+{{- /*
+The checks below would otherwise only run inside the objects that use the
+value, which an Environment without its first image does not render (see
+application.released). Running them here refuses a broken values file the
+same way whether or not the Environment has been released yet.
+*/ -}}
+{{- $_ = required "image.repository is required" .Values.image.repository -}}
+{{- $_ = include "application.resources" . -}}
+{{- if .Values.postgres.enabled -}}
+{{- $_ = include "application.postgres.backupPath" . -}}
+{{- $_ = include "application.postgres.objectStorageEndpoint" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Whether the Environment has received its first image: "true" when image.tag
+is set, empty otherwise. The CLI writes every new Environment with
+image.tag: "" and only the deploy workflow's write-back (iidp ci set-image)
+ever sets it, so an empty tag means "not released yet": the moments after
+iidp app create, before an Adopt pull request is merged, and, with a staging
+Environment, prod until the first v* tag promotes staging's image.
+
+Every template renders its objects only when this is true, after
+application.validate: an Environment without an image renders nothing at
+all, which ArgoCD shows as Synced and Healthy, instead of a comparison
+error. Nothing is created ahead of the first image either, the database
+included: a Postgres Cluster with no Application to use it would hold the
+node's memory and fill the bucket with backups of nothing for as long as the
+first release takes, and a final-backup PreDelete hook would have no
+Cluster to back up. The first image makes the Environment's first sync the
+same as a brand-new Environment's today: the Cluster in wave -2, the
+migration in wave -1, the Application in wave 0.
+See docs/implementation-notes/47-unreleased-environment.md.
+*/}}
+{{- define "application.released" -}}
+{{- $tag := .Values.image.tag -}}
+{{- if and (not (kindIs "invalid" $tag)) (ne ($tag | toString) "") -}}true{{- end -}}
 {{- end -}}
 
 {{/*
 The Application image, <repository>:<tag>, run by the Deployment and by the
-migration Job.
+migration Job. Only included from objects gated on application.released, so
+the required tag is a guard against a template that forgets the gate.
 */}}
 {{- define "application.image" -}}
 {{- printf "%s:%s" (required "image.repository is required" .Values.image.repository | toString) (required "image.tag is required" .Values.image.tag | toString) -}}
@@ -103,6 +141,13 @@ database and a prefix is one Environment.
 */}}
 {{- define "application.postgres.backupPath" -}}
 {{- printf "s3://%s/%s/%s/" (required "platform.backupsBucket is required when postgres.enabled" .Values.platform.backupsBucket | toString) (include "application.name" .) (include "application.environment" .) -}}
+{{- end -}}
+
+{{/*
+The S3 endpoint of the backups bucket's location.
+*/}}
+{{- define "application.postgres.objectStorageEndpoint" -}}
+{{- required "platform.objectStorageEndpoint is required when postgres.enabled" .Values.platform.objectStorageEndpoint | toString -}}
 {{- end -}}
 
 {{/*

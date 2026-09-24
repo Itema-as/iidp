@@ -333,6 +333,7 @@ func TestRenderingRefusesPostgresValuesItCannotHonour(t *testing.T) {
 	}{
 		{"refuse-migration-without-postgres.yaml", `postgres.migrationCommand needs postgres.enabled: true; there is no database to migrate`},
 		{"refuse-postgres-missing-bucket.yaml", `platform.backupsBucket is required when postgres.enabled`},
+		{"refuse-postgres-missing-endpoint.yaml", `platform.objectStorageEndpoint is required when postgres.enabled`},
 		{"refuse-env-sets-database-url.yaml", `env must not set DATABASE_URL; the Postgres Capability injects it`},
 		{"refuse-postgres-static-site.yaml", `postgres.enabled needs kind: web-service; a Static site has no server to use a database`},
 		{"refuse-postgres-final-backup-timeout.yaml", `postgres.finalBackupTimeout must be a positive whole number of seconds`},
