@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -145,7 +146,21 @@ func ciInstallationAuth(ctx context.Context, deps Dependencies) (git.Auth, error
 	if deps.CIAuthObserved != nil {
 		deps.CIAuthObserved(token)
 	}
-	return git.Auth{Token: token}, nil
+	return git.Auth{Token: token, Identity: ciIdentity()}, nil
+}
+
+// ciIdentity is who a deploy write-back commits as: the GitHub user whose
+// push or tag started the workflow, from the variables every Actions run
+// sets, with the noreply address GitHub links to that account, so the
+// Platform repository's log records who deployed what. A hosted runner has
+// no git identity of its own, and without this the commit fails. Outside
+// Actions it is empty, leaving the identity to git's own configuration.
+func ciIdentity() git.Identity {
+	actor, id := os.Getenv("GITHUB_ACTOR"), os.Getenv("GITHUB_ACTOR_ID")
+	if actor == "" || id == "" {
+		return git.Identity{}
+	}
+	return git.Identity{Name: actor, Email: id + "+" + actor + "@users.noreply.github.com"}
 }
 
 // resolveInstallationID is the org's installation id of the GitHub App

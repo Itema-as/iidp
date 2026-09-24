@@ -21,8 +21,17 @@ var ErrPushRejected = errors.New("the remote branch moved since the clone")
 
 // Auth is the credential git presents to an HTTPS remote. An empty token
 // means no credential, which is what a file:// or ssh remote needs.
+// Identity, when set, is who the commits are made as; empty leaves that to
+// the developer's own git configuration.
 type Auth struct {
-	Token string
+	Token    string
+	Identity Identity
+}
+
+// Identity is a commit's author and committer.
+type Identity struct {
+	Name  string
+	Email string
 }
 
 // Repository is a working copy of a remote branch.
@@ -119,6 +128,12 @@ func (r *Repository) run(ctx context.Context, dir string, args ...string) (strin
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	if r.auth.Token != "" {
 		cmd.Env = append(cmd.Env, "IIDP_GIT_TOKEN="+r.auth.Token)
+	}
+	if id := r.auth.Identity; id.Name != "" && id.Email != "" {
+		// Later entries win over any identity already in the environment.
+		cmd.Env = append(cmd.Env,
+			"GIT_AUTHOR_NAME="+id.Name, "GIT_AUTHOR_EMAIL="+id.Email,
+			"GIT_COMMITTER_NAME="+id.Name, "GIT_COMMITTER_EMAIL="+id.Email)
 	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
