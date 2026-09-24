@@ -1,6 +1,6 @@
 # The Platform repository
 
-The Platform repository (`Itema-as/iidp-platform`) holds the desired state of every Application on the Platform. The CLI writes to it, the deploy workflows write image tags into it, ArgoCD reconciles the Platform from it, and its git log is the audit trail ([ADR-0002](adr/0002-cli-writes-desired-state-to-platform-repository.md)). Developers do not edit it by hand; hand edits are tolerated but unsupported. This page is the contract between the three things that touch it: the CLI (`internal/platformrepo`), the bootstrap, and the deploy workflow.
+The Platform repository (`Itema-as/iidp-platform`) holds the desired state of every Application on the Platform. The CLI writes to it, the deploy workflows write image tags into it, ArgoCD reconciles the Platform from it, and its git log is the audit trail ([ADR-0002](adr/0002-cli-writes-desired-state-to-platform-repository.md)). Developers do not edit it by hand; hand edits are tolerated but unsupported. This page is the contract between the things that touch it: the CLI (`internal/platformrepo`), the bootstrap, the deploy workflow, and the Deploy gate, which reads each Application's repository binding ([`applications/<name>/repository.yaml`](#applicationsnamerepositoryyaml-the-repository-binding), [ADR-0005](adr/0005-private-application-repositories-on-github-free.md)).
 
 ## Layout
 
@@ -11,6 +11,8 @@ bootstrap/                    ArgoCD Applications for the Platform components (t
 applications/
   .gitkeep
   <name>/                     one directory per Application
+    repository.yaml           the Application repository it is bound to, by GitHub's numeric ids
+                               (below); absent on an Application that is not bound yet
     prod/
       application.yaml        the ArgoCD Application for the prod Environment
       values.yaml             the chart values that define the prod Environment
@@ -25,7 +27,7 @@ applications/
                                (<name>-staging.<baseDomain>) and its own database
 ```
 
-`iidp app delete` no longer writes a `Backup` manifest or a `final-backup-<environment>` Application of its own: the final Postgres backup is now taken by an ArgoCD `PreDelete` hook the chart itself renders (`chart/application/templates/final-backup-job.yaml`). It removes only each Environment's `application.yaml`, deliberately leaving `values.yaml` (and any `sops/` secrets) behind -- ArgoCD needs `values.yaml` to still exist to render that PreDelete hook at deletion time; see "`iidp app delete`" below and [`docs/implementation-notes/39-final-backup-predelete-hook.md`](implementation-notes/39-final-backup-predelete-hook.md).
+`iidp app delete` no longer writes a `Backup` manifest or a `final-backup-<environment>` Application of its own: the final Postgres backup is now taken by an ArgoCD `PreDelete` hook the chart itself renders (`chart/application/templates/final-backup-job.yaml`). It removes only each Environment's `application.yaml` (and the Application's `repository.yaml`), deliberately leaving `values.yaml` (and any `sops/` secrets) behind -- ArgoCD needs `values.yaml` to still exist to render that PreDelete hook at deletion time; see "`iidp app delete`" below and [`docs/implementation-notes/39-final-backup-predelete-hook.md`](implementation-notes/39-final-backup-predelete-hook.md).
 
 The CLI only ever adds and changes files under `applications/<name>/`. Anything else in the repository is left alone, so an emergency hand edit elsewhere does not break the next `iidp` run.
 
@@ -60,6 +62,46 @@ githubApp:
   id: 123456
   installationId: 78901234
 ```
+
+## `applications/<name>/repository.yaml`: the repository binding
+
+Binds the Application to its Application repository by GitHub's numeric ids, which survive a rename and a transfer. A repository deleted and recreated under the same name gets a new id, so it is a different repository. The Deploy gate lets a deploy through only when the caller's GitHub Actions OIDC token carries these ids ([ADR-0005](adr/0005-private-application-repositories-on-github-free.md)). There is one file per Application, not per Environment, because the binding belongs to the Application. It sits directly under `applications/<name>/`, one level above the Environments, so `bootstrap/applications.yaml`'s `*/*/application.yaml` glob never matches it and ArgoCD never applies it.
+
+```yaml
+# The Application repository shop is bound to. The Deploy gate lets only the
+# repository with these GitHub ids (an Actions OIDC token's repository_id and
+# repository_owner_id) deploy it; repository is the name when it was bound,
+# for people to read, and goes stale on a rename.
+# Written by iidp (iidp app create, iidp app bind); do not edit by hand.
+repository: Itema-as/shop
+repositoryId: 812345678
+repositoryOwnerId: 123456789
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `repositoryId` | YAML integer | The Application repository's `id` from the GitHub REST API (`GET /repos/{owner}/{repo}`). The same number an Actions OIDC token carries as `repository_id`. |
+| `repositoryOwnerId` | YAML integer | The id of the org that owns it (`owner.id`), which an OIDC token carries as `repository_owner_id`. The CLI binds only repositories in `Itema-as`, so this is `Itema-as`'s id in every binding it writes. |
+| `repository` | string | `owner/name` as GitHub reported it when the binding was written. It is only for people: it goes stale on a rename or transfer, and nothing may authorise with it. |
+
+**Who writes it.** `iidp app create --path create` and `--path adopt` write it in the same commit as the Application's Environments. The ids come from GitHub's response to creating the repository, or to reading it (`GET /repos/{owner}/{repo}`). `iidp app bind` writes it for an Application that already exists (the backfill, below). `iidp app create` without `--path` has no Application repository and writes no binding; it prints the `iidp app bind` command instead. `iidp app delete` removes the binding in the same commit as the Environments' `application.yaml`, so a deleted Application is unbound. When `iidp app create` reuses the name of a deleted Application, it clears the leftover directory, as described under "`iidp app delete`" below. Nothing else in the CLI reads the file. `app add-capability`, `secret set`, `app delete` and `ci set-image` all work the same on an Application with no binding, or with a broken one.
+
+**How the Deploy gate reads it (#60).** For the Application named in a deploy request, from a clone of `main`:
+
+1. Read `applications/<name>/repository.yaml`. No file means the Application is **unbound**. Applications created before #58, by `app create` without `--path`, or deleted are all unbound.
+2. Parse it as YAML into the three fields above, ignoring any other keys. A file that is not valid YAML, has an id quoted as a string, or has either id missing or zero is also **unbound**. `platformrepo.ReadRepositoryBinding` (`internal/platformrepo/binding.go`) implements this, and `RepositoryBinding.Complete()` reports whether both ids are present. The gate is built from this repository, so it can call them directly.
+3. Refuse an unbound Application, naming the fix: `iidp app bind <name> --repo Itema-as/<repository>`.
+4. OIDC claims are decimal strings. Allow the deploy only when `repository_id == strconv.FormatInt(repositoryId, 10)` **and** `repository_owner_id == strconv.FormatInt(repositoryOwnerId, 10)`. Never compare the `repository` or `repository_owner` names: they change on a rename, and a recreated repository reuses them.
+
+The gate can also check `repository_owner_id` against `Itema-as`'s id from its own configuration. That defends against a hand edit that binds a repository outside the org, although anyone able to make that edit can already write to the Platform repository.
+
+**Backfilling an existing Application.** An Application made before #58 has no binding, and neither does one made without `--path`. Once its repository is in `Itema-as`, bind it:
+
+```sh
+iidp app bind hello --repo Itema-as/hello
+```
+
+`--repo` takes `Itema-as/<name>` or a GitHub URL. The command refuses a repository outside `Itema-as` before it reads or writes anything, and tells you to transfer the repository first. It reads the repository's ids from GitHub with your `gh` login, refuses an Application with no live Environment, and commits `applications/<name>/repository.yaml` alone as `iidp app bind <name> <owner>/<repository>`, retrying once if `main` moved. If the Application is already bound to the same ids, nothing changes, or only `repository` is refreshed after a rename. A binding to a different repository, including one that was deleted and recreated under the same name, is refused unless you pass `--rebind`. A binding that binds nothing (not YAML, or an id missing) is replaced without `--rebind`. Writing the file by hand in the shape above also works, but the command reads the ids from GitHub rather than asking you to look them up. [`docs/implementation-notes/58-repository-binding.md`](implementation-notes/58-repository-binding.md) records why this is a subcommand.
 
 ## `applications/<name>/<environment>/application.yaml`
 
@@ -240,7 +282,7 @@ Committed as `iidp app add-capability <name> <capabilities>` (space-separated Ca
 
 ## `iidp app delete`
 
-Removes an Application in one commit, after the developer types the Application name back (or `--force` on a script): each Environment's `applications/<name>/<environment>/application.yaml` (`prod` and `staging`, whichever exist) is removed and the commit `iidp app delete <name>` is pushed. `values.yaml` (and any `sops/` secrets) are deliberately **not** removed -- see below. Unlike before #39, the CLI no longer commits a `Backup` manifest or a `final-backup-<environment>` ArgoCD Application of its own.
+Removes an Application in one commit, after the developer types the Application name back (or `--force` on a script): each Environment's `applications/<name>/<environment>/application.yaml` (`prod` and `staging`, whichever exist) is removed, along with `applications/<name>/repository.yaml` when the Application is bound, and the commit `iidp app delete <name>` is pushed. The binding goes because nothing renders from it, so the PreDelete hook does not need it, and a deleted Application must not stay deployable through the Deploy gate. `values.yaml` (and any `sops/` secrets) are deliberately **not** removed -- see below. Unlike before #39, the CLI no longer commits a `Backup` manifest or a `final-backup-<environment>` ArgoCD Application of its own.
 
 What guarantees the final backup now is the chart, not commit ordering. Each Environment's own ArgoCD Application carries the resources finalizer, so ArgoCD deletes its resources once it notices `application.yaml` is gone — but a `postgres.enabled` Environment's chart also renders a `ServiceAccount`, `Role`, `RoleBinding` and Job (all named `<fullname>-final-backup`, `chart/application/templates/final-backup-job.yaml`). Only the Job is annotated `argocd.argoproj.io/hook: PreDelete`; the `ServiceAccount`, `Role` and `RoleBinding` are ordinary resources, present whenever `postgres.enabled` and pruned with the rest of the Environment's resources, the same as the Cluster or the Deployment (see the implementation notes for why more than one hook object was found to be unsafe). ArgoCD creates a `PreDelete` hook only when the Application itself is deleted, waits for it to reach Healthy before deleting anything else, and blocks the deletion (a `DeletionError` condition) if it fails. The Job runs a pinned `kubectl` image, creates a CloudNativePG `Backup` targeting the Environment's Cluster (`spec.method: plugin`, `spec.pluginConfiguration.name: barman-cloud.cloudnative-pg.io`, the same shape as the chart's `ScheduledBackup`) named `<fullname>-final-<timestamp>` with the annotation `iidp.itema.no/retain-until` computed 30 days ahead at run time, and polls its `.status.phase` until `completed` (failing, and so blocking the deletion, on `failed` or on timing out after `postgres.finalBackupTimeout` seconds).
 
@@ -248,10 +290,10 @@ What guarantees the final backup now is the chart, not commit ordering. Each Env
 
 ## How the CLI writes
 
-1. Validates the flags (the Application name is a lowercase DNS-1035 label of at most 40 characters) before touching anything.
+1. Validates the flags (the Application name is a lowercase DNS-1035 label of at most 40 characters) before touching anything. `--repo` outside `Itema-as` (Adopt, `iidp app bind`) is refused here, naming the transfer.
 2. Takes the developer's GitHub token from the `gh` CLI (`gh auth token`). Write access to the Platform repository is the authorisation; a push refused for permissions says so and names the repository. With `--path create` or `--path adopt`, which also push `.github/workflows/deploy.yaml` to the Application repository, it first reads the token's scopes and refuses one without `workflow`, naming `gh auth refresh -s workflow`, before anything is created ([`docs/implementation-notes/47-workflow-scope.md`](implementation-notes/47-workflow-scope.md)).
 3. Clones `main` shallowly into a temporary directory, reads `platform.yaml`, and refuses if `applications/<name>/` already exists.
-4. Writes the Environment's files, commits them with the author from the developer's git configuration and the message `iidp app create <name>`, and pushes to `main`.
+4. Writes the Environment's files (and, with `--path create` or `--path adopt`, `applications/<name>/repository.yaml`), commits them with the author from the developer's git configuration and the message `iidp app create <name>`, and pushes to `main`.
 5. If the push is rejected because `main` moved, it clones afresh and repeats once. If the Application's directory appeared in the meantime, it fails without writing; the other developer's Application wins.
 
 The temporary directory is removed afterwards.

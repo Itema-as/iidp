@@ -43,7 +43,8 @@ type DeleteResult struct {
 
 // DeleteApplication removes application from the Platform repository in one
 // commit: each Environment's application.yaml (applications/<name>/prod/
-// and .../staging/, whichever exist). Its own ArgoCD Application carries
+// and .../staging/, whichever exist) and the Application's repository
+// binding (RepositoryFile), when it has one. Its own ArgoCD Application carries
 // the resources finalizer, so ArgoCD deletes the Environment's resources
 // once it notices application.yaml is gone -- but only after every ArgoCD
 // PreDelete hook the chart renders for that Environment (the final
@@ -126,6 +127,17 @@ func (w *Writer) attemptDelete(ctx context.Context, application string, out io.W
 		// with the same clear message as "never existed", rather than
 		// proceeding to a git rm with nothing to remove.
 		return DeleteResult{}, fmt.Errorf("%w: %q has no Environment with a live application.yaml under %s/ in %s", ErrApplicationMissing, application, ApplicationsDir, platform.Repository)
+	}
+
+	// The repository binding goes in the same commit: nothing renders
+	// from it, so ArgoCD's PreDelete hook does not need it, and a deleted
+	// Application must not stay deployable through the Deploy gate by its
+	// old repository (docs/implementation-notes/58-repository-binding.md).
+	switch _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(RepositoryBindingPath(application)))); {
+	case err == nil:
+		removeFiles = append(removeFiles, RepositoryBindingPath(application))
+	case !errors.Is(err, fs.ErrNotExist):
+		return DeleteResult{}, fmt.Errorf("checking for %s: %w", RepositoryBindingPath(application), err)
 	}
 
 	fmt.Fprintf(out, "Removing %v...\n", removeFiles)

@@ -107,6 +107,12 @@ type Application struct {
 	// (docs/implementation-notes/18-itema-login.md). Refused together with
 	// Domains: Itema login is for Platform addresses only.
 	Login bool
+	// Repository, when set, binds the Application to its Application
+	// repository by id: written as applications/<name>/repository.yaml in
+	// the same commit. Create and Adopt set it; app create without --path
+	// has no Application repository and leaves it nil
+	// (docs/implementation-notes/58-repository-binding.md).
+	Repository *RepositoryBinding
 }
 
 // Result is what CreateApplication wrote and where it can be seen.
@@ -329,6 +335,9 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 				files = append(files, path.Join(sopsDir, "backups-credentials.enc.yaml"), path.Join(sopsDir, "kustomization.yaml"), path.Join(sopsDir, "ksops.yaml"))
 			}
 		}
+		if app.Repository != nil {
+			files = append(files, RepositoryBindingPath(app.Name))
+		}
 	} else {
 		appDir := path.Join(ApplicationsDir, app.Name)
 		switch _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(appDir))); {
@@ -360,6 +369,13 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 				}
 				files = append(files, credFiles...)
 			}
+		}
+		if app.Repository != nil {
+			bindingFile, err := writeRepositoryBinding(dir, app.Name, *app.Repository)
+			if err != nil {
+				return Result{}, err
+			}
+			files = append(files, bindingFile)
 		}
 		if err := repo.Add(ctx, files...); err != nil {
 			return Result{}, err

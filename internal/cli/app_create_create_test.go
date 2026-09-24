@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,9 +25,8 @@ import (
 // clone_url, so the pushed template can be inspected by cloning it, the
 // way docs/design.md's testing seam asks for.
 type fakeGitHub struct {
-	srv   *httptest.Server
-	t     *testing.T
-	login string
+	srv *httptest.Server
+	t   *testing.T
 
 	mu                  sync.Mutex
 	requests            []fakeRequest
@@ -54,7 +55,21 @@ type fakeGitHub struct {
 	// GitHub App token.
 	oauthScopes string
 	omitScopes  bool
+
+	// repoIDs and ownerIDs are the numeric ids GitHub reports for a
+	// repository and for its owner, assigned the first time the fake
+	// learns of each (docs/implementation-notes/58-repository-binding.md).
+	// transferredTo makes GET /repos/{owner}/{name} report a different
+	// owner, the way GitHub follows the redirect of a repository that was
+	// transferred away.
+	repoIDs       map[string]int64
+	ownerIDs      map[string]int64
+	nextID        int64
+	transferredTo map[string]string
 }
+
+// fakeOrgID is the numeric id the fake reports for platform.Org.
+const fakeOrgID = 4242
 
 // gh auth login's minimum scopes, plus workflow: the fake's default token.
 const scopesWithWorkflow = "gist, read:org, repo, workflow"
@@ -81,7 +96,6 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 	setGitEnv(t)
 	f := &fakeGitHub{
 		t:                   t,
-		login:               "devuser",
 		existing:            map[string]bool{},
 		created:             map[string]string{},
 		defaults:            map[string]string{},
@@ -91,12 +105,14 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		canPush:             map[string]bool{},
 		bareDir:             map[string]string{},
 		oauthScopes:         scopesWithWorkflow,
+		repoIDs:             map[string]int64{},
+		ownerIDs:            map[string]int64{platform.Org: fakeOrgID},
+		nextID:              900001,
+		transferredTo:       map[string]string{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/{$}", f.handleRoot)
-	mux.HandleFunc("/user", f.handleUser)
 	mux.HandleFunc("/orgs/", f.handleOrgRepos)
-	mux.HandleFunc("/user/repos", f.handleUserRepos)
 	mux.HandleFunc("/repos/", f.handleRepo)
 	f.srv = httptest.NewServer(f.withScopes(mux))
 	t.Cleanup(f.srv.Close)
@@ -119,6 +135,61 @@ func (f *fakeGitHub) seedAdoptRepository(t *testing.T, owner, name, defaultBranc
 	f.canPush[key] = true
 	f.mu.Unlock()
 	return url, bare
+}
+
+// repoID returns the numeric id the fake reports for owner/name, assigning
+// one the first time it is asked.
+func (f *fakeGitHub) repoID(owner, name string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.repoIDLocked(owner + "/" + name)
+}
+
+func (f *fakeGitHub) repoIDLocked(key string) int64 {
+	if id, ok := f.repoIDs[key]; ok {
+		return id
+	}
+	f.nextID++
+	f.repoIDs[key] = f.nextID
+	return f.nextID
+}
+
+// ownerIDLocked returns the numeric id the fake reports for the account
+// login: fakeOrgID for platform.Org, another stable id for anyone else.
+func (f *fakeGitHub) ownerIDLocked(login string) int64 {
+	if id, ok := f.ownerIDs[login]; ok {
+		return id
+	}
+	f.nextID++
+	f.ownerIDs[login] = f.nextID
+	return f.nextID
+}
+
+// transferAway makes GET /repos/{owner}/{name} answer as if the repository
+// had been transferred to newOwner: GitHub follows the redirect and
+// reports the new owner and full name.
+func (f *fakeGitHub) transferAway(owner, name, newOwner string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.transferredTo[owner+"/"+name] = newOwner
+}
+
+// rename makes owner/newName exist with owner/oldName's numeric id, the
+// way GitHub reports a renamed repository.
+func (f *fakeGitHub) rename(owner, oldName, newName string) {
+	id := f.repoID(owner, oldName)
+	f.markExisting(owner, newName)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repoIDs[owner+"/"+newName] = id
+}
+
+// recreate gives owner/name a new numeric id, the way deleting a
+// repository and creating another under the same name does.
+func (f *fakeGitHub) recreate(owner, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.repoIDs, owner+"/"+name)
 }
 
 // denyPush makes owner/name (already seeded) report permissions.push:
@@ -179,7 +250,7 @@ func (f *fakeGitHub) createBody(owner, name string) map[string]any {
 		if body, _ := r.Body["name"].(string); body != name {
 			continue
 		}
-		if strings.Contains(r.Path, owner) || r.Path == "/user/repos" {
+		if strings.Contains(r.Path, owner) {
 			return r.Body
 		}
 	}
@@ -252,11 +323,6 @@ func (f *fakeGitHub) handleRoot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"current_user_url": f.srv.URL + "/user"})
 }
 
-func (f *fakeGitHub) handleUser(w http.ResponseWriter, r *http.Request) {
-	f.record(r)
-	writeJSON(w, http.StatusOK, map[string]any{"login": f.login})
-}
-
 func (f *fakeGitHub) handleRepo(w http.ResponseWriter, r *http.Request) {
 	body := f.record(r)
 	rest := strings.TrimPrefix(r.URL.Path, "/repos/")
@@ -283,8 +349,14 @@ func (f *fakeGitHub) handleRepo(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		f.mu.Lock()
 		exists := f.existing[key]
+		owner, fullName := parts[0], key
+		if to, ok := f.transferredTo[key]; ok {
+			owner, fullName = to, to+"/"+parts[1]
+		}
 		resp := map[string]any{
-			"full_name":      key,
+			"id":             f.repoIDLocked(key),
+			"full_name":      fullName,
+			"owner":          map[string]any{"login": owner, "id": f.ownerIDLocked(owner)},
 			"default_branch": f.repoDefaultBranch[key],
 			"clone_url":      f.created[key],
 			"permissions":    map[string]any{"push": f.canPush[key]},
@@ -362,15 +434,6 @@ func (f *fakeGitHub) handleOrgRepos(w http.ResponseWriter, r *http.Request) {
 	f.createRepo(w, org, body)
 }
 
-func (f *fakeGitHub) handleUserRepos(w http.ResponseWriter, r *http.Request) {
-	body := f.record(r)
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	f.createRepo(w, f.login, body)
-}
-
 func (f *fakeGitHub) createRepo(w http.ResponseWriter, owner string, body map[string]any) {
 	name, _ := body["name"].(string)
 	key := owner + "/" + name
@@ -386,10 +449,13 @@ func (f *fakeGitHub) createRepo(w http.ResponseWriter, owner string, body map[st
 	f.bareDir[key] = bare
 	f.repoDefaultBranch[key] = f.createDefaultBranch
 	f.canPush[key] = true
+	id, ownerID := f.repoIDLocked(key), f.ownerIDLocked(owner)
 	f.mu.Unlock()
 	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":             id,
 		"clone_url":      cloneURL,
 		"full_name":      key,
+		"owner":          map[string]any{"login": owner, "id": ownerID},
 		"default_branch": f.createDefaultBranch,
 	})
 }
@@ -434,9 +500,6 @@ func TestAppCreatePathNextJSUnderOrgIsAWebService(t *testing.T) {
 	}
 	if n := gh.requestsTo(http.MethodPost, "/orgs/"+platform.Org+"/repos"); n != 1 {
 		t.Errorf("POST /orgs/%s/repos called %d times, want 1", platform.Org, n)
-	}
-	if n := gh.requestsTo(http.MethodPost, "/user/repos"); n != 0 {
-		t.Errorf("POST /user/repos called %d times, want 0 (org owner)", n)
 	}
 	if got := gh.defaultBranch(platform.Org, "shop"); got != "main" {
 		t.Errorf("default branch set to %q, want main", got)
@@ -576,32 +639,82 @@ func TestAppCreatePathFrameworkDerivesKindAndRefusesExplicitKind(t *testing.T) {
 	}
 }
 
-func TestAppCreatePathPersonalOwnerUsesTheDevelopersLogin(t *testing.T) {
+func TestAppCreatePathHasNoOwnerFlag(t *testing.T) {
+	// Only repositories in the org can be Applications (ADR-0005), so
+	// Create no longer offers a personal account: --owner is not a flag.
 	platformURL := newPlatformRepository(t, testPlatformYAML)
 	gh := newFakeGitHub(t)
-	gh.login = "developer42"
+
+	for _, owner := range []string{"user", "org"} {
+		_, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+			"--name", "shop", "--path", "create", "--framework", "nextjs", "--owner", owner)
+
+		if code == 0 {
+			t.Fatalf("--owner %s: exit code = 0, want non-zero", owner)
+		}
+		if !strings.Contains(stderr, "unknown flag: --owner") {
+			t.Errorf("--owner %s: stderr = %q, want it to say --owner is unknown", owner, stderr)
+		}
+	}
+	if len(gh.requests) != 0 {
+		t.Errorf("the fake GitHub API was called %d times, want 0", len(gh.requests))
+	}
+	assertNoApplications(t, platformURL)
+
+	var help bytes.Buffer
+	cli.Run([]string{"app", "create", "--help"}, strings.NewReader(""), &help, &help)
+	if strings.Contains(help.String(), "--owner") || strings.Contains(help.String(), "personal") {
+		t.Errorf("app create --help still mentions --owner or a personal account:\n%s", help.String())
+	}
+}
+
+func TestAppCreatePathBindsTheApplicationRepositoryByID(t *testing.T) {
+	platformURL := newPlatformRepository(t, testPlatformYAML)
+	gh := newFakeGitHub(t)
 
 	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
-		"--name", "shop", "--path", "create", "--framework", "nextjs", "--owner", "user")
+		"--name", "shop", "--path", "create", "--framework", "nextjs", "--staging")
 
 	if code != 0 {
-		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	if n := gh.requestsTo(http.MethodGet, "/user"); n != 1 {
-		t.Errorf("GET /user called %d times, want 1", n)
+	clone := cloneMain(t, platformURL)
+	assertBinding(t, clone, "shop", platform.Org+"/shop", gh.repoID(platform.Org, "shop"), fakeOrgID)
+
+	// In the same commit as the Environments, not a second one.
+	added := strings.Fields(gitRun(t, clone, "show", "--name-only", "--format=", "HEAD"))
+	if !slices.Contains(added, "applications/shop/repository.yaml") {
+		t.Errorf("the create commit touched %v, want it to include applications/shop/repository.yaml", added)
 	}
-	if n := gh.requestsTo(http.MethodPost, "/user/repos"); n != 1 {
-		t.Errorf("POST /user/repos called %d times, want 1", n)
+	if got := headSubject(t, platformURL); got != "iidp app create shop" {
+		t.Errorf("head commit = %q, want iidp app create shop", got)
 	}
-	if n := gh.requestsTo(http.MethodPost, "/orgs/"+platform.Org+"/repos"); n != 0 {
-		t.Errorf("POST /orgs/%s/repos called %d times, want 0 (personal owner)", platform.Org, n)
+	want := fmt.Sprintf("Repository: %s/shop (repository id %d, owner id %d)", platform.Org, gh.repoID(platform.Org, "shop"), fakeOrgID)
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout lacks %q:\n%s", want, stdout)
 	}
-	if !strings.Contains(stdout, "https://github.com/developer42/shop") {
-		t.Errorf("stdout lacks the Application repository URL:\n%s", stdout)
+	if strings.Contains(stdout, "iidp app bind") {
+		t.Errorf("stdout tells the developer to bind an Application Create already bound:\n%s", stdout)
 	}
-	values := readYAML(t, filepath.Join(cloneMain(t, platformURL), "applications/shop/prod/values.yaml"))
-	if got := lookup(t, values, "image", "repository"); got != "ghcr.io/developer42/shop" {
-		t.Errorf("values.yaml image.repository = %v, want ghcr.io/developer42/shop", got)
+}
+
+// assertBinding checks applications/<name>/repository.yaml in clone: the
+// shape docs/platform-repository.md promises the Deploy gate.
+func assertBinding(t *testing.T, clone, name, repository string, repositoryID, ownerID int64) {
+	t.Helper()
+	path := filepath.Join(clone, "applications", name, "repository.yaml")
+	doc := readYAML(t, path)
+	for key, want := range map[string]any{
+		"repository":        repository,
+		"repositoryId":      int(repositoryID),
+		"repositoryOwnerId": int(ownerID),
+	} {
+		if got := doc[key]; got != want {
+			t.Errorf("%s: %s = %v (%T), want %v", path, key, got, got, want)
+		}
+	}
+	if len(doc) != 3 {
+		t.Errorf("%s has keys %v, want exactly repository, repositoryId and repositoryOwnerId", path, doc)
 	}
 }
 
@@ -710,6 +823,7 @@ func TestAppCreatePathReportsWhatWasCreatedWhenThePlatformPushFails(t *testing.T
 		"https://github.com/" + platform.Org + "/shop",
 		"created and pushed",
 		"Finish by hand",
+		"iidp app bind shop --repo " + platform.Org + "/shop",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout = %q, want it to contain %q", stdout, want)
@@ -796,36 +910,5 @@ func TestAppCreatePathAddsTheDeployWorkflow(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "pinned to iidp latest") {
 		t.Errorf("stdout lacks the dev-build iidp version note:\n%s", stdout)
-	}
-}
-
-func TestAppCreatePathPersonalOwnerIsToldToAddTheSecretByHand(t *testing.T) {
-	platformURL := newPlatformRepository(t, testPlatformYAML)
-	gh := newFakeGitHub(t)
-	gh.login = "developer42"
-
-	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
-		"--name", "shop", "--path", "create", "--framework", "nextjs", "--owner", "user")
-
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
-	}
-	if !strings.Contains(stdout, "IIDP_DEPLOY_APP_PRIVATE_KEY") || !strings.Contains(stdout, "by hand") {
-		t.Errorf("stdout lacks the personal-account secret note:\n%s", stdout)
-	}
-}
-
-func TestAppCreatePathOrgOwnerGetsNoSecretNote(t *testing.T) {
-	platformURL := newPlatformRepository(t, testPlatformYAML)
-	gh := newFakeGitHub(t)
-
-	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
-		"--name", "shop", "--path", "create", "--framework", "nextjs")
-
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
-	}
-	if strings.Contains(stdout, "by hand") {
-		t.Errorf("stdout should not mention adding the secret by hand for an org owner:\n%s", stdout)
 	}
 }

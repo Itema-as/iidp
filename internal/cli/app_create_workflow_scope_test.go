@@ -69,26 +69,6 @@ func TestAppCreatePathRefusesALoginWithoutTheWorkflowScope(t *testing.T) {
 	}
 }
 
-func TestAppCreatePathRefusesAPersonalOwnerWithoutTheWorkflowScope(t *testing.T) {
-	platformURL := newPlatformRepository(t, testPlatformYAML)
-	gh := newFakeGitHub(t)
-	gh.setScopes(scopesWithoutWorkflow)
-
-	_, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
-		"--name", "shop", "--path", "create", "--framework", "nextjs", "--owner", "user")
-
-	if code == 0 {
-		t.Fatalf("exit code = 0, want non-zero")
-	}
-	if !strings.Contains(stderr, refreshCommand) {
-		t.Errorf("stderr lacks %q:\n%s", refreshCommand, stderr)
-	}
-	if n := gh.requestsTo(http.MethodPost, "/user/repos"); n != 0 {
-		t.Errorf("POST /user/repos called %d times, want 0", n)
-	}
-	assertNoApplications(t, platformURL)
-}
-
 func TestAppCreatePathProceedsWhenGitHubReportsNoScopes(t *testing.T) {
 	// A fine-grained personal access token or a GitHub App token: GitHub
 	// sends no X-OAuth-Scopes header, so whether it may push workflows

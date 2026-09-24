@@ -16,8 +16,8 @@ import (
 const DefaultBaseURL = "https://api.github.com"
 
 // Client is a small GitHub REST API client for what the CLI needs beyond
-// git: reading the token's scopes, finding the developer's personal login,
-// creating the Application repository and setting its default branch. BaseURL and HTTPClient are
+// git: reading the token's scopes, reading and creating Application
+// repositories and opening Adopt's pull request. BaseURL and HTTPClient are
 // injectable so tests run against an in-process fake server.
 type Client struct {
 	// BaseURL is the API root. Empty means DefaultBaseURL.
@@ -51,22 +51,6 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &se) && se.status == http.StatusNotFound
 }
 
-// CurrentUser returns the login of the developer the token belongs to
-// (GET /user): the personal account Create uses when --owner user is
-// chosen.
-func (c *Client) CurrentUser(ctx context.Context) (string, error) {
-	var user struct {
-		Login string `json:"login"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/user", nil, &user); err != nil {
-		return "", fmt.Errorf("looking up your GitHub login: %w", err)
-	}
-	if user.Login == "" {
-		return "", errors.New("looking up your GitHub login: GET /user returned no login")
-	}
-	return user.Login, nil
-}
-
 // RepositoryExists reports whether owner/name already exists
 // (GET /repos/{owner}/{name}).
 func (c *Client) RepositoryExists(ctx context.Context, owner, name string) (bool, error) {
@@ -81,16 +65,36 @@ func (c *Client) RepositoryExists(ctx context.Context, owner, name string) (bool
 	}
 }
 
-// CreateRepository creates a new repository named name, under org (when org
-// is true) or under owner's personal account, and returns its clone URL and
-// the default branch GitHub gave it (so the caller can tell whether
-// SetDefaultBranch still needs to run). It sets auto_init to false: Create
-// always pushes its own first commit.
-func (c *Client) CreateRepository(ctx context.Context, owner string, org bool, name string, private bool) (cloneURL, defaultBranch string, err error) {
-	path := "/user/repos"
-	if org {
-		path = "/orgs/" + owner + "/repos"
-	}
+// Owner is a repository's owner as GitHub reports it: the login, which can
+// change, and the numeric id, which never does.
+type Owner struct {
+	Login string `json:"login"`
+	ID    int64  `json:"id"`
+}
+
+// CreatedRepository is what CreateRepository reads back from GitHub about
+// the repository it made.
+type CreatedRepository struct {
+	// CloneURL is the git URL the first commit is pushed to.
+	CloneURL string
+	// DefaultBranch is the default branch GitHub gave the repository, so
+	// the caller can tell whether SetDefaultBranch still needs to run.
+	DefaultBranch string
+	// ID is the repository's numeric id: what a GitHub Actions OIDC token
+	// carries as repository_id, and what the Platform binds the
+	// Application to (docs/platform-repository.md).
+	ID int64
+	// Owner is the org the repository was created in; its ID is the OIDC
+	// token's repository_owner_id.
+	Owner Owner
+}
+
+// CreateRepository creates a new repository named name in org
+// (POST /orgs/{org}/repos) and returns what GitHub reports about it. It
+// sets auto_init to false: Create always pushes its own first commit.
+// Application repositories are only ever created in an org
+// (docs/adr/0005-private-application-repositories-on-github-free.md).
+func (c *Client) CreateRepository(ctx context.Context, org, name string, private bool) (CreatedRepository, error) {
 	body := map[string]any{
 		"name":      name,
 		"private":   private,
@@ -99,14 +103,21 @@ func (c *Client) CreateRepository(ctx context.Context, owner string, org bool, n
 	var repo struct {
 		CloneURL      string `json:"clone_url"`
 		DefaultBranch string `json:"default_branch"`
+		ID            int64  `json:"id"`
+		Owner         Owner  `json:"owner"`
 	}
-	if err := c.do(ctx, http.MethodPost, path, body, &repo); err != nil {
-		return "", "", fmt.Errorf("creating %s/%s: %w", owner, name, err)
+	if err := c.do(ctx, http.MethodPost, "/orgs/"+org+"/repos", body, &repo); err != nil {
+		return CreatedRepository{}, fmt.Errorf("creating %s/%s: %w", org, name, err)
 	}
 	if repo.CloneURL == "" {
-		return "", "", fmt.Errorf("creating %s/%s: GitHub returned no clone_url", owner, name)
+		return CreatedRepository{}, fmt.Errorf("creating %s/%s: GitHub returned no clone_url", org, name)
 	}
-	return repo.CloneURL, repo.DefaultBranch, nil
+	return CreatedRepository{
+		CloneURL:      repo.CloneURL,
+		DefaultBranch: repo.DefaultBranch,
+		ID:            repo.ID,
+		Owner:         repo.Owner,
+	}, nil
 }
 
 // SetDefaultBranch sets owner/name's default branch. Create calls it after
@@ -121,23 +132,38 @@ func (c *Client) SetDefaultBranch(ctx context.Context, owner, name, branch strin
 }
 
 // Repository is what GetRepository reads about an existing repository: the
-// fields the Adopt path needs (docs/implementation-notes/15-cli-adopt-path.md).
-// CanPush is GitHub's own view of the authenticated token's permission,
-// present in the response only because the request is authenticated.
+// fields the Adopt path needs (docs/implementation-notes/15-cli-adopt-path.md)
+// and the ids the Platform binds an Application to
+// (docs/implementation-notes/58-repository-binding.md). CanPush is
+// GitHub's own view of the authenticated token's permission, present in
+// the response only because the request is authenticated.
 type Repository struct {
+	// FullName is owner/name as GitHub reports it now. It differs from
+	// what was asked for when the repository was renamed or transferred,
+	// since GitHub redirects the old name to the new one.
+	FullName      string
 	DefaultBranch string
 	CloneURL      string
 	CanPush       bool
+	// ID is the repository's numeric id, the OIDC token's repository_id.
+	ID int64
+	// Owner is the repository's owner; its ID is the OIDC token's
+	// repository_owner_id.
+	Owner Owner
 }
 
-// GetRepository reads owner/name (GET /repos/{owner}/{name}): its default
-// branch, its clone URL, and whether the authenticated developer has push
-// access to it. Adopt uses this both to validate --repo (existence,
-// permission) and to know which branch to clone.
+// GetRepository reads owner/name (GET /repos/{owner}/{name}): its current
+// full name, default branch, clone URL, numeric ids, and whether the
+// authenticated developer has push access to it. Adopt uses this to
+// validate --repo (existence, owner, permission) and to know which branch
+// to clone; Adopt and iidp app bind record its ids.
 func (c *Client) GetRepository(ctx context.Context, owner, name string) (Repository, error) {
 	var repo struct {
+		FullName      string `json:"full_name"`
 		DefaultBranch string `json:"default_branch"`
 		CloneURL      string `json:"clone_url"`
+		ID            int64  `json:"id"`
+		Owner         Owner  `json:"owner"`
 		Permissions   struct {
 			Push bool `json:"push"`
 		} `json:"permissions"`
@@ -146,9 +172,12 @@ func (c *Client) GetRepository(ctx context.Context, owner, name string) (Reposit
 		return Repository{}, fmt.Errorf("reading %s/%s: %w", owner, name, err)
 	}
 	return Repository{
+		FullName:      repo.FullName,
 		DefaultBranch: repo.DefaultBranch,
 		CloneURL:      repo.CloneURL,
 		CanPush:       repo.Permissions.Push,
+		ID:            repo.ID,
+		Owner:         repo.Owner,
 	}, nil
 }
 

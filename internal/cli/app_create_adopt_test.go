@@ -3,6 +3,7 @@ package cli_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -302,30 +303,79 @@ func TestAppAdoptRefusesWhenTheBranchAlreadyExists(t *testing.T) {
 	assertNoApplications(t, platformURL)
 }
 
-func TestAppAdoptPersonalOwnerGetsTheSecretNote(t *testing.T) {
+func TestAppAdoptRefusesARepositoryOutsideTheOrgBeforeAnything(t *testing.T) {
+	for _, repo := range []string{"developer42/shop", "https://github.com/developer42/shop"} {
+		t.Run(repo, func(t *testing.T) {
+			platformURL := newPlatformRepository(t, testPlatformYAML)
+			gh := newFakeGitHub(t)
+			_, bare := gh.seedAdoptRepository(t, "developer42", "shop", "main", map[string]string{"package.json": nextJSPackageJSON})
+
+			stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+				"--path", "adopt", "--repo", repo)
+
+			if code == 0 {
+				t.Fatalf("exit code = 0, want non-zero\nstdout: %s", stdout)
+			}
+			for _, want := range []string{"developer42/shop", "Transfer it to " + platform.Org, "--repo " + platform.Org + "/shop"} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr lacks %q:\n%s", want, stderr)
+				}
+			}
+			if len(gh.requests) != 0 {
+				t.Errorf("the fake GitHub API was called %d times, want 0: the refusal comes before anything else", len(gh.requests))
+			}
+			assertBranchAbsent(t, bare, apprepo.AdoptBranch)
+			assertNoApplications(t, platformURL)
+		})
+	}
+}
+
+func TestAppAdoptRefusesARepositoryGitHubReportsOutsideTheOrg(t *testing.T) {
+	// --repo names the org, but the repository was transferred away since:
+	// GitHub follows the redirect and reports the new owner. Adopt checks
+	// the owner GitHub reports, not only the one typed.
 	platformURL := newPlatformRepository(t, testPlatformYAML)
 	gh := newFakeGitHub(t)
-	gh.seedAdoptRepository(t, "developer42", "shop", "main", map[string]string{"package.json": nextJSPackageJSON})
+	_, bare := gh.seedAdoptRepository(t, platform.Org, "shop", "main", map[string]string{"package.json": nextJSPackageJSON})
+	gh.transferAway(platform.Org, "shop", "developer42")
+
+	_, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--path", "adopt", "--repo", platform.Org+"/shop")
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr, "developer42/shop") || !strings.Contains(stderr, "Transfer it to "+platform.Org) {
+		t.Errorf("stderr = %q, want it to name the owner GitHub reports and the transfer", stderr)
+	}
+	assertBranchAbsent(t, bare, apprepo.AdoptBranch)
+	if len(gh.pullRequestsTo(platform.Org, "shop")) != 0 {
+		t.Errorf("a pull request was opened on a repository outside the org")
+	}
+	assertNoApplications(t, platformURL)
+}
+
+func TestAppAdoptBindsTheApplicationRepositoryByID(t *testing.T) {
+	platformURL := newPlatformRepository(t, testPlatformYAML)
+	gh := newFakeGitHub(t)
+	gh.seedAdoptRepository(t, platform.Org, "shop", "main", map[string]string{"package.json": nextJSPackageJSON})
 
 	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
-		"--path", "adopt", "--repo", "developer42/shop")
+		"--path", "adopt", "--repo", platform.Org+"/shop", "--name", "storefront")
 
 	if code != 0 {
-		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "IIDP_DEPLOY_APP_PRIVATE_KEY") || !strings.Contains(stdout, "by hand") {
-		t.Errorf("stdout lacks the personal-account secret note:\n%s", stdout)
+	clone := cloneMain(t, platformURL)
+	// Bound under the Application's name, to the repository by the ids and
+	// full name GitHub reports.
+	assertBinding(t, clone, "storefront", platform.Org+"/shop", gh.repoID(platform.Org, "shop"), fakeOrgID)
+	if got := headSubject(t, platformURL); got != "iidp app create storefront" {
+		t.Errorf("head commit = %q, want iidp app create storefront", got)
 	}
-	prs := gh.pullRequestsTo("developer42", "shop")
-	if len(prs) != 1 {
-		t.Fatalf("pull requests opened = %d, want 1", len(prs))
-	}
-	if !strings.Contains(prs[0].Body, "IIDP_DEPLOY_APP_PRIVATE_KEY") {
-		t.Errorf("pull request body lacks the personal-account secret note:\n%s", prs[0].Body)
-	}
-	values := readYAML(t, filepath.Join(cloneMain(t, platformURL), "applications/shop/prod/values.yaml"))
-	if got := lookup(t, values, "image", "repository"); got != "ghcr.io/developer42/shop" {
-		t.Errorf("values.yaml image.repository = %v, want ghcr.io/developer42/shop", got)
+	added := strings.Fields(gitRun(t, clone, "show", "--name-only", "--format=", "HEAD"))
+	if !slices.Contains(added, "applications/storefront/repository.yaml") {
+		t.Errorf("the create commit touched %v, want it to include applications/storefront/repository.yaml", added)
 	}
 }
 
@@ -528,4 +578,27 @@ func TestAppAdoptWizardAsksForRepositoryAndSkipsKindAndFramework(t *testing.T) {
 	if len(gh.pullRequestsTo(platform.Org, "shop")) != 1 {
 		t.Errorf("the wizard did not open a pull request")
 	}
+}
+
+func TestAppAdoptWizardReasksForARepositoryOutsideTheOrg(t *testing.T) {
+	url := newPlatformRepository(t, testPlatformYAML)
+	gh := newFakeGitHub(t)
+	gh.seedAdoptRepository(t, platform.Org, "shop", "main", map[string]string{"package.json": nextJSPackageJSON})
+
+	// name, path, a repository outside the org (refused, asked again), the
+	// org's repository, postgres, staging, domain, login, size, confirm.
+	stdin := "shop\nadopt\ndeveloper42/shop\n" + platform.Org + "/shop\nn\nn\n\n\n\ny\n"
+
+	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Transfer it to "+platform.Org) {
+		t.Errorf("stdout lacks the transfer message for the refused answer:\n%s", stdout)
+	}
+	if n := strings.Count(stdout, "Application repository ("); n != 2 {
+		t.Errorf("the repository question was asked %d times, want 2:\n%s", n, stdout)
+	}
+	assertBinding(t, cloneMain(t, url), "shop", platform.Org+"/shop", gh.repoID(platform.Org, "shop"), fakeOrgID)
 }

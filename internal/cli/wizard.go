@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/Itema-as/iidp/internal/apprepo"
 	"github.com/Itema-as/iidp/internal/migrate"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
@@ -55,12 +56,15 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) erro
 	}
 	// 2b. Adopt asks for the repository to open a pull request on.
 	if opts.path == pathAdopt && !f.Changed("repo") {
-		repo, err := p.Text("Application repository (owner/name or a URL)", "", func(s string) error {
+		repo, err := p.Text("Application repository ("+platform.Org+"/name or a URL)", "", func(s string) error {
 			if s == "" {
 				return errors.New("a repository is required")
 			}
-			_, _, err := parseRepoFlag(s)
-			return err
+			owner, name, err := parseRepoFlag(s)
+			if err != nil {
+				return err
+			}
+			return apprepo.CheckInOrg(owner, name)
 		})
 		if err != nil {
 			return err
@@ -254,7 +258,7 @@ func askItemaLogin(f *pflag.FlagSet, p *prompt.Prompter) error {
 // platformrepo.Writer.PreviewApplication reports for app: real addresses
 // and domain classification read from platform.yaml, without writing
 // anything.
-func printSummary(out io.Writer, plan createPlan, ownerLogin string, app platformrepo.Application, preview platformrepo.Result, adoptFiles []string) {
+func printSummary(out io.Writer, plan createPlan, app platformrepo.Application, preview platformrepo.Result, adoptFiles []string) {
 	fmt.Fprintln(out, "\nSummary:")
 	fmt.Fprintf(out, "  Name:       %s\n", plan.name)
 	switch plan.path {
@@ -264,7 +268,7 @@ func printSummary(out io.Writer, plan createPlan, ownerLogin string, app platfor
 			visibility = "public"
 		}
 		fmt.Fprintf(out, "  Path:       Create\n")
-		fmt.Fprintf(out, "  Owner:      %s (%s)\n", ownerLogin, plan.ownerMode)
+		fmt.Fprintf(out, "  Owner:      %s\n", platform.Org)
 		fmt.Fprintf(out, "  Framework:  %s\n", plan.framework)
 		fmt.Fprintf(out, "  Visibility: %s\n", visibility)
 	case pathAdopt:
