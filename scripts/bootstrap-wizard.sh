@@ -555,6 +555,36 @@ run_tofu() { # run_tofu DIR ARG...
   ( cd "$dir" && tofu "$@" ) || die "tofu $* failed in $dir"
 }
 
+# plan_and_apply DIR "confirm question" "abort message"
+#
+# Saves a plan to DIR/tfplan, asks, and applies exactly that plan. A saved
+# plan holds every variable value in plaintext (the Hetzner token, the
+# Object Storage keys, the GitHub App private key) and is of no use once
+# applied or declined, so it is deleted on every way out: applied, declined,
+# or failed. .gitignore covers it too, for a run that is interrupted.
+plan_and_apply() {
+  local dir="$1" question="$2" abort="$3"
+  run_tofu "$dir" plan -input=false -out=tfplan
+  if ! confirm "$question"; then
+    remove_saved_plan "$dir"
+    die "$abort"
+  fi
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dry "would run: (cd $dir && tofu apply -input=false tfplan), then delete $dir/tfplan"
+    return 0
+  fi
+  if ! ( cd "$dir" && tofu apply -input=false tfplan ); then
+    remove_saved_plan "$dir"
+    die "tofu apply failed in $dir"
+  fi
+  remove_saved_plan "$dir"
+}
+
+remove_saved_plan() { # remove_saved_plan DIR
+  [[ "$DRY_RUN" == "1" ]] && return 0
+  rm -f "$1/tfplan"
+}
+
 # wait_for_age_key IP -> prints the age public key on stdout
 wait_for_age_key() {
   local ip="$1" timeout="${2:-900}" interval=15
@@ -1114,20 +1144,12 @@ stage_opentofu() {
 
   say "First the two Object Storage buckets, then the node."
   run_tofu "$state_dir" init -input=false
-  run_tofu "$state_dir" plan -input=false -out=tfplan
-  if confirm "Apply the state-bucket plan shown above?"; then
-    run_tofu "$state_dir" apply -input=false tfplan
-  else
-    die "aborted: the state bucket must exist before infra/platform can use it as a backend"
-  fi
+  plan_and_apply "$state_dir" "Apply the state-bucket plan shown above?" \
+    "aborted: the state bucket must exist before infra/platform can use it as a backend"
 
   run_tofu "$platform_dir" init -input=false
-  run_tofu "$platform_dir" plan -input=false -out=tfplan
-  if confirm "Apply the platform plan shown above? This creates the Hetzner node."; then
-    run_tofu "$platform_dir" apply -input=false tfplan
-  else
-    die "aborted before creating the node"
-  fi
+  plan_and_apply "$platform_dir" "Apply the platform plan shown above? This creates the Hetzner node." \
+    "aborted before creating the node"
 
   if [[ "$DRY_RUN" == "1" ]]; then
     dry "would run: tofu output -raw node_public_ipv4"
@@ -1263,8 +1285,11 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+    # Unlimited retries, each one against the newest commit, so a fix pushed
+    # here applies without terminating a failing sync by hand.
     retry:
       limit: -1
+      refresh: true
       backoff:
         duration: 10s
         factor: 2
@@ -1302,8 +1327,11 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+    # Unlimited retries, each one against the newest commit, so a fix pushed
+    # here applies without terminating a failing sync by hand.
     retry:
       limit: -1
+      refresh: true
       backoff:
         duration: 10s
         factor: 2
@@ -1349,8 +1377,11 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+    # Unlimited retries, each one against the newest commit, so a fix pushed
+    # here applies without terminating a failing sync by hand.
     retry:
       limit: -1
+      refresh: true
       backoff:
         duration: 10s
         factor: 2

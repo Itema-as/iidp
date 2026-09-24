@@ -211,6 +211,83 @@ out=$(in_wizard "
 ")
 assert_eq "$out" "600"
 
+# ── saved OpenTofu plans (#47) ──────────────────────────────────────────
+# A saved plan holds every variable value in plaintext: the Hetzner token,
+# the Object Storage keys, the GitHub App private key. This repository is
+# public, so no plan may be committable, and the wizard deletes its own
+# once it has served its purpose. The fake tofu below writes a plan the way
+# the real one does and logs what it was asked to run.
+
+fake_tofu_bin() { # fake_tofu_bin -> a directory holding a fake tofu
+  local bin
+  bin=$(scratch_dir)
+  cat > "$bin/tofu" <<'EOF'
+#!/usr/bin/env bash
+echo "tofu $*" >> "${FAKE_TOFU_LOG:?}"
+case "$1" in
+  plan)
+    for arg in "$@"; do
+      case "$arg" in -out=*) printf 'hcloud_token = "plaintext-secret"\n' > "${arg#-out=}" ;; esac
+    done ;;
+  apply)
+    [[ -f "${!#}" ]] || { echo "no saved plan ${!#}" >&2; exit 3; }
+    exit "${FAKE_TOFU_APPLY_RC:-0}" ;;
+esac
+EOF
+  chmod +x "$bin/tofu"
+  printf '%s\n' "$bin"
+}
+
+t_start "plan_and_apply applies the saved plan it just wrote"
+bin=$(fake_tofu_bin)
+d=$(scratch_dir)
+out=$(in_wizard "
+  PATH='$bin':\$PATH
+  export FAKE_TOFU_LOG='$d/tofu.log'
+  plan_and_apply '$d' 'Apply?' 'aborted'
+" 2>&1)
+rc=$?
+assert_success "$rc"
+t_start "plan_and_apply applies the saved plan it just wrote"
+assert_contains "$(cat "$d/tofu.log" 2>/dev/null)" "tofu apply -input=false tfplan"
+t_start "plan_and_apply deletes the saved plan after a successful apply"
+assert_eq "$([[ -e "$d/tfplan" ]] && echo present || echo absent)" "absent"
+
+t_start "plan_and_apply deletes the saved plan when the apply fails"
+d=$(scratch_dir)
+out=$(in_wizard "
+  PATH='$bin':\$PATH
+  export FAKE_TOFU_LOG='$d/tofu.log' FAKE_TOFU_APPLY_RC=1
+  plan_and_apply '$d' 'Apply?' 'aborted'
+" 2>&1)
+rc=$?
+assert_eq "$rc" "1"
+t_start "plan_and_apply deletes the saved plan when the apply fails"
+assert_eq "$([[ -e "$d/tfplan" ]] && echo present || echo absent)" "absent"
+
+t_start "plan_and_apply deletes the saved plan when the admin declines, and applies nothing"
+d=$(scratch_dir)
+out=$(in_wizard "
+  PATH='$bin':\$PATH
+  export FAKE_TOFU_LOG='$d/tofu.log'
+  confirm() { return 1; }
+  plan_and_apply '$d' 'Apply?' 'aborted before creating the node'
+" 2>&1)
+rc=$?
+assert_eq "$rc" "1"
+t_start "plan_and_apply deletes the saved plan when the admin declines, and applies nothing"
+assert_contains "$out" "aborted before creating the node"
+assert_not_contains "$(cat "$d/tofu.log" 2>/dev/null)" "tofu apply"
+assert_eq "$([[ -e "$d/tfplan" ]] && echo present || echo absent)" "absent"
+
+# An interrupted run (Ctrl-C at the confirm prompt) still leaves a plan
+# behind, so .gitignore has to cover it in every OpenTofu directory,
+# including one that does not exist yet.
+for plan in infra/state-bucket/tfplan infra/platform/tfplan infra/some-new-root/tfplan infra/platform/tfplan.json infra/platform/staging.tfplan; do
+  t_start ".gitignore ignores $plan"
+  if git -C "$REPO_ROOT" check-ignore -q --no-index "$plan"; then t_pass; else t_fail "$plan is not ignored"; fi
+done
+
 # ── platform_yaml_get ────────────────────────────────────────────────────
 
 t_start "platform_yaml_get reads a top-level scalar"
@@ -640,6 +717,25 @@ assert_contains "$content" "repoURL: https://github.com/Itema-as/iidp-platform.g
 assert_contains "$content" "path: applications"
 assert_contains "$content" "recurse: true"
 assert_contains "$content" "include: '*/*/application.yaml'"
+
+# A retrying sync stays pinned to the revision that failed unless
+# retry.refresh is set, and ArgoCD starts no new automated sync while one
+# runs, so without it a fix pushed to the Platform repository never
+# applies (#47). The e2e fixture's hand-written copies must agree.
+d=$(scratch_dir)
+in_wizard "
+  PLATFORM_REPO='$d'
+  write_bootstrap_components https://github.com/Itema-as/iidp.git v0.1.0 https://github.com/Itema-as/iidp-platform.git >/dev/null
+  write_bootstrap_secrets https://github.com/Itema-as/iidp-platform.git >/dev/null
+  write_bootstrap_applications https://github.com/Itema-as/iidp-platform.git >/dev/null
+"
+retry_block=$'    retry:\n      limit: -1\n      refresh: true\n'
+for file in platform-components.yaml platform-secrets.yaml applications.yaml; do
+  t_start "the wizard's $file retries without limit, each retry against the newest commit"
+  assert_contains "$(cat "$d/bootstrap/$file" 2>/dev/null || echo MISSING)" "$retry_block"
+  t_start "the e2e fixture's $file retries the same way"
+  assert_contains "$(cat "$TEST_DIR/../e2e/fixtures/platform-repo/bootstrap/$file")" "$retry_block"
+done
 
 # The kind e2e fixture's bootstrap/ is hand-written. It once carried
 # applications.yaml while the wizard never wrote it, so the first real

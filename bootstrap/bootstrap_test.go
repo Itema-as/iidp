@@ -48,6 +48,27 @@ func TestRendersOneApplicationPerComponent(t *testing.T) {
 	}
 }
 
+// TestEveryApplicationRetriesForeverAgainstTheNewestRevision: the bootstrap
+// relies on unlimited retries while components arrive in any order, and a
+// retry pinned to the revision that failed never picks up the fix pushed
+// after it, because ArgoCD starts no new automated sync while one runs.
+// retry.refresh moves each retry on to the newest revision.
+func TestEveryApplicationRetriesForeverAgainstTheNewestRevision(t *testing.T) {
+	apps := renderApplications(t, "--values", fixture)
+	if len(apps) == 0 {
+		t.Fatal("the bootstrap rendered no Applications")
+	}
+	for name, app := range apps {
+		retry := get[object](t, app, "spec", "syncPolicy", "retry")
+		if limit, ok := retry["limit"].(int); !ok || limit != -1 {
+			t.Errorf("%s: retry.limit = %v, want -1 (unlimited)", name, retry["limit"])
+		}
+		if refresh, ok := retry["refresh"].(bool); !ok || !refresh {
+			t.Errorf("%s: retry.refresh = %v, want true", name, retry["refresh"])
+		}
+	}
+}
+
 func TestEveryChartVersionIsThePinnedOne(t *testing.T) {
 	versions := readYAML(t, "versions.yaml")
 	apps := renderApplications(t, "--values", fixture)
