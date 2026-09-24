@@ -43,3 +43,15 @@ _Avoid_: new, scaffold, init
 **Adopt**:
 Making a new Application from an Application repository that already exists. The CLI proposes its changes to that repository as a pull request.
 _Avoid_: import, migrate, onboard, connect
+
+**Deploy**:
+Setting an Environment to run a newly built image of its Application. A push to `main` deploys to `staging`, or to `prod` when there is no `staging`.
+_Avoid_: release, ship, roll out
+
+**Promote**:
+Deploying to `prod` the image `staging` already runs, triggered by a `v*` tag on the Application repository. Nothing is rebuilt.
+_Avoid_: release, publish
+
+**Deploy gate**:
+The part of the Platform through which an Application repository's CI deploys and promotes. It checks that the caller is that Application's own repository and may deploy that Environment, then records the new image in the Platform repository. It is the only way an Application repository's CI can change the Platform.
+_Avoid_: deploy service, deploy API, write-back
