@@ -30,7 +30,9 @@ type Environment struct {
 	// ObjectStorageEndpoint are the Postgres Capability. BackupsBucket and
 	// ObjectStorageEndpoint are set only when PostgresEnabled: the chart
 	// requires them only then, and they otherwise carry nothing the
-	// developer chose.
+	// developer chose. The CLI leaves MigrationCommand empty: the Deploy
+	// gate writes it with each deploy, from the Application repository's
+	// iidp.yaml (docs/implementation-notes/66-migration-command-in-repo.md).
 	PostgresEnabled       bool
 	MigrationCommand      string
 	BackupsBucket         string

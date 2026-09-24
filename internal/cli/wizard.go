@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/Itema-as/iidp/internal/appconfig"
 	"github.com/Itema-as/iidp/internal/apprepo"
 	"github.com/Itema-as/iidp/internal/migrate"
 	"github.com/Itema-as/iidp/internal/platform"
@@ -257,8 +258,8 @@ func askItemaLogin(f *pflag.FlagSet, p *prompt.Prompter) error {
 // question 9 — before asking for confirmation. preview is what
 // platformrepo.Writer.PreviewApplication reports for app: real addresses
 // and domain classification read from platform.yaml, without writing
-// anything.
-func printSummary(out io.Writer, plan createPlan, app platformrepo.Application, preview platformrepo.Result, adoptFiles []string) {
+// anything. migrationCommand is the command resolved for iidp.yaml.
+func printSummary(out io.Writer, plan createPlan, app platformrepo.Application, migrationCommand string, preview platformrepo.Result, adoptFiles []string) {
 	fmt.Fprintln(out, "\nSummary:")
 	fmt.Fprintf(out, "  Name:       %s\n", plan.name)
 	switch plan.path {
@@ -275,7 +276,7 @@ func printSummary(out io.Writer, plan createPlan, app platformrepo.Application, 
 		fmt.Fprintf(out, "  Path:       Adopt\n")
 		fmt.Fprintf(out, "  Repository: %s/%s\n", plan.repoOwner, plan.repoName)
 		if len(adoptFiles) == 0 {
-			fmt.Fprintln(out, "  Pull request adds: nothing (a Dockerfile and a deploy workflow already exist)")
+			fmt.Fprintln(out, "  Pull request adds: nothing (a Dockerfile, a deploy workflow and iidp.yaml already exist)")
 		} else {
 			fmt.Fprintln(out, "  Pull request adds:")
 			for _, f := range adoptFiles {
@@ -290,7 +291,7 @@ func printSummary(out io.Writer, plan createPlan, app platformrepo.Application, 
 	fmt.Fprintf(out, "  Port:       %d\n", app.Port)
 	fmt.Fprintf(out, "  Probe path: %s\n", app.ProbePath)
 	if app.Postgres {
-		fmt.Fprintf(out, "  Postgres:   enabled (migration command: %q)\n", app.MigrationCommand)
+		fmt.Fprintf(out, "  Postgres:   enabled (migration command for %s: %q)\n", appconfig.FileName, migrationCommand)
 	} else {
 		fmt.Fprintln(out, "  Postgres:   disabled")
 	}

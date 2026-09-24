@@ -1,0 +1,12 @@
+# The Application repository shop is bound to. The Deploy gate lets only the
+# repository with these GitHub ids (an Actions OIDC token's repository_id and
+# repository_owner_id) deploy it; repository is the name when it was bound,
+# for people to read, and goes stale on a rename.
+# Written by iidp (iidp app create, iidp app bind); do not edit by hand.
+#
+# In the kind fixture the ids are the harness's own:
+# testMigrationCommandFromIidpYAML signs tokens carrying repository_id
+# 700000002 and Itema-as's org id.
+repository: Itema-as/shop
+repositoryId: 700000002
+repositoryOwnerId: 1230559

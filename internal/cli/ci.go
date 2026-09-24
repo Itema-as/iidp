@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Itema-as/iidp/internal/appconfig"
 	"github.com/Itema-as/iidp/internal/deploygate"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
@@ -66,7 +67,12 @@ func newCISetImageCommand(deps Dependencies) *cobra.Command {
 			"gate checks that the token comes from the Application's own repository and\n" +
 			"a ref allowed to deploy that Environment, and commits the change itself. The\n" +
 			"gate's URL is --gate-url, or " + DeployGateURLEnvVar + ", which the generated\n" +
-			"workflow sets. No secret is needed; gh auth login is not consulted.",
+			"workflow sets. No secret is needed; gh auth login is not consulted.\n\n" +
+			"Run it in the checkout of the commit being deployed or promoted: it reads\n" +
+			"migrationCommand from " + appconfig.FileName + " there and sends it with the tag, so the\n" +
+			"gate sets the Environment's migration command in the same commit. An\n" +
+			appconfig.FileName + " without migrationCommand clears it; with no " + appconfig.FileName + " at all,\n" +
+			"the Environment's migration command is left as it is.",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.application = args[0]
@@ -100,6 +106,13 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 		return fmt.Errorf("the Deploy gate's URL %q is not an http(s) URL", gate)
 	}
 
+	// The workflow runs this in the checkout of the commit it deploys or
+	// promotes, so the migration command read here is that commit's.
+	migrationCommand, err := readMigrationCommand()
+	if err != nil {
+		return err
+	}
+
 	ctx := cmd.Context()
 	client := &http.Client{Timeout: 3 * time.Minute}
 	token, err := requestOIDCToken(ctx, client, gate)
@@ -107,22 +120,48 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 		return err
 	}
 	res, err := callDeployGate(ctx, client, gate, token, deploygate.Request{
-		Application: opts.application,
-		Environment: opts.environment,
-		Tag:         opts.tag,
+		Application:      opts.application,
+		Environment:      opts.environment,
+		Tag:              opts.tag,
+		MigrationCommand: migrationCommand,
 	}, deps.CIRetryDelay)
 	if err != nil {
 		return err
 	}
 
 	out := cmd.OutOrStdout()
+	switch {
+	case migrationCommand == nil:
+		fmt.Fprintf(out, "No %s here, so the migration command on the Platform is left as it is.\n", appconfig.FileName)
+	case *migrationCommand == "":
+		fmt.Fprintf(out, "%s sets no migration command.\n", appconfig.FileName)
+	default:
+		fmt.Fprintf(out, "Migration command from %s: %s\n", appconfig.FileName, *migrationCommand)
+	}
 	if res.Unchanged {
-		fmt.Fprintf(out, "%s %s already runs %s; nothing to deploy.\n", res.Application, res.Environment, res.Tag)
+		fmt.Fprintf(out, "%s %s already runs %s with this migration command; nothing to deploy.\n", res.Application, res.Environment, res.Tag)
 		return nil
 	}
 	fmt.Fprintf(out, "Deploy %s %s %s\n", res.Application, res.Environment, res.Tag)
+	if res.MigrationCommandChanged {
+		fmt.Fprintf(out, "The migration command changed with it.\n")
+	}
 	fmt.Fprintf(out, "\nThe Deploy gate committed %s to %s:\n  %s\n", shortCommit(res.Commit), platform.Repository, res.File)
 	return nil
+}
+
+// readMigrationCommand reads iidp.yaml in the current directory: nil when
+// there is none (the gate then leaves the Environment's command as it is),
+// "" when it sets none (the gate clears it), and the command otherwise.
+func readMigrationCommand() (*string, error) {
+	f, ok, err := appconfig.Read(".")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return &f.MigrationCommand, nil
 }
 
 // validateCIEnvironment refuses anything but the three values ci set-image

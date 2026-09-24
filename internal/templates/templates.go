@@ -16,6 +16,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/Itema-as/iidp/internal/appconfig"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 )
@@ -86,6 +87,22 @@ type Data struct {
 	// audience. Rendered in because CI cannot read the private Platform
 	// repository to find it (docs/implementation-notes/60-deploy-gate.md).
 	DeployGateURL string
+	// MigrationCommand is written into iidp.yaml (AppConfigPath): the
+	// detected or given --migration-command, or "" for none.
+	MigrationCommand string
+}
+
+// AppConfigPath is where every rendered template gets iidp.yaml, the
+// settings the deploy workflow sends the Deploy gate with each deploy
+// (internal/appconfig). Like the deploy workflow, it is the same for every
+// framework, so it is written here rather than kept in each framework's
+// directory.
+const AppConfigPath = appconfig.FileName
+
+// RenderAppConfig returns iidp.yaml's rendered bytes for data. The Adopt
+// path adds it only when the repository has none.
+func RenderAppConfig(data Data) []byte {
+	return appconfig.Render(data.MigrationCommand)
 }
 
 // Render writes framework's template into dir (which must already exist),
@@ -139,6 +156,11 @@ func Render(framework Framework, data Data, dir string) ([]string, error) {
 		return nil, err
 	}
 	written = append(written, DeployWorkflowPath)
+
+	if err := os.WriteFile(filepath.Join(dir, AppConfigPath), RenderAppConfig(data), 0o644); err != nil {
+		return nil, err
+	}
+	written = append(written, AppConfigPath)
 
 	sort.Strings(written)
 	return written, nil

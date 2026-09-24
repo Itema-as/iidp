@@ -496,6 +496,45 @@ func (c *Cluster) WaitForJobSucceeded(ctx context.Context, namespace, name strin
 		})
 }
 
+// WaitForJobRunning polls until the named Job runs command (the last
+// argument of its first container's command, the migration Job's sh -c
+// line) and has succeeded, then returns its log. A Sync hook's Job is
+// deleted and recreated on each sync, so the old run is not mistaken for
+// the new one.
+func (c *Cluster) WaitForJobRunning(ctx context.Context, namespace, name, command string, timeout time.Duration) (string, error) {
+	var last string
+	err := pollUntil(ctx, timeout, 5*time.Second,
+		func() (bool, error) {
+			out, err := c.Kubectl(ctx, "-n", namespace, "get", "job", name, "-o",
+				`jsonpath={.spec.template.spec.containers[0].command[2]}{"\n"}{.status.succeeded}{"\n"}{.status.failed}`)
+			if err != nil {
+				last = out
+				return false, nil
+			}
+			last = out
+			lines := strings.Split(out, "\n")
+			if len(lines) < 3 || lines[0] != command {
+				return false, nil
+			}
+			if strings.TrimSpace(lines[2]) != "" {
+				logs, _ := c.Kubectl(ctx, "-n", namespace, "logs", "job/"+name)
+				return false, fmt.Errorf("job %s/%s running %q failed:\n%s", namespace, name, command, logs)
+			}
+			return strings.TrimSpace(lines[1]) == "1", nil
+		},
+		func() error {
+			return fmt.Errorf("job %s/%s did not succeed running %q within %s; last seen:\n%s", namespace, name, command, timeout, last)
+		})
+	if err != nil {
+		return "", err
+	}
+	logs, err := c.Kubectl(ctx, "-n", namespace, "logs", "job/"+name)
+	if err != nil {
+		return "", fmt.Errorf("logs of job %s/%s: %w\n%s", namespace, name, err, logs)
+	}
+	return logs, nil
+}
+
 // BackupPhases returns every CloudNativePG Backup in namespace with its
 // status.phase (empty until the operator has picked it up). A namespace
 // without Backups, or one that no longer exists, yields an empty map.

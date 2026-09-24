@@ -177,7 +177,7 @@ func TestAppAdoptNeedsNoWorkflowScopeWhenTheRepositoryAlreadyHasTheWorkflow(t *t
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	assertOnlyAddedFiles(t, cloneURL, apprepo.AdoptBranch, []string{"Dockerfile", ".dockerignore"})
+	assertOnlyAddedFiles(t, cloneURL, apprepo.AdoptBranch, []string{"Dockerfile", ".dockerignore", "iidp.yaml"})
 	if len(gh.pullRequestsTo(platform.Org, "shop")) != 1 {
 		t.Errorf("pull requests opened = %d, want 1", len(gh.pullRequestsTo(platform.Org, "shop")))
 	}

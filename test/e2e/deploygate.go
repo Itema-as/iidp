@@ -278,7 +278,18 @@ func (c *Cluster) WaitForDeployGate(ctx context.Context, timeout time.Duration) 
 // host port, with Host set to the gate's, and returns the status and the
 // decoded body.
 func (c *Cluster) CallDeployGate(ctx context.Context, token, application, environment, tag string) (int, map[string]any, error) {
-	body, _ := json.Marshal(map[string]string{"application": application, "environment": environment, "tag": tag})
+	return c.CallDeployGateWithMigration(ctx, token, application, environment, tag, nil)
+}
+
+// CallDeployGateWithMigration is CallDeployGate carrying a migration
+// command, as iidp ci set-image sends it when the deployed commit has an
+// iidp.yaml; nil sends none.
+func (c *Cluster) CallDeployGateWithMigration(ctx context.Context, token, application, environment, tag string, migrationCommand *string) (int, map[string]any, error) {
+	request := map[string]string{"application": application, "environment": environment, "tag": tag}
+	if migrationCommand != nil {
+		request["migrationCommand"] = *migrationCommand
+	}
+	body, _ := json.Marshal(request)
 	status, data, err := c.requestDeployGate(ctx, http.MethodPost, "/v1/deploy", token, body)
 	if err != nil {
 		return 0, nil, err

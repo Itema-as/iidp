@@ -198,9 +198,18 @@ func TestAppCreateWizardMigrationQuestionShowsHelpTextAndDetectedSuggestion(t *t
 			t.Errorf("stdout lacks %q:\n%s", want, stdout)
 		}
 	}
+	// The accepted suggestion goes into the Application repository's
+	// iidp.yaml, and from there to the Platform with each deploy.
+	appConfig := readYAML(t, filepath.Join(cloneAppRepo(t, gh, platform.Org, "shop"), "iidp.yaml"))
+	if got := lookup(t, appConfig, "migrationCommand"); got != "npx prisma migrate deploy" {
+		t.Errorf("iidp.yaml migrationCommand = %v, want the accepted suggestion", got)
+	}
 	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
-	if got := lookup(t, values, "postgres", "migrationCommand"); got != "npx prisma migrate deploy" {
-		t.Errorf("values.yaml postgres.migrationCommand = %v, want the accepted suggestion", got)
+	if got := lookup(t, values, "postgres", "migrationCommand"); got != "" {
+		t.Errorf("values.yaml postgres.migrationCommand = %v, want it left for the Deploy gate", got)
+	}
+	if !strings.Contains(stdout, `migration command for iidp.yaml: "npx prisma migrate deploy"`) {
+		t.Errorf("the summary does not show the command going into iidp.yaml:\n%s", stdout)
 	}
 }
 

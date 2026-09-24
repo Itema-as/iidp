@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -73,22 +74,19 @@ func AddKustomizeSource(applicationYAML []byte, repoURL, path string) (out []byt
 // EnablePostgres edits an Environment's values.yaml in place to turn the
 // Postgres Capability on: postgres.enabled: true, platform.backupsBucket
 // and platform.objectStorageEndpoint from platform.yaml (the same fields
-// app create writes, docs/implementation-notes/13-cli-capabilities.md), and
-// postgres.migrationCommand when migrationCommand is not empty (an empty
-// migrationCommand leaves whatever was already there, "" on a freshly
-// created Environment, untouched). Everything else in the document --
-// comments, key order, other values, secrets -- is preserved. Callers
-// refuse the Capability when it is already enabled, so this always has
-// something to change.
-func EnablePostgres(valuesYAML []byte, migrationCommand, backupsBucket, objectStorageEndpoint string) ([]byte, error) {
+// app create writes, docs/implementation-notes/13-cli-capabilities.md).
+// postgres.migrationCommand is left as it is: the Deploy gate writes it,
+// from the Application repository's iidp.yaml, with the image it belongs
+// to (docs/implementation-notes/66-migration-command-in-repo.md).
+// Everything else in the document -- comments, key order, other values,
+// secrets -- is preserved. Callers refuse the Capability when it is already
+// enabled, so this always has something to change.
+func EnablePostgres(valuesYAML []byte, backupsBucket, objectStorageEndpoint string) ([]byte, error) {
 	root, err := decodeDocument(valuesYAML, "values.yaml")
 	if err != nil {
 		return nil, err
 	}
 	setNestedValue(root, []string{"postgres", "enabled"}, boolNode(true))
-	if migrationCommand != "" {
-		setNestedValue(root, []string{"postgres", "migrationCommand"}, scalarNode(migrationCommand))
-	}
 	setNestedValue(root, []string{"platform", "backupsBucket"}, scalarNode(backupsBucket))
 	setNestedValue(root, []string{"platform", "objectStorageEndpoint"}, scalarNode(objectStorageEndpoint))
 	return encodeDocument(root)
@@ -250,6 +248,46 @@ func SetImageTag(valuesYAML []byte, tag string) (out []byte, changed bool, err e
 		return out, true, err
 	}
 	return nil, false, fmt.Errorf("values.yaml image has no tag key")
+}
+
+// ErrNoPostgres is returned by SetMigrationCommand for a command on an
+// Environment whose postgres.enabled is not true: there is no database to
+// migrate, and the chart would refuse to render it.
+var ErrNoPostgres = errors.New("the Postgres Capability is not enabled")
+
+// SetMigrationCommand sets postgres.migrationCommand in a values.yaml
+// document to command, leaving every other key and comment untouched, and
+// reports whether it changed anything. "" clears the command (an explicit
+// "", the value app create writes). A non-empty command on an Environment
+// without postgres.enabled: true is refused with ErrNoPostgres; clearing is
+// always allowed, and is a no-op where there is nothing to clear.
+func SetMigrationCommand(valuesYAML []byte, command string) (out []byte, changed bool, err error) {
+	root, err := decodeDocument(valuesYAML, "values.yaml")
+	if err != nil {
+		return nil, false, err
+	}
+	postgres := mappingValue(root, "postgres")
+	current := ""
+	if existing := mappingValue(postgres, "migrationCommand"); existing != nil && existing.Tag != "!!null" {
+		current = existing.Value
+	}
+	if current == command {
+		return valuesYAML, false, nil
+	}
+	if command != "" {
+		if enabled := mappingValue(postgres, "enabled"); enabled == nil || enabled.Value != "true" {
+			return nil, false, ErrNoPostgres
+		}
+	}
+	// A string scalar, whatever it looks like; an empty one double-quoted,
+	// since an unstyled empty scalar would read back as null.
+	value := &yaml.Node{Kind: yaml.ScalarNode, Value: command, Tag: "!!str"}
+	if command == "" {
+		value.Style = yaml.DoubleQuotedStyle
+	}
+	setNestedValue(root, []string{"postgres", "migrationCommand"}, value)
+	out, err = encodeDocument(root)
+	return out, true, err
 }
 
 // decodeDocument parses data as a YAML document and returns its top-level

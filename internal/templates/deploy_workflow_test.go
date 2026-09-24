@@ -110,21 +110,67 @@ func TestDeployWorkflowIsRenderedForEveryFramework(t *testing.T) {
 				t.Errorf("deploy.yaml uses secrets.GITHUB_TOKEN %d times, want 4 (GHCR login and the iidp download, in each job)", n)
 			}
 
-			promote, ok := lookup(t, doc, "jobs", "promote").(map[string]any)
-			if !ok {
-				t.Fatalf("jobs.promote is missing or not a map")
-			}
-			steps, ok := promote["steps"].([]any)
-			if !ok {
-				t.Fatalf("jobs.promote.steps is missing or not a list")
-			}
-			for _, s := range steps {
-				step, _ := s.(map[string]any)
-				if uses, _ := step["uses"].(string); strings.HasPrefix(uses, "actions/checkout") {
-					t.Errorf("jobs.promote has an actions/checkout step, which retagging via imagetools needs no repository files for:\n%s", content)
+			// Both jobs run iidp ci set-image in a checkout of the commit
+			// they deploy, since it reads iidp.yaml there: promote checks
+			// out the tagged commit (the triggering ref, so no ref: of its
+			// own) before it promotes
+			// (docs/implementation-notes/66-migration-command-in-repo.md).
+			for _, job := range []string{"build", "promote"} {
+				steps, ok := lookup(t, doc, "jobs", job, "steps").([]any)
+				if !ok {
+					t.Fatalf("jobs.%s.steps is missing or not a list", job)
+				}
+				checkout, setImage := -1, -1
+				for i, s := range steps {
+					step, _ := s.(map[string]any)
+					if uses, _ := step["uses"].(string); strings.HasPrefix(uses, "actions/checkout") {
+						checkout = i
+						if with, ok := step["with"].(map[string]any); ok && with["ref"] != nil {
+							t.Errorf("jobs.%s checks out ref %v, want the triggering commit", job, with["ref"])
+						}
+					}
+					if run, _ := step["run"].(string); strings.Contains(run, "iidp ci set-image") {
+						setImage = i
+					}
+				}
+				if checkout < 0 || setImage < 0 || checkout > setImage {
+					t.Errorf("jobs.%s: checkout at step %d, iidp ci set-image at step %d; want a checkout before set-image", job, checkout, setImage)
 				}
 			}
 		})
+	}
+}
+
+func TestEveryTemplateGetsIidpYAML(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		want    string
+	}{
+		{"npx prisma migrate deploy", "\nmigrationCommand: npx prisma migrate deploy\n"},
+		{"", "\n# migrationCommand: npx prisma migrate deploy\n"},
+	} {
+		for _, fw := range []templates.Framework{templates.NextJS, templates.ViteReact, templates.Other} {
+			dir := t.TempDir()
+			files, err := templates.Render(fw, templates.Data{Name: "shop", Owner: "itema-as", IidpVersion: "0.3.1", DeployGateURL: "https://deploy.app.itma.no", MigrationCommand: tc.command}, dir)
+			if err != nil {
+				t.Fatalf("Render(%s): %v", fw, err)
+			}
+			if !contains(files, "iidp.yaml") {
+				t.Fatalf("Render(%s) did not write iidp.yaml; files: %v", fw, files)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "iidp.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), tc.want) {
+				t.Errorf("%s iidp.yaml for %q lacks %q:\n%s", fw, tc.command, tc.want, data)
+			}
+			for _, says := range []string{"before every rollout", "DATABASE_URL", "sh -c", "Postgres Capability", "Remove the line"} {
+				if !strings.Contains(string(data), says) {
+					t.Errorf("%s iidp.yaml's comment does not say %q:\n%s", fw, says, data)
+				}
+			}
+		}
 	}
 }
 

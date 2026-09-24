@@ -112,11 +112,12 @@ type Application struct {
 	ImageRepository string
 	Port            int
 	ProbePath       string
-	// Postgres and MigrationCommand are the Postgres Capability, written
-	// into every Environment. MigrationCommand is only meaningful with
-	// Postgres.
-	Postgres         bool
-	MigrationCommand string
+	// Postgres is the Postgres Capability, written into every Environment.
+	// Its migration command is not written here: every Environment starts
+	// with postgres.migrationCommand: "", and the Deploy gate sets it from
+	// the Application repository's iidp.yaml with each deploy
+	// (docs/implementation-notes/66-migration-command-in-repo.md).
+	Postgres bool
 	// Staging, when true, adds a second Environment next to prod: its own
 	// address, its own database, the same Capabilities.
 	Staging bool
@@ -434,17 +435,16 @@ func (w *Writer) writeEnvironment(dir string, cfg Config, app Application, envir
 		return nil, err
 	}
 	env := render.Environment{
-		Application:      app.Name,
-		Environment:      environment,
-		BaseDomain:       cfg.BaseDomain,
-		Kind:             app.Kind,
-		ImageRepository:  app.ImageRepository,
-		Size:             app.Size,
-		Port:             app.Port,
-		ProbePath:        app.ProbePath,
-		PostgresEnabled:  app.Postgres,
-		MigrationCommand: app.MigrationCommand,
-		Login:            app.Login,
+		Application:     app.Name,
+		Environment:     environment,
+		BaseDomain:      cfg.BaseDomain,
+		Kind:            app.Kind,
+		ImageRepository: app.ImageRepository,
+		Size:            app.Size,
+		Port:            app.Port,
+		ProbePath:       app.ProbePath,
+		PostgresEnabled: app.Postgres,
+		Login:           app.Login,
 	}
 	if app.Postgres {
 		env.BackupsBucket = cfg.BackupsBucket

@@ -28,3 +28,11 @@ from `main` or a `v*` tag, before it commits anything. The gate's address,
 Images stay private in GHCR: the workflow pushes them with its own
 `GITHUB_TOKEN`, and the Platform pulls them with its own read-only
 credential.
+
+`iidp.yaml` holds the migration command, if this Application is a Web
+service with a Postgres database (`migrationCommand: <one shell line>`).
+It runs before every rollout, in each Environment this Application deploys
+to, from the image just built, with `DATABASE_URL` set; if it fails, the
+rollout stops. `iidp ci set-image` reads it from the commit it deploys or
+promotes, so it always matches the code it migrates. Remove the line to run
+no migration. Its comments say more.

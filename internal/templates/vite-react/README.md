@@ -39,3 +39,8 @@ from `main` or a `v*` tag, before it commits anything. The gate's address,
 Images stay private in GHCR: the workflow pushes them with its own
 `GITHUB_TOKEN`, and the Platform pulls them with its own read-only
 credential.
+
+`iidp.yaml` holds the settings `iidp ci set-image` sends the Platform with
+every deploy, read from the commit it deploys. Today that is only a
+migration command, which needs a Postgres database; a Static site has none,
+so its `migrationCommand` stays commented out.
