@@ -98,7 +98,10 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 			"Every question has a flag, so the command runs in scripts. Authentication is\n" +
 			"the gh CLI's login (gh auth login); write access to the Platform repository\n" +
 			"(and, with --path create or adopt, to the Application's repository) is the\n" +
-			"authorisation.",
+			"authorisation. With --path create or adopt, the login also needs the\n" +
+			"workflow scope, because both push .github/workflows/deploy.yaml; add it\n" +
+			"with gh auth refresh -s workflow. The command checks this before it\n" +
+			"creates anything.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runAppCreate(cmd, &opts, deps)
@@ -185,6 +188,26 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		ghClient.BaseURL = deps.GitHubAPI
 	}
 
+	// Create and Adopt both push .github/workflows/deploy.yaml with this
+	// token, which GitHub refuses without the workflow scope. Create always
+	// adds it, so it refuses here, before the summary and before anything
+	// exists; Adopt adds it only when the repository has none, which is
+	// known once it is cloned, so it refuses after detection instead,
+	// still before anything is written
+	// (docs/implementation-notes/47-workflow-scope.md).
+	var scopes github.TokenScopes
+	if plan.path == pathCreate || plan.path == pathAdopt {
+		scopes, err = ghClient.TokenScopes(cmd.Context())
+		if err != nil {
+			return err
+		}
+	}
+	if plan.path == pathCreate {
+		if err := apprepo.CheckWorkflowScope(scopes); err != nil {
+			return err
+		}
+	}
+
 	ownerLogin := platform.Org
 	ownerIsOrg := true
 	switch plan.path {
@@ -236,7 +259,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			if err != nil {
 				return err
 			}
-			if err := checkAdoptPreview(preview, plan.repoOwner, plan.repoName); err != nil {
+			if err := checkAdoptPreview(preview, scopes, plan.repoOwner, plan.repoName); err != nil {
 				return err
 			}
 			summaryKind, err = apprepo.ResolveKind(plan.kind, preview.Detection)
@@ -331,6 +354,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			AppName:  plan.name,
 			Kind:     kind,
 			Postgres: plan.postgres,
+			Scopes:   scopes,
 		})
 		if err != nil {
 			return err
@@ -411,9 +435,6 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	return nil
 }
 
-// checkAdoptPreview turns an AdoptPreview's two refusal conditions into the
-// same errors Adopter.Adopt itself would return, so the interactive wizard
-// refuses before the summary rather than after a developer confirms.
 // checkPostgresKind refuses --postgres against a Static site Kind: a
 // Static site has no server to run a database against. A no-op when kind
 // is "" (Adopt, before it is resolved): the same check runs again once
@@ -426,12 +447,20 @@ func checkPostgresKind(postgres bool, kind string) error {
 	return nil
 }
 
-func checkAdoptPreview(preview apprepo.AdoptPreview, owner, name string) error {
+// checkAdoptPreview turns an AdoptPreview's refusal conditions (no push
+// access, the branch already there, and a token without the workflow scope
+// when the pull request would add the deploy workflow) into the same
+// errors Adopter.Adopt itself would return, so the interactive wizard
+// refuses before the summary rather than after a developer confirms.
+func checkAdoptPreview(preview apprepo.AdoptPreview, scopes github.TokenScopes, owner, name string) error {
 	if !preview.CanPush {
 		return fmt.Errorf("%w: you do not have write access to %s/%s; Adopt needs it to open a pull request", apprepo.ErrNoPushAccess, owner, name)
 	}
 	if preview.BranchExists {
 		return fmt.Errorf("%w: %s already exists on %s/%s; merge or delete it before adopting again", apprepo.ErrBranchExists, apprepo.AdoptBranch, owner, name)
+	}
+	if !preview.HasDeployWorkflow {
+		return apprepo.CheckWorkflowScope(scopes)
 	}
 	return nil
 }

@@ -46,7 +46,18 @@ type fakeGitHub struct {
 	bareDir           map[string]string // owner/name -> the bare repository's filesystem path
 	pulls             []fakePullRequest
 	nextPRNumber      int
+
+	// oauthScopes is the X-OAuth-Scopes header every response carries,
+	// the way GitHub reports a classic OAuth token's scopes
+	// (docs/implementation-notes/47-workflow-scope.md); omitScopes drops
+	// the header altogether, the way GitHub answers a fine-grained or
+	// GitHub App token.
+	oauthScopes string
+	omitScopes  bool
 }
+
+// gh auth login's minimum scopes, plus workflow: the fake's default token.
+const scopesWithWorkflow = "gist, read:org, repo, workflow"
 
 type fakeRequest struct {
 	Method string
@@ -79,13 +90,15 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		repoDefaultBranch:   map[string]string{},
 		canPush:             map[string]bool{},
 		bareDir:             map[string]string{},
+		oauthScopes:         scopesWithWorkflow,
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/{$}", f.handleRoot)
 	mux.HandleFunc("/user", f.handleUser)
 	mux.HandleFunc("/orgs/", f.handleOrgRepos)
 	mux.HandleFunc("/user/repos", f.handleUserRepos)
 	mux.HandleFunc("/repos/", f.handleRepo)
-	f.srv = httptest.NewServer(mux)
+	f.srv = httptest.NewServer(f.withScopes(mux))
 	t.Cleanup(f.srv.Close)
 	return f
 }
@@ -200,6 +213,43 @@ func (f *fakeGitHub) record(r *http.Request) map[string]any {
 	f.requests = append(f.requests, fakeRequest{Method: r.Method, Path: r.URL.Path, Body: body})
 	f.mu.Unlock()
 	return body
+}
+
+// setScopes makes every response report scopes (a comma-separated list, as
+// GitHub sends it) as the token's OAuth scopes.
+func (f *fakeGitHub) setScopes(scopes string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.oauthScopes, f.omitScopes = scopes, false
+}
+
+// reportNoScopes makes every response omit X-OAuth-Scopes, the way GitHub
+// answers a fine-grained personal access token or a GitHub App token.
+func (f *fakeGitHub) reportNoScopes() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.omitScopes = true
+}
+
+// withScopes adds the X-OAuth-Scopes header to every response, as GitHub
+// does for a classic token, unless reportNoScopes was called.
+func (f *fakeGitHub) withScopes(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		scopes, omit := f.oauthScopes, f.omitScopes
+		f.mu.Unlock()
+		if !omit {
+			w.Header()["X-Oauth-Scopes"] = []string{scopes}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleRoot answers GET /, the API root the CLI reads the token's scopes
+// from.
+func (f *fakeGitHub) handleRoot(w http.ResponseWriter, r *http.Request) {
+	f.record(r)
+	writeJSON(w, http.StatusOK, map[string]any{"current_user_url": f.srv.URL + "/user"})
 }
 
 func (f *fakeGitHub) handleUser(w http.ResponseWriter, r *http.Request) {

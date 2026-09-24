@@ -247,7 +247,7 @@ What guarantees the final backup now is the chart, not commit ordering. Each Env
 ## How the CLI writes
 
 1. Validates the flags (the Application name is a lowercase DNS-1035 label of at most 40 characters) before touching anything.
-2. Takes the developer's GitHub token from the `gh` CLI (`gh auth token`). Write access to the Platform repository is the authorisation; a push refused for permissions says so and names the repository.
+2. Takes the developer's GitHub token from the `gh` CLI (`gh auth token`). Write access to the Platform repository is the authorisation; a push refused for permissions says so and names the repository. With `--path create` or `--path adopt`, which also push `.github/workflows/deploy.yaml` to the Application repository, it first reads the token's scopes and refuses one without `workflow`, naming `gh auth refresh -s workflow`, before anything is created ([`docs/implementation-notes/47-workflow-scope.md`](implementation-notes/47-workflow-scope.md)).
 3. Clones `main` shallowly into a temporary directory, reads `platform.yaml`, and refuses if `applications/<name>/` already exists.
 4. Writes the Environment's files, commits them with the author from the developer's git configuration and the message `iidp app create <name>`, and pushes to `main`.
 5. If the push is rejected because `main` moved, it clones afresh and repeats once. If the Application's directory appeared in the meantime, it fails without writing; the other developer's Application wins.

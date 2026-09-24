@@ -172,6 +172,13 @@ type AdoptRequest struct {
 	// pushed — never after the pull request already exists
 	// (docs/implementation-notes/15-cli-adopt-path.md).
 	Postgres bool
+	// Scopes are the developer's token's OAuth scopes, as
+	// github.Client.TokenScopes read them. When the pull request would add
+	// the deploy workflow, Adopt refuses with CheckWorkflowScope right
+	// after detection, before anything is written or pushed; a repository
+	// that already has the workflow needs no scope. The zero value
+	// (unknown) never refuses.
+	Scopes github.TokenScopes
 }
 
 // AdoptResult is what Adopt wrote and opened.
@@ -189,7 +196,8 @@ type AdoptResult struct {
 
 // Adopt reads req.Owner/req.Name through the GitHub API, refuses without
 // push access or with AdoptBranch already present, clones the default
-// branch, detects what is missing, writes only that (a Dockerfile and
+// branch, detects what is missing (refusing a token without the workflow
+// scope when that includes the deploy workflow), writes only that (a Dockerfile and
 // .dockerignore when none exists, the deploy workflow unless one already
 // exists there — identical or not, Adopt never modifies an existing file),
 // commits as the developer, pushes AdoptBranch and opens a pull request
@@ -235,6 +243,11 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 	files := det.Files()
 	if len(files) == 0 {
 		return AdoptResult{}, fmt.Errorf("%w: %s/%s already has a Dockerfile and a deploy workflow", ErrNothingToAdd, req.Owner, req.Name)
+	}
+	if !det.HasDeployWorkflow {
+		if err := CheckWorkflowScope(req.Scopes); err != nil {
+			return AdoptResult{}, err
+		}
 	}
 
 	iidpVersion := templateIidpVersion()
