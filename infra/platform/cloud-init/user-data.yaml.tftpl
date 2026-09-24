@@ -17,10 +17,12 @@
 #
 # k3s's registries.yaml (the GHCR pull credential) is not part of that
 # script: it is a plain file below, which cloud-init writes before runcmd
-# starts the script, so it exists before k3s first starts. Adding or
-# rotating it on a running node means writing the file over ssh and
-# restarting k3s (infra/README.md, "Adding or rotating the GHCR pull
-# token").
+# starts the script, so it exists before k3s first starts. The Deploy
+# gate's copy of the same token is a Secret manifest in another plain file
+# below, which the script applies on every run. Adding or rotating the
+# token on a running node means writing both files over ssh, restarting
+# k3s and applying the Secret (infra/README.md, "Adding or rotating the
+# GHCR pull token").
 
 write_files:
   # Credentials for pulling Applications' private images from ghcr.io
@@ -33,6 +35,19 @@ write_files:
     owner: root:root
     encoding: b64
     content: ${registries_yaml_b64}
+  # The Deploy gate's copy of the same token: the manifest of Secret
+  # argocd/ghcr-pull-token (local.ghcr_pull_secret_yaml in bootstrap.tf),
+  # which iidp-bootstrap applies once the cluster is up. The gate is a pod
+  # and cannot read registries.yaml; it checks with this token that an
+  # image tag exists before committing it
+  # (docs/implementation-notes/61-image-check.md). The rotation recipe
+  # rewrites this file along with registries.yaml, so re-running
+  # iidp-bootstrap re-applies the current token, never the first boot's.
+  - path: /etc/iidp/ghcr-pull-token.yaml
+    permissions: "0600"
+    owner: root:root
+    encoding: b64
+    content: ${ghcr_pull_secret_yaml_b64}
   - path: /usr/local/sbin/iidp-bootstrap
     permissions: "0755"
     owner: root:root
@@ -185,6 +200,18 @@ write_files:
       $(printf '%s\n' "$GITHUB_APP_PRIVATE_KEY" | sed 's/^/    /')
       EOF
       unset GITHUB_APP_PRIVATE_KEY
+
+      # The Deploy gate's GHCR pull token (argocd/ghcr-pull-token), from
+      # the file cloud-init wrote next to registries.yaml. Applied on every
+      # run, server-side so that no last-applied annotation repeats the
+      # token; the file is what infra/README.md's rotation recipe keeps
+      # current. The gate does not start without the Secret.
+      if [ -f /etc/iidp/ghcr-pull-token.yaml ]; then
+        log "writing the Deploy gate's GHCR pull token"
+        kubectl apply --server-side -f /etc/iidp/ghcr-pull-token.yaml
+      else
+        log "no /etc/iidp/ghcr-pull-token.yaml: the Deploy gate will not start until it is added (infra/README.md, Adding or rotating the GHCR pull token)"
+      fi
 
       log "applying the root ArgoCD Application"
       kubectl apply -f - <<EOF

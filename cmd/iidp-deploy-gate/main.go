@@ -11,7 +11,10 @@
 //	IIDP_GATE_APP_DIR        the directory holding the GitHub App credential's
 //	                         githubAppID, githubAppInstallationID and
 //	                         githubAppPrivateKey files (required)
-//	IIDP_GATE_OIDC_ISSUER    the token issuer (default GitHub Actions')
+//	IIDP_GATE_GHCR_DIR       the directory holding the GHCR pull token's username
+//	                         and token files, which the gate checks private
+//	                         images with (required)
+//	IIDP_GATE_OIDC_ISSUER   the token issuer (default GitHub Actions')
 //	IIDP_GATE_OIDC_JWKS_URL  where the issuer's keys are (default
 //	                         <issuer>/.well-known/jwks)
 //	IIDP_GATE_PLATFORM_REPO  the Platform repository's git URL (default
@@ -36,6 +39,7 @@ import (
 	"github.com/Itema-as/iidp/internal/deploygate"
 	"github.com/Itema-as/iidp/internal/oidc"
 	"github.com/Itema-as/iidp/internal/platform"
+	"github.com/Itema-as/iidp/internal/registry"
 	"github.com/Itema-as/iidp/internal/version"
 )
 
@@ -57,8 +61,9 @@ func run(log *slog.Logger) error {
 	audience := env("IIDP_GATE_AUDIENCE", "")
 	appDir := env("IIDP_GATE_APP_DIR", "")
 	orgIDText := env("IIDP_GATE_ORG_ID", "")
+	ghcrDir := env("IIDP_GATE_GHCR_DIR", "")
 	var missing []string
-	for name, v := range map[string]string{"IIDP_GATE_AUDIENCE": audience, "IIDP_GATE_APP_DIR": appDir, "IIDP_GATE_ORG_ID": orgIDText} {
+	for name, v := range map[string]string{"IIDP_GATE_AUDIENCE": audience, "IIDP_GATE_APP_DIR": appDir, "IIDP_GATE_ORG_ID": orgIDText, "IIDP_GATE_GHCR_DIR": ghcrDir} {
 		if v == "" {
 			missing = append(missing, name)
 		}
@@ -82,9 +87,16 @@ func run(log *slog.Logger) error {
 		PlatformRepo: env("IIDP_GATE_PLATFORM_REPO", platform.RepositoryURL),
 		GitHubAPI:    env("IIDP_GATE_GITHUB_API", ""),
 		Credentials:  deploygate.CredentialsFromDir(appDir),
-		Log:          log,
+		Images: &registry.Checker{
+			CredentialHost: deploygate.GHCR,
+			Credential:     deploygate.RegistryCredentialFromDir(ghcrDir),
+		},
+		Log: log,
 	}
 	if _, err := gate.Credentials(); err != nil {
+		return err
+	}
+	if _, err := gate.Images.Credential(); err != nil {
 		return err
 	}
 

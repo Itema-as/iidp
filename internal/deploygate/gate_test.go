@@ -28,8 +28,8 @@ import (
 
 // The Deploy gate is tested through its HTTP boundary, the way CI calls
 // it, against a fake OIDC issuer serving its own key set, a fake GitHub
-// (the App's installation token and bot account) and a local bare Platform
-// repository.
+// (the App's installation token and bot account), a fake container
+// registry (image_test.go) and a local bare Platform repository.
 
 const (
 	orgID       = 1230559
@@ -210,6 +210,7 @@ type env struct {
 	t        *testing.T
 	issuer   *fakeIssuer
 	github   *fakeGitHub
+	registry *fakeRegistry
 	gate     *deploygate.Gate
 	srv      *httptest.Server
 	platform string
@@ -233,8 +234,9 @@ func newEnv(t *testing.T) *env {
 	writeFile(t, filepath.Join(appDir, "githubAppInstallationID"), fmt.Sprint(installID))
 	writeFile(t, filepath.Join(appDir, "githubAppPrivateKey"), string(keyPEM))
 
-	e := &env{t: t, issuer: issuer, github: gh, platform: newPlatformRepository(t)}
+	e := &env{t: t, issuer: issuer, github: gh, registry: newFakeRegistry(t), platform: newPlatformRepository(t)}
 	e.gate = &deploygate.Gate{
+		Images: e.registry.checker(t),
 		OIDC: &oidc.Verifier{
 			Issuer:   issuer.srv.URL,
 			JWKSURL:  issuer.srv.URL + "/.well-known/jwks",

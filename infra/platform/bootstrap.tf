@@ -24,6 +24,10 @@ locals {
     # a YAML document nested in the cloud-config YAML then needs no
     # re-indenting and no escaping.
     registries_yaml_b64 = base64encode(local.registries_yaml)
+    # The Deploy gate's copy of the same token, as a Secret manifest that
+    # cloud-init writes to a file and iidp-bootstrap applies. base64 for
+    # the same reason.
+    ghcr_pull_secret_yaml_b64 = base64encode(local.ghcr_pull_secret_yaml)
   })
 
   # /etc/rancher/k3s/registries.yaml: the credential for ghcr.io, so the
@@ -40,6 +44,31 @@ locals {
           password = var.ghcr_pull_token
         }
       }
+    }
+  })
+
+  # Secret argocd/ghcr-pull-token: the same token for the Deploy gate, a
+  # pod that cannot read the node's registries.yaml, which checks with it
+  # that an image tag exists before committing it
+  # (docs/implementation-notes/61-image-check.md). Its name and keys are a
+  # contract with bootstrap/components/deploy-gate. Also the
+  # ghcr_pull_secret_yaml output, which the rotation recipe in
+  # infra/README.md copies onto a running node, so rotating the token stays
+  # one recipe for both copies.
+  ghcr_pull_secret_yaml = yamlencode({
+    apiVersion = "v1"
+    kind       = "Secret"
+    metadata = {
+      name      = "ghcr-pull-token"
+      namespace = "argocd"
+      labels = {
+        "app.kubernetes.io/part-of" = "iidp"
+      }
+    }
+    type = "Opaque"
+    stringData = {
+      username = var.ghcr_pull_username
+      token    = var.ghcr_pull_token
     }
   })
 }

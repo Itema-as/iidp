@@ -3,9 +3,10 @@
 // iidp-deploy GitHub App's key, which never reaches CI, and makes exactly
 // one kind of change to the Platform repository: a new image tag for one
 // Environment of the Application whose own repository asked, from a ref
-// allowed to deploy that Environment
+// allowed to deploy that Environment, of a tag the image's registry has
 // (docs/adr/0005-private-application-repositories-on-github-free.md,
-// docs/implementation-notes/60-deploy-gate.md).
+// docs/implementation-notes/60-deploy-gate.md,
+// docs/implementation-notes/61-image-check.md).
 //
 // The API is one call, POST /v1/deploy, authenticated with a GitHub
 // Actions OIDC token for the gate's own URL:
@@ -41,6 +42,7 @@ import (
 	"github.com/Itema-as/iidp/internal/oidc"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
+	"github.com/Itema-as/iidp/internal/registry"
 )
 
 // DeployPath is the gate's one call.
@@ -136,6 +138,10 @@ type Gate struct {
 	GitHubAPI string
 	// Credentials yields the App's credentials for each call.
 	Credentials func() (AppCredentials, error)
+	// Images checks that a tag exists in the Environment's image
+	// repository before it is committed. Nil refuses every deploy: the
+	// gate never commits a tag unchecked.
+	Images *registry.Checker
 	// Log receives one line per call; nil discards.
 	Log *slog.Logger
 	// BeforePush, when set, runs between the commit and each push. Tests
@@ -284,7 +290,11 @@ func (g *Gate) deploy(r *http.Request) (Response, oidc.Claims, Request, error) {
 		Tag:         req.Tag,
 		Body:        body,
 		Environment: func(dir string) (string, error) {
-			return g.authorize(dir, claims, req, promote)
+			environment, err := g.authorize(dir, claims, req, promote)
+			if err != nil {
+				return "", err
+			}
+			return environment, g.checkImage(r.Context(), dir, req.Application, environment, req.Tag)
 		},
 	})
 	if err != nil {
