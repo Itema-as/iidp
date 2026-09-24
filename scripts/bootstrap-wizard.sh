@@ -226,19 +226,33 @@ mask() {
   fi
 }
 
-open_url() {
-  local url="$1"
-  printf '  %s↗ opening%s %s\n' "$GREEN" "$RESET" "$url" >&2
-  if [[ "$DRY_RUN" == "1" ]]; then
-    dry "would open a browser at the URL above"
-    return 0
-  fi
-  { if   command -v wslview     >/dev/null 2>&1; then wslview "$url"
-    elif command -v explorer.exe >/dev/null 2>&1; then explorer.exe "$url"
-    elif command -v xdg-open    >/dev/null 2>&1; then xdg-open "$url"
-    elif command -v open        >/dev/null 2>&1; then open "$url"
-    else warn "couldn't open a browser; visit it manually"; fi
-  } >/dev/null 2>&1 || warn "couldn't open a browser; visit it manually: $url"
+# print_url URL -- prints URL on a line of its own, next to the step it
+# belongs to, for the admin to open in the browser and profile of their
+# choice (a personal and an Itema login side by side, say). The wizard
+# never opens a browser or a page itself: test/wizard/run.sh fails if the
+# script calls a browser opener anywhere.
+print_url() {
+  printf '  %s↗%s %s%s%s\n' "$GREEN" "$RESET" "$BOLD" "$1" "$RESET" >&2
+}
+
+# expand_home PATH -- PATH with a leading ~ or ~/ replaced by $HOME. A
+# prompt's answer is a literal string, so without this ~/Downloads/key.pem
+# is looked up as a directory named "~" and fails with "no such file".
+# ~user forms are left as they are: they would need eval on the answer.
+expand_home() {
+  local p="$1"
+  case "$p" in
+    \~)   printf '%s' "$HOME" ;;
+    \~/*) printf '%s/%s' "$HOME" "${p#\~/}" ;;
+    *)    printf '%s' "$p" ;;
+  esac
+}
+
+# ask_path VAR "prompt" ["default"] -- ask, for an answer that is a path.
+ask_path() {
+  ask "$@"
+  local -n __path_var="$1"
+  __path_var=$(expand_home "$__path_var")
 }
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -741,7 +755,7 @@ stage_hetzner() {
   if [[ -n "$existing_token" ]]; then
     note "existing Hetzner API token found in $PLATFORM_TFVARS: $(mask "$existing_token")"
   fi
-  open_url "https://console.hetzner.cloud/"
+  print_url "https://console.hetzner.cloud/"
   step "Open the Platform's project > Security > API tokens > Generate API token (read & write)."
   ask_secret HCLOUD_TOKEN "Paste the Hetzner API token:" "$existing_token"
 
@@ -790,7 +804,7 @@ stage_hetzner() {
   if [[ -n "$existing_ssh" ]]; then
     note "existing SSH public key found in $PLATFORM_TFVARS"
   fi
-  ask SSH_PUBLIC_KEY_PATH "Path to your SSH public key (goes on the node):" "${SSH_PUBLIC_KEY_PATH:-$HOME/.ssh/id_ed25519.pub}"
+  ask_path SSH_PUBLIC_KEY_PATH "Path to your SSH public key (goes on the node):" "${SSH_PUBLIC_KEY_PATH:-$HOME/.ssh/id_ed25519.pub}"
   local ssh_pub_content="$existing_ssh"
   if [[ "$DRY_RUN" != "1" && "${IIDP_WIZARD_FAKE:-0}" != "1" ]]; then
     [[ -f "$SSH_PUBLIC_KEY_PATH" ]] || die "no such file: $SSH_PUBLIC_KEY_PATH"
@@ -832,7 +846,7 @@ stage_cloudflare() {
 
   say "external-dns and cert-manager both need a Cloudflare API token scoped to"
   say "the zone (Zone:DNS:Edit is enough; Zone:Zone:Read to list it)."
-  open_url "https://dash.cloudflare.com/profile/api-tokens"
+  print_url "https://dash.cloudflare.com/profile/api-tokens"
   step "Create Token > Edit zone DNS template, scoped to $CLOUDFLARE_ZONE."
   ask_secret CLOUDFLARE_TOKEN "Paste the Cloudflare API token:"
 
@@ -866,7 +880,7 @@ stage_grafana() {
   fi
 
   say "Alloy on the node ships logs and metrics to Grafana Cloud's free tier."
-  open_url "https://grafana.com/orgs"
+  print_url "https://grafana.com/orgs"
   step "Open your stack > Details, and the connection instructions for Prometheus and Loki."
   ask GRAFANA_PROM_URL "Prometheus remote_write URL:"
   ask GRAFANA_PROM_USER "Prometheus username (instance id):"
@@ -881,12 +895,6 @@ stage_grafana() {
 # ──────────────────────────────────────────────────────────────────────────
 
 GITHUB_APP_ID="" GITHUB_APP_INSTALLATION_ID="" GITHUB_ORG="" PEM_PATH=""
-
-html_escape() {
-  local s="$1"
-  s="${s//&/&amp;}"; s="${s//\'/\&#39;}"; s="${s//\"/\&quot;}"; s="${s//</\&lt;}"; s="${s//>/\&gt;}"
-  printf '%s' "$s"
-}
 
 # yaml_str VALUE -- VALUE as a single-quoted YAML scalar, the only escape
 # being a doubled single quote. Every stringData value goes through this:
@@ -960,7 +968,7 @@ stage_github_app() {
 
     say "ArgoCD also needs this App's private key, to read the Platform repository."
     say "(No PEM found in $tfvars -- either this is its first run since #41, or the key was never saved there.)"
-    ask PEM_PATH "Path to the App's downloaded private key .pem file:"
+    ask_path PEM_PATH "Path to the App's downloaded private key .pem file:"
     require_pem_file PEM_PATH
     tfvars_write_github_app "$tfvars" "$GITHUB_APP_ID" "$GITHUB_APP_INSTALLATION_ID" "$PEM_PATH"
     return 0
@@ -971,35 +979,28 @@ stage_github_app() {
   GITHUB_ORG=$(github_owner_of "$origin"); GITHUB_ORG="${GITHUB_ORG%%/*}"
   ask GITHUB_ORG "GitHub org to create the App under:" "$GITHUB_ORG"
 
-  say "The REST API cannot create a GitHub App directly; only the manifest flow"
-  say "can. This opens a page that submits a prepared manifest to GitHub."
-  local manifest state tmp_dir tmp_html
-  state=$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')
-  manifest=$(jq -nc --arg name "iidp-deploy" --arg url "$(strip_git_suffix "$(normalize_git_url "$origin")")" \
-    '{name: $name, url: $url, public: false, default_events: [], default_permissions: {contents: "write"}, hook_attributes: {active: false}}')
+  # Created by hand from printed steps: the REST API cannot create a GitHub
+  # App, and the manifest flow only works as a browser form POST, which the
+  # wizard no longer opens (docs/implementation-notes/47-wizard-prompts.md).
+  local platform_repo_url platform_repo_name
+  platform_repo_url=$(strip_git_suffix "$(normalize_git_url "$origin")")
+  platform_repo_name=$(github_owner_of "$origin"); platform_repo_name="${platform_repo_name#*/}"
 
-  if [[ "$DRY_RUN" == "1" ]]; then
-    dry "would open a self-submitting form posting this manifest to https://github.com/organizations/${GITHUB_ORG}/settings/apps/new?state=${state}:"
-    dry "  $manifest"
-  else
-    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/iidp-wizard-app.XXXXXX")
-    tmp_html="$tmp_dir/github-app-manifest.html"
-    cat > "$tmp_html" <<EOF
-<!doctype html><html><body onload="document.forms[0].submit()">
-<form action="https://github.com/organizations/${GITHUB_ORG}/settings/apps/new?state=${state}" method="post">
-<input type="hidden" name="manifest" value='$(html_escape "$manifest")'>
-<noscript><button type="submit">Create the iidp-deploy GitHub App</button></noscript>
-</form>
-</body></html>
-EOF
-    open_url "file://$tmp_html"
-  fi
-
-  step "Confirm creating the App. GitHub shows its settings page with the App ID."
-  ask GITHUB_APP_ID "App id shown on the settings page:"
-  step "Click 'Generate a private key' and save the downloaded .pem file somewhere safe."
-  ask PEM_PATH "Path to the downloaded private key .pem file:"
-  step "In the left sidebar, 'Install App', install it on ${GITHUB_ORG}. The resulting URL ends in /installations/<id>."
+  say "Create the App by hand in ${GITHUB_ORG}'s settings:"
+  print_url "https://github.com/organizations/${GITHUB_ORG}/settings/apps/new"
+  step "GitHub App name: iidp-deploy"
+  step "Homepage URL: ${platform_repo_url}"
+  step "Webhook: untick Active"
+  step "Repository permissions > Contents: Read and write (leave everything else at No access)"
+  step "Where can this GitHub App be installed? Only on this account"
+  step "Create GitHub App. The App's settings page shows its App ID."
+  ask GITHUB_APP_ID "App ID shown on the settings page:"
+  step "On the same page, Private keys > Generate a private key. The .pem file downloads."
+  ask_path PEM_PATH "Path to the downloaded private key .pem file:"
+  step "Install it on the Platform repository only, from Install App in the App's left sidebar:"
+  print_url "https://github.com/organizations/${GITHUB_ORG}/settings/apps/iidp-deploy/installations"
+  step "Install next to ${GITHUB_ORG} > Only select repositories > ${platform_repo_name} > Install."
+  step "The page GitHub lands on ends in /installations/<id>."
   ask GITHUB_APP_INSTALLATION_ID "Installation id from that URL:"
 
   require_pem_file PEM_PATH
@@ -1021,7 +1022,7 @@ ENTRA_OAUTH2_PROXY_COOKIE_SECRET=""
 ARGOCD_URL="" ARGOCD_ADMIN_GROUP=""
 OAUTH2_PROXY_HOST=""
 
-# entra_register_app NAME REDIRECT_URI DEFAULT_TENANT OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET OPEN_URL
+# entra_register_app NAME REDIRECT_URI DEFAULT_TENANT OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET
 # Creates the app registration via az_create_entra_app when az is available
 # and logged in, otherwise prints what to create by hand and asks for the
 # three resulting values. OUT_* are namerefs (bash >= 4.3), same convention
@@ -1030,7 +1031,6 @@ entra_register_app() {
   local name="$1" redirect_uri="$2" default_tenant="$3"
   # shellcheck disable=SC2034  # namerefs: written here, read through the caller's own variable names
   local -n reg_tenant="$4" reg_client_id="$5" reg_client_secret="$6"
-  local do_open_url="$7"
 
   if az_available; then
     say "az is logged in: creating the $name app registration automatically."
@@ -1039,11 +1039,11 @@ entra_register_app() {
   else
     say "az is not available or not logged in with rights to register apps."
     say "In Entra ID > App registrations > New registration, create:"
+    print_url "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
     note "  name: $name"
     note "  redirect URI (Web): ${redirect_uri}"
     note "  API permissions (delegated, admin consent): User.Read, GroupMember.Read.All"
     note "  Certificates & secrets: new client secret"
-    [[ "$do_open_url" == "1" ]] && open_url "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
     ask reg_tenant "Tenant id:" "$default_tenant"
     ask reg_client_id "Client id:"
     ask_secret reg_client_secret "Client secret:"
@@ -1070,7 +1070,7 @@ stage_entra() {
 
   if [[ "$skip_argocd_app" != "1" ]]; then
     entra_register_app "iidp-argocd" "$argocd_redirect" "" \
-      ENTRA_ARGOCD_TENANT ENTRA_ARGOCD_CLIENT_ID ENTRA_ARGOCD_CLIENT_SECRET 1
+      ENTRA_ARGOCD_TENANT ENTRA_ARGOCD_CLIENT_ID ENTRA_ARGOCD_CLIENT_SECRET
   fi
 
   local sops_oauth2_entra="$PLATFORM_REPO/bootstrap/sops/oauth2-proxy-entra.enc.yaml"
@@ -1081,7 +1081,7 @@ stage_entra() {
 
   say "oauth2-proxy (Itema login) needs its own registration."
   entra_register_app "iidp-oauth2-proxy" "$oauth2_proxy_redirect" "$ENTRA_ARGOCD_TENANT" \
-    ENTRA_OAUTH2_PROXY_TENANT ENTRA_OAUTH2_PROXY_CLIENT_ID ENTRA_OAUTH2_PROXY_CLIENT_SECRET 0
+    ENTRA_OAUTH2_PROXY_TENANT ENTRA_OAUTH2_PROXY_CLIENT_ID ENTRA_OAUTH2_PROXY_CLIENT_SECRET
 
   # The cookie-signing secret oauth2-proxy needs: exactly 32 bytes, as a
   # plain string, not base64-encoded. Confirmed against the running proxy

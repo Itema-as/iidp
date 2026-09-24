@@ -10,6 +10,8 @@ Questions that came up while building `scripts/bootstrap-wizard.sh`, the options
 
 ## GitHub App: who calls the manifest-conversion endpoint?
 
+**Superseded by #47.** GitHub rejected this manifest on the real Platform, and the wizard no longer opens pages. The App is now created from printed manual steps, see [`47-wizard-prompts.md`](47-wizard-prompts.md). The section below records the original choice.
+
 **Question.** The REST API cannot create a GitHub App directly; the manifest flow can, by POSTing a manifest to a GitHub page, which redirects back with a temporary `code`, which is then exchanged at `POST /app-manifests/{code}/conversions` for the app id, PEM and webhook secret (checked against the current GitHub REST API docs via context7). Does the wizard perform that exchange itself?
 
 **Options.**
