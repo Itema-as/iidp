@@ -2,15 +2,25 @@ name: e2e
 
 # The kind end-to-end test: bootstraps the Platform components from a
 # fixture Platform repository on a kind cluster (test/e2e). Runs only when
-# the bootstrap, the chart or the harness change, and on every release tag.
-# The paths filter does not apply to tag pushes, which is what makes tags
-# always run it.
+# the bootstrap, the chart, the harness or the Deploy gate change, and on
+# every release tag. The paths filter does not apply to tag pushes, which is
+# what makes tags always run it. The Deploy gate's paths are its own code,
+# which the harness builds from source, and the packages it writes the
+# Platform repository with.
 on:
   pull_request:
     paths:
       - "bootstrap/**"
       - "chart/**"
       - "test/e2e/**"
+      - "cmd/iidp-deploy-gate/**"
+      - "internal/deploygate/**"
+      - "internal/oidc/**"
+      - "internal/platformrepo/**"
+      - "internal/render/**"
+      - "internal/git/**"
+      - "internal/github/**"
+      - "internal/githubapp/**"
       - ".github/workflows/e2e.yaml"
   push:
     branches: [main]
@@ -19,6 +29,14 @@ on:
       - "bootstrap/**"
       - "chart/**"
       - "test/e2e/**"
+      - "cmd/iidp-deploy-gate/**"
+      - "internal/deploygate/**"
+      - "internal/oidc/**"
+      - "internal/platformrepo/**"
+      - "internal/render/**"
+      - "internal/git/**"
+      - "internal/github/**"
+      - "internal/githubapp/**"
       - ".github/workflows/e2e.yaml"
 
 permissions:
@@ -43,6 +61,7 @@ jobs:
       - run: |
           helm lint --strict bootstrap --values test/e2e/fixtures/platform-repo/platform.yaml
           helm lint --strict bootstrap/components/tls
+          helm lint --strict bootstrap/components/deploy-gate --set bootstrapRevision=v0.0.0
       # The render tests skip without helm (the Go job of ci.yaml has none);
       # here a missing helm must fail.
       - name: go test ./bootstrap
