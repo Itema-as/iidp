@@ -112,6 +112,9 @@ jobs:
             echo "GET / on the ${{ matrix.framework }} template returned $status, want 200"
             exit 1
           fi
+      - name: npx and the npm cache work as the runtime user
+        if: matrix.framework == 'nextjs'
+        run: docker run --rm iidp-template-nextjs sh -c 'npx --version && npm cache verify'
 
   release-config:
     name: GoReleaser check
