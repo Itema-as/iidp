@@ -24,7 +24,8 @@ on:
       - ".github/workflows/e2e.yaml"
   push:
     branches: [main]
-    tags: ["v*"]
+    # Release tags only, not the moving major tag (v0) the release moves.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
     paths:
       - "bootstrap/**"
       - "chart/**"

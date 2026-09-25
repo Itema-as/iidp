@@ -55,9 +55,9 @@ type Result struct {
 	// Files are the rendered template's files, relative to the repository
 	// root, in the order they were written.
 	Files []string
-	// IidpVersion is the iidp release .github/workflows/deploy.yaml was
-	// pinned to: internal/version.Version, or "latest" for a dev build.
-	IidpVersion string
+	// DeployWorkflowRef is the reusable workflow, at its major tag, that
+	// .github/workflows/deploy.yaml calls.
+	DeployWorkflowRef string
 	// Binding is the new repository's ids, as GitHub reported them on
 	// creation, for the Platform repository to bind the Application to.
 	Binding platformrepo.RepositoryBinding
@@ -89,13 +89,12 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 		return Result{}, err
 	}
 	defer os.RemoveAll(dir)
-	iidpVersion := templateIidpVersion()
+	workflowRef := DeployWorkflowRef()
 	files, err := templates.Render(app.Framework, templates.Data{
-		Name:             app.Name,
-		Owner:            strings.ToLower(owner),
-		IidpVersion:      iidpVersion,
-		DeployGateURL:    app.DeployGateURL,
-		MigrationCommand: app.MigrationCommand,
+		Name:              app.Name,
+		DeployWorkflowRef: workflowRef,
+		DeployGateURL:     app.DeployGateURL,
+		MigrationCommand:  app.MigrationCommand,
 	}, dir)
 	if err != nil {
 		return Result{}, err
@@ -106,7 +105,7 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	res := Result{URL: url, CloneURL: created.CloneURL, Files: files, IidpVersion: iidpVersion}
+	res := Result{URL: url, CloneURL: created.CloneURL, Files: files, DeployWorkflowRef: workflowRef}
 	res.Binding, err = Binding(owner+"/"+app.Name, created.ID, created.Owner)
 	if err != nil {
 		return res, err
@@ -133,13 +132,19 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 	return res, nil
 }
 
-// templateIidpVersion is the iidp release .github/workflows/deploy.yaml
-// pins its install step to: the version of the running binary, or "latest"
-// for a dev build ("dev", internal/version's zero value), since there is
-// no released archive matching a dev build to pin to.
-func templateIidpVersion() string {
-	if version.Version == "dev" {
-		return "latest"
+// DeployWorkflowRef is the reusable deploy workflow at the major tag of the
+// running binary's version, for example
+// Itema-as/iidp/.github/workflows/application-deploy.yaml@v0. Callers get
+// every release in that major version with no edit. A dev build, or any
+// version that isn't vX.Y.Z-shaped, gets @v0, the first major.
+func DeployWorkflowRef() string {
+	return platform.DeployWorkflow + "@" + majorTag(version.Version)
+}
+
+func majorTag(v string) string {
+	major, _, ok := strings.Cut(strings.TrimPrefix(v, "v"), ".")
+	if !ok || major == "" || strings.Trim(major, "0123456789") != "" {
+		return "v0"
 	}
-	return version.Version
+	return "v" + major
 }

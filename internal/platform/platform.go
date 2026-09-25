@@ -30,7 +30,12 @@ const (
 	RepositoryURL = "https://github.com/" + Repository + ".git"
 
 	// CLIRepository is this repository itself, as "owner/name": where the
-	// generated deploy workflow downloads iidp release archives from
+	// deploy workflow downloads iidp release archives from
 	// (docs/implementation-notes/12-deploy-workflow.md).
 	CLIRepository = Org + "/iidp"
+
+	// DeployWorkflow is the reusable workflow every Application
+	// repository's .github/workflows/deploy.yaml calls, without a ref
+	// (docs/implementation-notes/74-reusable-deploy-workflow.md).
+	DeployWorkflow = CLIRepository + "/.github/workflows/application-deploy.yaml"
 )

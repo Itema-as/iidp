@@ -1,0 +1,188 @@
+# The deploy workflow every Application repository calls. Its own
+# .github/workflows/deploy.yaml is a short caller that `iidp app create`
+# writes (internal/templates/deploy-workflow.yaml), holding only the
+# triggers, the permissions and the two inputs below; everything else
+# lives here, once (docs/implementation-notes/74-reusable-deploy-workflow.md).
+#
+# On push to main: builds the image with buildx and pushes it to GHCR
+# tagged with the commit SHA, then runs `iidp ci set-image` to deploy it:
+# to staging when the Application has one, to prod otherwise. The Platform
+# decides that, not this workflow.
+#
+# On a v* tag: retags the already-built SHA image with the tag's version,
+# with no rebuild, and runs `iidp ci set-image` to promote it to prod.
+#
+# Both jobs run `iidp ci set-image` in a checkout of the commit they deploy
+# (the pushed commit, or the tagged one), because it reads iidp.yaml there
+# and sends its migrationCommand with the image: each Environment always
+# runs the migration command of the code it runs. In a called workflow the
+# github context is the caller's, so actions/checkout checks out the
+# Application repository at the triggering ref.
+#
+# `iidp ci set-image` asks the Platform's Deploy gate to make the change.
+# It authenticates with the job's GitHub Actions OIDC token, so no secret
+# is stored in any Application repository; the gate checks that the token
+# comes from the Application's own repository and from main or a v* tag.
+# Those claims are the caller's in a called workflow too. The caller must
+# grant id-token: write, because a called workflow can only keep or
+# reduce the permissions it is given.
+#
+# Callers reference a major tag (@v0). Every iidp release moves that tag
+# forward (.github/workflows/release.yaml), so a release reaches every
+# Application with no edit to its repository. What counts as breaking for
+# callers, and so needs a new major: removing or renaming an input, adding
+# a required one, needing a permission the caller doesn't grant today, or
+# needing a different trigger.
+name: Application deploy
+
+on:
+  workflow_call:
+    inputs:
+      application:
+        description: The Application's name on the Platform, as `iidp app create` named it.
+        type: string
+        required: true
+      deploy-gate-url:
+        description: The Platform's Deploy gate, https://deploy.<baseDomain>. Also the audience of the OIDC token.
+        type: string
+        required: true
+
+env:
+  IIDP_DEPLOY_GATE_URL: ${{ inputs.deploy-gate-url }}
+
+jobs:
+  build:
+    name: Build, push and deploy
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Image name
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+          APPLICATION: ${{ inputs.application }}
+        # GHCR names are lowercase; the Platform's values.yaml has
+        # ghcr.io/<owner, lowercased>/<application>.
+        run: echo "name=ghcr.io/${OWNER,,}/${APPLICATION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image.outputs.name }}:${{ github.sha }}
+
+      - name: Install iidp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          # The iidp release this workflow file belongs to: the release tag
+          # pointing at the commit the caller's @v0 resolved to
+          # (job.workflow_sha), so the workflow and the CLI never drift.
+          # Peeled lines (^{}) give an annotated tag's commit.
+          tag="$(git ls-remote --tags https://github.com/Itema-as/iidp.git \
+            | awk -v sha="${WORKFLOW_SHA}" '$1 == sha { ref = $2; sub(/^refs\/tags\//, "", ref); sub(/\^\{\}$/, "", ref); print ref }' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          if [ -z "${tag}" ]; then
+            echo "::error::This workflow ran at iidp commit ${WORKFLOW_SHA:-(unknown)}, which no iidp release points at. Call it at the major tag (@v0) or a release tag (@vX.Y.Z)."
+            exit 1
+          fi
+          echo "Installing iidp ${tag}"
+          dir="$(mktemp -d)"
+          gh release download "${tag}" --repo Itema-as/iidp --pattern 'iidp_*_linux_amd64.tar.gz' --dir "${dir}"
+          tar -xzf "${dir}"/iidp_*_linux_amd64.tar.gz -C "${dir}"
+          sudo install -m 0755 "${dir}/iidp" /usr/local/bin/iidp
+          iidp version
+
+      - name: Deploy through the Deploy gate
+        env:
+          APPLICATION: ${{ inputs.application }}
+        run: iidp ci set-image "${APPLICATION}" auto "${GITHUB_SHA}"
+
+  promote:
+    name: Promote to prod
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      # The tagged commit, for its iidp.yaml: prod gets the migration
+      # command that belongs to the code it gets, even when an older tag
+      # is promoted.
+      - name: Checkout the tagged commit
+        uses: actions/checkout@v7
+
+      - name: Image name
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+          APPLICATION: ${{ inputs.application }}
+        run: echo "name=ghcr.io/${OWNER,,}/${APPLICATION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag the SHA image as the version, without rebuilding
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          docker buildx imagetools create --tag "${IMAGE}:${version}" "${IMAGE}:${GITHUB_SHA}"
+
+      - name: Install iidp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          # The iidp release this workflow file belongs to: the release tag
+          # pointing at the commit the caller's @v0 resolved to
+          # (job.workflow_sha), so the workflow and the CLI never drift.
+          # Peeled lines (^{}) give an annotated tag's commit.
+          tag="$(git ls-remote --tags https://github.com/Itema-as/iidp.git \
+            | awk -v sha="${WORKFLOW_SHA}" '$1 == sha { ref = $2; sub(/^refs\/tags\//, "", ref); sub(/\^\{\}$/, "", ref); print ref }' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          if [ -z "${tag}" ]; then
+            echo "::error::This workflow ran at iidp commit ${WORKFLOW_SHA:-(unknown)}, which no iidp release points at. Call it at the major tag (@v0) or a release tag (@vX.Y.Z)."
+            exit 1
+          fi
+          echo "Installing iidp ${tag}"
+          dir="$(mktemp -d)"
+          gh release download "${tag}" --repo Itema-as/iidp --pattern 'iidp_*_linux_amd64.tar.gz' --dir "${dir}"
+          tar -xzf "${dir}"/iidp_*_linux_amd64.tar.gz -C "${dir}"
+          sudo install -m 0755 "${dir}/iidp" /usr/local/bin/iidp
+          iidp version
+
+      - name: Promote through the Deploy gate
+        env:
+          APPLICATION: ${{ inputs.application }}
+        run: iidp ci set-image "${APPLICATION}" prod "${GITHUB_REF_NAME#v}"

@@ -70,17 +70,12 @@ type Data struct {
 	// Name is the Application's name: used as the package.json name and in
 	// the README, wherever the template says what it generated.
 	Name string
-	// Owner is the lowercased GitHub login the Application repository is
-	// created under: the deploy workflow template pushes to
-	// ghcr.io/<Owner>/<Name>, matching the image repository iidp writes to
-	// the Platform repository
-	// (docs/implementation-notes/11-cli-create-path.md, "Image repository").
-	Owner string
-	// IidpVersion is the iidp release .github/workflows/deploy.yaml pins
-	// its own install step to: the version of the iidp binary that
-	// rendered the template (internal/version), or "latest" for a dev
-	// build ("dev").
-	IidpVersion string
+	// DeployWorkflowRef is what .github/workflows/deploy.yaml calls:
+	// platform.DeployWorkflow at the major tag of the iidp binary that
+	// rendered it, for example
+	// Itema-as/iidp/.github/workflows/application-deploy.yaml@v0
+	// (docs/implementation-notes/74-reusable-deploy-workflow.md).
+	DeployWorkflowRef string
 	// DeployGateURL is the Platform's Deploy gate,
 	// https://deploy.<baseDomain> (platformrepo.Config.DeployGateURL): the
 	// deploy workflow calls it, and asks for OIDC tokens with it as the
@@ -228,9 +223,8 @@ func renderFile(name string, content []byte, data Data) ([]byte, error) {
 func renderWorkflow(content []byte, data Data) []byte {
 	r := strings.NewReplacer(
 		"__IIDP_APP_NAME__", data.Name,
-		"__IIDP_OWNER__", data.Owner,
-		"__IIDP_VERSION__", data.IidpVersion,
-		"__IIDP_CLI_REPO__", platform.CLIRepository,
+		"__IIDP_DEPLOY_WORKFLOW_REF__", data.DeployWorkflowRef,
+		"__IIDP_DEPLOY_WORKFLOW__", platform.DeployWorkflow,
 		"__IIDP_DEPLOY_GATE_URL__", data.DeployGateURL,
 	)
 	return []byte(r.Replace(string(content)))
