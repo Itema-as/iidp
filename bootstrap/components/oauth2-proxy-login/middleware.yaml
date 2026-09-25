@@ -1,7 +1,7 @@
-# The Itema login Capability's Traefik middlewares. The chart annotates a
+# The Itema login Capability's Traefik middleware. The chart annotates a
 # Platform-address Ingress with traefik.ingress.kubernetes.io/router.middlewares
-# naming them (chart/application/templates/ingress.yaml); their names and
-# this namespace must match exactly.
+# naming it (chart/application/templates/ingress.yaml); its name and this
+# namespace must match exactly.
 #
 # itema-login-auth is the documented "ForwardAuth with Static Upstreams"
 # shape (oauth2-proxy's "Configuration > Integrations > Traefik"): every
@@ -21,7 +21,8 @@
 # header carrying the signed-in user's email address.
 #
 # docs/implementation-notes/77-login-redirect.md has why this replaced the
-# /oauth2/auth plus errors-middleware shape.
+# /oauth2/auth plus errors-middleware shape, and when the errors
+# middleware was removed.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -36,27 +37,3 @@ spec:
       - X-Auth-Request-Email
       - X-Auth-Request-Preferred-Username
       - X-Auth-Request-Groups
----
-# Only for Environments pinned to application chart 0.2.0 or older, whose
-# Ingress names this middleware in front of itema-login-auth. The chart no
-# longer does. itema-login-auth now answers a browser with a 302 this does
-# not catch, so for those Environments it only still replaces the 401 a
-# JSON-only request gets with /oauth2/sign_in, as before. Delete it once no
-# Environment in the Platform repository pins a chart older than the one
-# that dropped it.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: itema-login-errors
-  namespace: oauth2-proxy
-spec:
-  errors:
-    status:
-      - "401-403"
-    query: /oauth2/sign_in?rd={url}
-    service:
-      name: oauth2-proxy
-      port: 80
-    statusRewrites:
-      "401": 302
-      "403": 302
