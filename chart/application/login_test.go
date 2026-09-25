@@ -1,9 +1,15 @@
 package application_test
 
 import (
+	"bytes"
+	"errors"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // The Itema login Capability: the Platform address's Ingress gets the
@@ -13,13 +19,40 @@ import (
 // custom domain: the oauth2-proxy cookie is scoped to the Platform base
 // domain, so Itema login only makes sense on Platform addresses.
 
-const loginMiddlewareAnnotation = "oauth2-proxy-itema-login-errors@kubernetescrd,oauth2-proxy-itema-login-auth@kubernetescrd"
+const loginMiddlewareAnnotation = "oauth2-proxy-itema-login-auth@kubernetescrd"
 
 func TestLoginAddsTheForwardAuthMiddlewareAnnotation(t *testing.T) {
 	ing := mustObject(t, render(t, "login-enabled.yaml"), "Ingress/shop")
 	annotations := get[map[string]any](t, ing, "metadata", "annotations")
 	if got := annotations["traefik.ingress.kubernetes.io/router.middlewares"]; got != loginMiddlewareAnnotation {
 		t.Errorf("router.middlewares = %v, want %s", got, loginMiddlewareAnnotation)
+	}
+}
+
+// Every middleware the annotation names is one the bootstrap defines in
+// the oauth2-proxy namespace. Traefik refuses a router whose middleware
+// does not exist, so a name out of step with the bootstrap would take the
+// Application off the air rather than leave it unprotected.
+func TestLoginMiddlewaresExistInTheBootstrap(t *testing.T) {
+	data, err := os.ReadFile("../../bootstrap/components/oauth2-proxy-login/middleware.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defined := map[string]bool{}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var obj object
+		if err := dec.Decode(&obj); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		defined[get[string](t, obj, "metadata", "namespace")+"-"+get[string](t, obj, "metadata", "name")+"@kubernetescrd"] = true
+	}
+	for _, name := range strings.Split(loginMiddlewareAnnotation, ",") {
+		if !defined[name] {
+			t.Errorf("the annotation names %s, which bootstrap/components/oauth2-proxy-login/middleware.yaml does not define", name)
+		}
 	}
 }
 

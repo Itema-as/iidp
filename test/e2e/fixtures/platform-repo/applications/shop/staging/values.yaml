@@ -37,7 +37,7 @@ postgres:
   finalBackupTimeout: 120
 # The Itema login Capability, on staging only: TestBootstrap proves an
 # unauthenticated request to a protected Platform address gets redirected
-# towards oauth2-proxy while the unprotected prod address still answers 200
+# to the provider's sign-in while the unprotected prod address still answers 200
 # (docs/implementation-notes/18-itema-login.md), reusing this Environment
 # rather than adding a third Application.
 login:

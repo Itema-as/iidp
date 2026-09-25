@@ -442,9 +442,12 @@ func testUnreleasedEnvironments(ctx context.Context, t *testing.T, cluster *Clus
 // Environment and Postgres enabled, deployed through the real bootstrap and
 // chart, its migration run, and an HTTP request through Traefik answered
 // with 200 for both hosts. staging also has the Itema login Capability on
-// (docs/implementation-notes/18-itema-login.md), so its host is asserted to
-// redirect an unauthenticated request instead, while prod, unprotected,
-// still answers 200.
+// (docs/implementation-notes/18-itema-login.md), so an unauthenticated
+// request to its host is asserted to be redirected straight to the
+// provider's sign-in, carrying the URL to come back to, while prod,
+// unprotected, still answers 200. The same holds for an Ingress naming the
+// middlewares the way application chart 0.2.0 and older do
+// (docs/implementation-notes/77-login-redirect.md).
 func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 	want := map[string]Expectation{
@@ -467,7 +470,7 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 			t.Fatal(err)
 		}
 		if env.protected {
-			if err := cluster.CheckRedirect(ctx, env.host, 2*time.Minute); err != nil {
+			if err := cluster.CheckSignInRedirect(ctx, env.host, signInPath, fixtureSignIn, 2*time.Minute); err != nil {
 				t.Fatal(err)
 			}
 			continue
@@ -476,7 +479,63 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 			t.Fatal(err)
 		}
 	}
+
+	if err := cluster.Apply(ctx, legacyLoginIngress); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.CheckSignInRedirect(ctx, "shop-legacy-login.app.example.test", signInPath, fixtureSignIn, 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := cluster.Kubectl(ctx, "-n", "shop-staging", "delete", "ingress", "shop-legacy-login"); err != nil {
+		t.Fatalf("delete ingress shop-legacy-login: %v\n%s", err, out)
+	}
 }
+
+// signInPath is a path with a query, so the sign-in check proves both
+// survive the round trip through the provider.
+const signInPath = "/account/orders?page=2&sort=date"
+
+// fixtureSignIn is the sign-in redirect the fixture Platform gives: its
+// oauth2-proxy skips OIDC discovery and uses a fixed, never-reached
+// authorize endpoint (bootstrap/templates/oauth2-proxy.yaml, platform.yaml's
+// oauth2Proxy.skipOIDCDiscovery).
+var fixtureSignIn = SignIn{
+	LoginURL:     "https://oauth2-proxy-entra.invalid/authorize",
+	Callback:     "https://auth.app.example.test/oauth2/callback",
+	CookieDomain: "app.example.test",
+}
+
+// legacyLoginIngress routes a host to shop-staging's Service with the
+// router.middlewares annotation application chart 0.2.0 and older render
+// for login.enabled: the errors middleware in front of the ForwardAuth one.
+// Real Environments pinned to those charts keep that annotation until
+// their chart is upgraded, so the bootstrap must keep redirecting them.
+const legacyLoginIngress = `apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop-legacy-login
+  namespace: shop-staging
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-itema-login-errors@kubernetescrd,oauth2-proxy-itema-login-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - shop-legacy-login.app.example.test
+  rules:
+    - host: shop-legacy-login.app.example.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shop-staging
+                port:
+                  number: 80
+`
 
 // testDeleteEnvironment proves #39's design end to end: pushing a commit to
 // the fixture Platform repository that removes an Environment's directory
