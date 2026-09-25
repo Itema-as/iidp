@@ -446,7 +446,8 @@ func testUnreleasedEnvironments(ctx context.Context, t *testing.T, cluster *Clus
 // request to its host is asserted to be redirected straight to the
 // provider's sign-in, carrying the URL to come back to, while prod,
 // unprotected, still answers 200
-// (docs/implementation-notes/77-login-redirect.md).
+// (docs/implementation-notes/77-login-redirect.md), and keeps answering 200
+// throughout a rollout (#75).
 func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 	want := map[string]Expectation{
@@ -477,6 +478,9 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 		if err := cluster.CheckHTTP200(ctx, env.host, 2*time.Minute); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := cluster.CheckRolloutServes(ctx, "shop-prod", "shop", "shop.app.example.test"); err != nil {
+		t.Fatal(err)
 	}
 }
 

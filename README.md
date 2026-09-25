@@ -9,8 +9,16 @@ That is the Phase 1 target described in [`docs/design.md`](docs/design.md); the 
 On macOS, with Homebrew:
 
 ```sh
-brew install --cask Itema-as/tap/iidp
+brew update && brew install --cask Itema-as/tap/iidp
 ```
+
+To upgrade to a new release:
+
+```sh
+brew update && brew upgrade --cask iidp
+```
+
+`brew update` first, because Homebrew refreshes a tap at most once a day on its own, so without it `brew upgrade` can miss a release for up to a day.
 
 On Linux, or without Homebrew, download the archive for your platform (macOS or Linux, amd64 or arm64) from the [GitHub Releases](../../releases) page, unpack it and put `iidp` on your `PATH`.
 

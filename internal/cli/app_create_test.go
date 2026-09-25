@@ -276,6 +276,13 @@ func TestAppCreateWritesProdEnvironmentToPlatformRepository(t *testing.T) {
 		{[]any{"spec", "syncPolicy", "automated", "prune"}, true},
 		{[]any{"spec", "syncPolicy", "automated", "selfHeal"}, true},
 		{[]any{"spec", "syncPolicy", "syncOptions", 0}, "CreateNamespace=true"},
+		// A retry is always against the newest commit, so a fix pushed while
+		// a sync keeps failing is picked up (#75).
+		{[]any{"spec", "syncPolicy", "retry", "limit"}, -1},
+		{[]any{"spec", "syncPolicy", "retry", "refresh"}, true},
+		{[]any{"spec", "syncPolicy", "retry", "backoff", "duration"}, "10s"},
+		{[]any{"spec", "syncPolicy", "retry", "backoff", "factor"}, 2},
+		{[]any{"spec", "syncPolicy", "retry", "backoff", "maxDuration"}, "3m"},
 	} {
 		if got := lookup(t, app, tc.path...); got != tc.want {
 			t.Errorf("application.yaml %v = %v, want %v", tc.path, got, tc.want)
