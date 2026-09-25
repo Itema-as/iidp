@@ -49,6 +49,6 @@ Homebrew refreshes a tap at most once a day on its own, so the tap had 0.2.0 whi
 
 The `v0.2.0` release's chart job failed with `failed to perform "Tag" on destination: sha256:…: not found` right after a successful upload, and a re-run passed. The push is now tried a second time after 15 seconds. `helm push` of the same version is idempotent, so retrying after a partial success is safe.
 
-## Delivered as a patch
+## Workflow files
 
-Items 4 (the CI check) and 8 change files under `.github/workflows/`, which the agent's token can't push. The patch is in the pull request's description, to be pushed over SSH as for #68. Until it is pushed, item 4's check hasn't run in CI. The template image still builds and serves `/` in the existing Templates job, which proves the `adduser` line works, but not `npx`.
+Items 4 (the CI check) and 8 change files under `.github/workflows/`. The issue asked for them as a patch because the agent's token lacked the `workflow` scope. By the time they were written the token had it, so they're in the pull request like everything else, and the Templates job runs the `npx` check in CI.
