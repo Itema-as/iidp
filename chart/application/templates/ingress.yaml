@@ -14,12 +14,10 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- if .Values.login.enabled }}
     # The Itema login Capability: the bootstrap's shared oauth2-proxy
-    # ForwardAuth middleware, plus the errors middleware that turns its
-    # 401/403 into the sign-in redirect (bootstrap/README.md), both in
-    # oauth2-proxy's own namespace. Traefik's router.middlewares annotation
-    # takes a comma-separated list; order matches the documented pattern
-    # (errors listed before the forwardAuth it wraps).
-    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-itema-login-errors@kubernetescrd,oauth2-proxy-itema-login-auth@kubernetescrd
+    # ForwardAuth middleware, in oauth2-proxy's own namespace. An
+    # unauthenticated browser gets oauth2-proxy's own redirect to Entra ID
+    # (bootstrap/components/oauth2-proxy-login/middleware.yaml).
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-itema-login-auth@kubernetescrd
     {{- end }}
 spec:
   ingressClassName: traefik

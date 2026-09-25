@@ -25,6 +25,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -600,7 +601,7 @@ func (c *Cluster) WaitForResourceGone(ctx context.Context, kind, namespace, name
 // kind, so there is no certificate to validate against. It retries until
 // timeout.
 func (c *Cluster) CheckHTTP200(ctx context.Context, host string, timeout time.Duration) error {
-	return c.pollGET(ctx, host, timeout, func(resp *http.Response) (ok, retry bool, message string) {
+	return c.pollGET(ctx, host, "/", timeout, func(resp *http.Response) (ok, retry bool, message string) {
 		if resp.StatusCode != http.StatusOK {
 			return false, true, resp.Status
 		}
@@ -608,44 +609,94 @@ func (c *Cluster) CheckHTTP200(ctx context.Context, host string, timeout time.Du
 	})
 }
 
-// CheckRedirect requests "/" on host through Traefik's websecure entrypoint,
-// the same way CheckHTTP200 does, but expects a redirect (a 3xx status)
-// instead of following it: it is what an unauthenticated request to a
-// login.enabled host should get from the itema-login ForwardAuth middleware
-// (a straight 5xx instead would mean oauth2-proxy itself is not up). It
-// retries until timeout, and fails if any response is neither the wanted
-// redirect nor a plain connection error (a non-3xx, non-5xx status is not
-// something retrying will fix).
-func (c *Cluster) CheckRedirect(ctx context.Context, host string, timeout time.Duration) error {
-	return c.pollGET(ctx, host, timeout, func(resp *http.Response) (ok, retry bool, message string) {
+// SignIn is what an unauthenticated browser's request to a login-protected
+// host must be answered with: a redirect straight to the identity
+// provider's authorize endpoint, nothing of oauth2-proxy's own in between
+// (docs/implementation-notes/77-login-redirect.md).
+type SignIn struct {
+	// LoginURL is the provider's authorize endpoint the Location must lead
+	// to, query aside.
+	LoginURL string
+	// Callback is the redirect_uri oauth2-proxy must hand the provider: the
+	// Platform's auth address, whichever host the request was for.
+	Callback string
+	// CookieDomain is the Domain the CSRF cookie must be set for, so the
+	// callback on the auth address can read what the Application's host
+	// set.
+	CookieDomain string
+}
+
+// CheckSignInRedirect requests path on host through Traefik's websecure
+// entrypoint, the same way CheckHTTP200 does, and requires the redirect
+// described by want: a 3xx whose Location is want.LoginURL with
+// want.Callback as redirect_uri and, in the OAuth state, the original
+// https URL (path and query included) to come back to after signing in,
+// plus oauth2-proxy's CSRF cookie for want.CookieDomain. A 3xx without a
+// Location, which a browser renders instead of following, fails it. It
+// retries a 5xx (oauth2-proxy not up yet) and a 404 (no route yet) until
+// timeout; any other answer fails at once.
+func (c *Cluster) CheckSignInRedirect(ctx context.Context, host, path string, want SignIn, timeout time.Duration) error {
+	original := "https://" + host + path
+	return c.pollGET(ctx, host, path, timeout, func(resp *http.Response) (ok, retry bool, message string) {
 		if resp.StatusCode >= 500 {
 			return false, true, resp.Status + " (oauth2-proxy is likely not up yet)"
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			// Traefik has no router for host yet, or has dropped it
+			// because a middleware it names does not exist.
+			return false, true, resp.Status + " (no Traefik route for the host yet)"
 		}
 		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
 			return false, false, resp.Status + ", want a redirect (3xx)"
 		}
-		return true, false, resp.Status + " -> " + resp.Header.Get("Location")
+		location := resp.Header.Get("Location")
+		target, err := url.Parse(location)
+		if err != nil || location == "" {
+			return false, false, fmt.Sprintf("%s with Location %q, want a redirect to %s", resp.Status, location, want.LoginURL)
+		}
+		query := target.Query()
+		target.RawQuery = ""
+		if target.String() != want.LoginURL {
+			return false, false, fmt.Sprintf("%s -> %s, want a redirect to %s", resp.Status, location, want.LoginURL)
+		}
+		if got := query.Get("redirect_uri"); got != want.Callback {
+			return false, false, fmt.Sprintf("%s -> %s: redirect_uri %q, want %q", resp.Status, location, got, want.Callback)
+		}
+		// oauth2-proxy's state is "<csrf hash>:<URL to return to>".
+		if state := query.Get("state"); !strings.HasSuffix(state, ":"+original) {
+			return false, false, fmt.Sprintf("%s -> %s: state %q, want it to end with :%s", resp.Status, location, state, original)
+		}
+		csrf := false
+		for _, cookie := range resp.Cookies() {
+			if strings.HasPrefix(cookie.Name, "_oauth2_proxy_csrf") && cookie.Domain == want.CookieDomain {
+				csrf = true
+			}
+		}
+		if !csrf {
+			return false, false, fmt.Sprintf("%s -> %s: no _oauth2_proxy_csrf cookie for %s in %q", resp.Status, location, want.CookieDomain, resp.Header.Values("Set-Cookie"))
+		}
+		return true, false, resp.Status + " -> " + location
 	})
 }
 
-// pollGET is the shared polling shape CheckHTTP200 and CheckRedirect build
-// on: GET "/" on host through Traefik's websecure entrypoint (mapped to
+// pollGET is the shared polling shape CheckHTTP200 and CheckSignInRedirect
+// build on: GET path on host through Traefik's websecure entrypoint (mapped to
 // HTTPSPort on the host), certificate verification disabled (kind's Traefik
 // falls back to its own default certificate, since no cloud DNS-01 issuer
 // can complete inside kind). Redirects are never followed (CheckHTTP200
-// never sees one; CheckRedirect wants to see it directly). want inspects
+// never sees one; CheckSignInRedirect wants to see it directly). want inspects
 // the response and reports whether it is the wanted one; when it is not,
 // retry says whether polling again could still produce it (an unready
 // oauth2-proxy, say) as opposed to a wrong status entirely, which fails the
 // check immediately instead of waiting out the full timeout. A failure to
 // connect at all is always retried.
-func (c *Cluster) pollGET(ctx context.Context, host string, timeout time.Duration, want func(resp *http.Response) (ok, retry bool, message string)) error {
+func (c *Cluster) pollGET(ctx context.Context, host, path string, timeout time.Duration, want func(resp *http.Response) (ok, retry bool, message string)) error {
 	client := &http.Client{
 		Timeout:       10 * time.Second,
 		Transport:     &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // kind has no real certificate to check
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	url := fmt.Sprintf("https://127.0.0.1:%d/", c.HTTPSPort)
+	url := fmt.Sprintf("https://127.0.0.1:%d%s", c.HTTPSPort, path)
 	var lastErr error
 	return pollUntil(ctx, timeout, 3*time.Second,
 		func() (bool, error) {

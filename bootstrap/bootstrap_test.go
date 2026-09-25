@@ -209,6 +209,14 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	if got := get[string](t, values, "extraArgs", "redirect-url"); got != "https://auth.app.example.test/oauth2/callback" {
 		t.Errorf("redirect-url = %q", got)
 	}
+	// An unauthenticated browser goes straight to Entra ID, never to
+	// oauth2-proxy's own sign-in page (docs/implementation-notes/77-login-redirect.md).
+	if got := get[string](t, values, "extraArgs", "skip-provider-button"); got != "true" {
+		t.Errorf("skip-provider-button = %q, want true", got)
+	}
+	if got := get[string](t, values, "extraArgs", "footer"); got != "-" {
+		t.Errorf("footer = %q, want - (no oauth2-proxy version on its pages)", got)
+	}
 	if got := fmt.Sprint(get[[]any](t, values, "ingress", "hosts")); got != "[auth.app.example.test]" {
 		t.Errorf("ingress hosts = %s, want [auth.app.example.test]", got)
 	}
@@ -216,6 +224,39 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	providerMap := get[object](t, map[string]any{"p": provider}, "p")
 	if got := get[string](t, providerMap, "provider"); got != "entra-id" {
 		t.Errorf("provider = %q, want entra-id", got)
+	}
+}
+
+// The Itema login middlewares: ForwardAuth checks oauth2-proxy's root
+// address, whose answer to an unauthenticated browser is its own redirect
+// to Entra ID, not /oauth2/auth's bare 401. itema-login-errors stays
+// defined because Environments pinned to application chart 0.2.0 or older
+// still name it; a missing middleware would make Traefik drop their route.
+func TestLoginMiddlewares(t *testing.T) {
+	data, err := os.ReadFile("components/oauth2-proxy-login/middleware.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	middlewares := map[string]object{}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var obj object
+		if err := dec.Decode(&obj); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		middlewares[get[string](t, obj, "metadata", "name")] = obj
+	}
+	auth, ok := middlewares["itema-login-auth"]
+	if !ok {
+		t.Fatal("no itema-login-auth middleware")
+	}
+	if got := get[string](t, auth, "spec", "forwardAuth", "address"); got != "http://oauth2-proxy.oauth2-proxy.svc.cluster.local/" {
+		t.Errorf("itema-login-auth address = %q, want oauth2-proxy's root address", got)
+	}
+	if _, ok := middlewares["itema-login-errors"]; !ok {
+		t.Error("no itema-login-errors middleware; Environments on application chart 0.2.0 or older still name it")
 	}
 }
 

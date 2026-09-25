@@ -47,22 +47,15 @@
 # documents as required since oauth2-proxy v7.14.0, older than the
 # appVersion this chart installs (versions.yaml).
 #
-# Traefik pattern: current oauth2-proxy documentation
-# ("Configuration > Integrations > Traefik") shows two ForwardAuth shapes:
-# one middleware pointed at oauth2-proxy's root address, relying on Traefik
-# forwarding a 3xx from the auth server verbatim instead of erroring; and a
-# two-middleware shape (ForwardAuth against /oauth2/auth, which answers
-# 401/403 with no redirect, chained with an `errors` middleware rewriting
-# that into a redirect to /oauth2/sign_in?rd=...). The root-address shape
-# was tried first (it needs only one middleware, which is all the ticket's
-# acceptance criteria describe) and rejected: in a real kind run, hitting
-# it unauthenticated came back 403 rather than the redirect the docs'
-# example describes, with this component's alpha-config static upstream.
-# Traefik's router.middlewares annotation accepts a comma-separated list,
-# so the chart's Ingress instead names both itema-login-errors and
-# itema-login-auth (components/oauth2-proxy-login/middleware.yaml) -- the
-# documented, well-tested /oauth2/auth contract instead of the root
-# address's less predictable one.
+# Traefik pattern: the itema-login-auth ForwardAuth middleware
+# (components/oauth2-proxy-login/middleware.yaml) points at oauth2-proxy's
+# root address, and skip-provider-button makes oauth2-proxy answer an
+# unauthenticated browser's request with a 302 straight to Entra ID; without
+# it, the answer is oauth2-proxy's own sign-in page with a 403. footer "-"
+# keeps the oauth2-proxy version off the pages that are still shown
+# (errors, sign-out). See docs/implementation-notes/77-login-redirect.md,
+# including why #18's /oauth2/auth plus errors-middleware shape never
+# redirected.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -164,6 +157,8 @@ spec:
                         claim: groups
           extraArgs:
             reverse-proxy: "true"
+            skip-provider-button: "true"
+            footer: "-"
             cookie-domain: {{ printf ".%s" .Values.baseDomain | quote }}
             whitelist-domain: {{ printf ".%s" .Values.baseDomain | quote }}
             redirect-url: {{ printf "https://%s/oauth2/callback" $host | quote }}
