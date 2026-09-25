@@ -227,11 +227,9 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	}
 }
 
-// The Itema login middlewares: ForwardAuth checks oauth2-proxy's root
+// The Itema login middleware: ForwardAuth checks oauth2-proxy's root
 // address, whose answer to an unauthenticated browser is its own redirect
-// to Entra ID, not /oauth2/auth's bare 401. itema-login-errors stays
-// defined because Environments pinned to application chart 0.2.0 or older
-// still name it; a missing middleware would make Traefik drop their route.
+// to Entra ID, not /oauth2/auth's bare 401.
 func TestLoginMiddlewares(t *testing.T) {
 	data, err := os.ReadFile("components/oauth2-proxy-login/middleware.yaml")
 	if err != nil {
@@ -254,9 +252,6 @@ func TestLoginMiddlewares(t *testing.T) {
 	}
 	if got := get[string](t, auth, "spec", "forwardAuth", "address"); got != "http://oauth2-proxy.oauth2-proxy.svc.cluster.local/" {
 		t.Errorf("itema-login-auth address = %q, want oauth2-proxy's root address", got)
-	}
-	if _, ok := middlewares["itema-login-errors"]; !ok {
-		t.Error("no itema-login-errors middleware; Environments on application chart 0.2.0 or older still name it")
 	}
 }
 
