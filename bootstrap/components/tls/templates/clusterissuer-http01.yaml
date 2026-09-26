@@ -1,6 +1,9 @@
-# Let's Encrypt through HTTP-01 on Traefik, for custom domains whose zone is
-# not on Cloudflare: the application chart asks for a per-host certificate
-# from this issuer once the owner's CNAME points at the Platform.
+# Let's Encrypt through HTTP-01 on Traefik, for every custom domain the
+# Platform's wildcard doesn't cover (anything not directly under
+# baseDomain), wherever its DNS is, cloudflareZone included: the
+# application chart asks for a per-host certificate from this issuer, which
+# succeeds once the host resolves to the Platform (the record external-dns
+# creates inside cloudflareZone, or the owner's CNAME anywhere else).
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:

@@ -13,7 +13,7 @@ The shared understanding reached in the design session on 2026-09-20. Vocabulary
 | Rejected | Istio, Kafka, Keycloak, Harbor, Nexus, OpenSearch, Vault, Supabase in Phase 1; Crossplane and Kyverno deferred (see ADR-0004) |
 | Repositories | `iidp` holds CLI, chart, infra, bootstrap, docs. `iidp-platform` holds one ArgoCD Application and values file per Environment, plus `platform.yaml`. Org `Itema-as` |
 | Application model | Kind: Static site or Web service. Capabilities: Postgres, staging, custom domain, Itema login. Sizes small/medium/large |
-| Addresses | `<app>.app.itma.no`, `<app>-staging.app.itma.no`, one wildcard cert, custom domains on Cloudflare zones automatic, elsewhere by CNAME |
+| Addresses | `<app>.app.itma.no`, `<app>-staging.app.itma.no`, one wildcard cert, custom domains in the Platform's Cloudflare zone (`cloudflareZone`, `itma.no`) automatic, anything else by CNAME, other Cloudflare zones included |
 | Delivery | CI builds SHA-tagged images to GHCR. `main` deploys to staging or prod, a `v*` tag retags and promotes to prod. Write-back via the Deploy gate, authenticated by GitHub Actions OIDC; images in private GHCR (ADR-0005, which replaced the org GitHub App secret) |
 | Database | One single-instance CNPG cluster per Environment, `DATABASE_URL` injected, optional migration Job run as an ArgoCD sync hook before the rollout (see notes for #7 on why not PreSync), continuous backups to Object Storage, final backup kept 30 days on delete |
 | Secrets | CLI generates and SOPS-encrypts, private age key only in the cluster, `iidp secret set` for developer-supplied values |
@@ -39,7 +39,7 @@ The shared understanding reached in the design session on 2026-09-20. Vocabulary
    Detected: prisma/schema.prisma → suggested "npx prisma migrate deploy"
    ```
 5. Staging Environment? [no]
-6. Custom domain? [none]. If the domain is in a Cloudflare-hosted zone, everything is automatic. Otherwise the closing summary prints the CNAME to create.
+6. Custom domain? [none]. If the domain is in the Platform's Cloudflare zone (`platform.yaml`'s `cloudflareZone`), everything is automatic. Otherwise, including a domain on another Cloudflare zone, the closing summary prints the CNAME to create.
 7. Itema login? [no]. Only available on Platform addresses, not custom domains.
 8. Size: small / medium / large [small]
 9. Summary screen, confirm.
