@@ -50,11 +50,16 @@ const reusableWorkflowPath = "../../.github/workflows/application-deploy.yaml"
 
 func renderCaller(t *testing.T, fw templates.Framework) (map[string]any, string) {
 	t.Helper()
+	return renderCallerFor(t, fw, platform.DefaultDeployGateURL)
+}
+
+func renderCallerFor(t *testing.T, fw templates.Framework, gateURL string) (map[string]any, string) {
+	t.Helper()
 	dir := t.TempDir()
 	files, err := templates.Render(fw, templates.Data{
 		Name:              "shop",
 		DeployWorkflowRef: workflowRef,
-		DeployGateURL:     "https://deploy.app.itma.no",
+		DeployGateURL:     gateURL,
 	}, dir)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -112,8 +117,10 @@ func TestDeployWorkflowIsAShortCaller(t *testing.T) {
 			if got := lookup(t, doc, "jobs", "deploy", "with", "application"); got != "shop" {
 				t.Errorf("jobs.deploy.with.application = %v, want shop", got)
 			}
-			if got := lookup(t, doc, "jobs", "deploy", "with", "deploy-gate-url"); got != "https://deploy.app.itma.no" {
-				t.Errorf("jobs.deploy.with.deploy-gate-url = %v, want the gate's URL", got)
+			// Itema's Platform is the reusable workflow's default, so its
+			// callers don't repeat it.
+			if with := lookup(t, doc, "jobs", "deploy", "with").(map[string]any); with["deploy-gate-url"] != nil {
+				t.Errorf("jobs.deploy.with.deploy-gate-url = %v, want it left to the reusable workflow's default", with["deploy-gate-url"])
 			}
 			if strings.Contains(content, "__IIDP_") {
 				t.Errorf("a placeholder was left unsubstituted:\n%s", content)
@@ -124,6 +131,30 @@ func TestDeployWorkflowIsAShortCaller(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A Platform whose gate isn't the reusable workflow's default gets it
+// written into the caller, so a second Platform (the kind fixture's
+// app.example.test, say) still deploys to its own gate.
+func TestDeployWorkflowCallerNamesAGateOtherThanTheDefault(t *testing.T) {
+	doc, content := renderCallerFor(t, templates.NextJS, "https://deploy.app.example.test")
+	if got := lookup(t, doc, "jobs", "deploy", "with", "deploy-gate-url"); got != "https://deploy.app.example.test" {
+		t.Errorf("jobs.deploy.with.deploy-gate-url = %v, want https://deploy.app.example.test\n%s", got, content)
+	}
+}
+
+// The reusable workflow's default and platform.DefaultDeployGateURL, which
+// decides when the CLI leaves the input out, are the same URL; otherwise a
+// caller without the input would deploy to a gate the CLI didn't mean.
+func TestReusableDeployWorkflowDefaultGateIsThePlatformDefault(t *testing.T) {
+	doc, _ := readReusableWorkflow(t)
+	input := lookup(t, doc, "on", "workflow_call", "inputs", "deploy-gate-url").(map[string]any)
+	if input["default"] != platform.DefaultDeployGateURL {
+		t.Errorf("deploy-gate-url default = %v, want platform.DefaultDeployGateURL %s", input["default"], platform.DefaultDeployGateURL)
+	}
+	if input["required"] != false {
+		t.Errorf("deploy-gate-url required = %v, want false: callers on the default Platform leave it out", input["required"])
 	}
 }
 

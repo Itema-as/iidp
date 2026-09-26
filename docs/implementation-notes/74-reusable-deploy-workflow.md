@@ -15,11 +15,11 @@ Decisions taken while moving the deploy logic out of every Application repositor
 ## The shape
 
 - **File name:** `.github/workflows/application-deploy.yaml`, not `deploy.yaml` as the issue sketched, so it isn't mistaken for a workflow that deploys this repository. `platform.DeployWorkflow` names it.
-- **Inputs:** `application` and `deploy-gate-url`, both required strings.
+- **Inputs:** `application`, a required string, and `deploy-gate-url`, an optional string with a default.
   - The image, `ghcr.io/<owner>/<application>`, is derived from the caller's `github.repository_owner`, lowercased, which is what `iidp app create` writes to the Platform's `image.repository`.
   - The Application's name stays an input rather than coming from the repository's name, because Adopt allows `--name` to differ.
-  - The gate URL stays an input rather than a default here, because the bootstrap is written for any `baseDomain`, not just `app.itma.no`.
-- **The caller** (`internal/templates/deploy-workflow.yaml`): the triggers (a reusable workflow can't declare its own), one job with `uses:`, the three permissions and the two inputs. Create and Adopt both render it; the old template's `__IIDP_OWNER__`, `__IIDP_VERSION__` and `__IIDP_CLI_REPO__` placeholders, and `templates.Data`'s `Owner` and `IidpVersion`, are gone.
+  - The gate URL defaults to Itema's Platform, `https://deploy.app.itma.no`. It's the same for every Application on a Platform, so repeating it in every caller would mean editing every Application repository if the base domain ever changed, which is what this change is meant to avoid. `iidp app create` writes the input only when the Platform's gate URL (from `platform.yaml`) differs from `platform.DefaultDeployGateURL`, so a Platform on another domain still works. **The cost: the default is a second copy of the live `platform.yaml`'s `baseDomain`,** which this repository can't read. Nothing checks the two against each other. A change of base domain has to change the workflow's default and `platform.DefaultDeployGateURL` together, and `TestReusableDeployWorkflowDefaultGateIsThePlatformDefault` keeps those two equal. Everywhere else in this repository, `app.itma.no` is only a fallback that `platform.yaml` overrides. This default is the one place where it's used directly, for callers that leave the input out.
+- **The caller** (`internal/templates/deploy-workflow.yaml`): the triggers (a reusable workflow can't declare its own), one job with `uses:`, the three permissions and `application` (plus `deploy-gate-url` for a Platform on another domain). Create and Adopt both render it; the old template's `__IIDP_OWNER__`, `__IIDP_VERSION__` and `__IIDP_CLI_REPO__` placeholders, and `templates.Data`'s `Owner` and `IidpVersion`, are gone.
 - **The ref the caller pins:** `@v<major>` of the iidp that rendered it (`apprepo.DeployWorkflowRef`). A dev build, or a version that isn't `X.Y.Z`-shaped, gets `@v0`.
 - **Behaviour:** the same as the old full workflow. On `main`, the build job checks out, builds and pushes the SHA-tagged image, then deploys it with `iidp ci set-image <app> auto <sha>`. On a `v*` tag, the promote job checks out the tagged commit, re-tags the image without rebuilding and runs `iidp ci set-image <app> prod <version>`. Both run in a checkout of the deployed commit, so `iidp.yaml`'s migration command travels with them (#66).
 
@@ -66,8 +66,9 @@ jobs:
       id-token: write
     with:
       application: <name>
-      deploy-gate-url: https://deploy.app.itma.no
 ```
+
+A caller that still passes `deploy-gate-url: https://deploy.app.itma.no`, as `hello`'s first one did, works the same; the line can be dropped.
 
 The push needs a token with the `workflow` scope, or SSH. The next push to `main` deploys through the reusable workflow. Its run shows a "deploy / Build, push and deploy" job, whose "Install iidp" step prints the release it resolved, and the Platform repository gets the usual `Deploy <name> <environment> <sha>` commit from `iidp-deploy[bot]`. That run is the proof the kind e2e can't give, since it never runs GitHub Actions.
 

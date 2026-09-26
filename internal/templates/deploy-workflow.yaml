@@ -32,6 +32,4 @@ jobs:
       id-token: write
     with:
       application: __IIDP_APP_NAME__
-      # The Platform's Deploy gate, https://deploy.<baseDomain>, written
-      # here by iidp app create from the Platform's base domain.
-      deploy-gate-url: __IIDP_DEPLOY_GATE_URL__
+__IIDP_DEPLOY_GATE_URL_INPUT__
