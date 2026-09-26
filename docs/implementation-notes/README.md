@@ -28,3 +28,4 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #74 | [74-reusable-deploy-workflow.md](74-reusable-deploy-workflow.md) |
 | #75 | [75-cutover-friction.md](75-cutover-friction.md) |
 | #77, #78 | [77-login-redirect.md](77-login-redirect.md) |
+| #81 | [81-nginx-stable-template.md](81-nginx-stable-template.md) |

@@ -184,12 +184,12 @@ const (
 )
 
 // shopDeployTag is the image testMigrationCommandFromIidpYAML deploys to
-// shop-prod: another nginx Alpine tag than the fixture's 1.27-alpine, so
+// shop-prod: another nginx Alpine tag than the fixture's 1.30-alpine, so
 // the Deployment changes too. ArgoCD leaves hooks out of its diff, so a
 // commit that changed only the migration Job would not sync on its own; a
 // real deploy always changes the tag with it. It must exist on Docker Hub:
 // the gate checks every new tag against the image's registry (#61).
-const shopDeployTag = "1.27.0-alpine"
+const shopDeployTag = "1.30.0-alpine"
 
 // testMigrationCommandFromIidpYAML proves #66 end to end: the migration
 // command in shop's Application repository (the fixture
@@ -220,7 +220,7 @@ func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster
 	}
 
 	// brochure has no Postgres: nothing to migrate, so nothing is written.
-	status, body := call("Itema-as/brochure", brochureRepositoryID, "brochure", "1.27-alpine")
+	status, body := call("Itema-as/brochure", brochureRepositoryID, "brochure", "1.30-alpine")
 	if msg, _ := body["error"].(string); status != http.StatusConflict || !strings.Contains(msg, "Add the Postgres Capability first") {
 		t.Errorf("a migration command for brochure: HTTP %d %v, want 409 asking for the Postgres Capability first", status, body)
 	}
@@ -305,12 +305,12 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 	}
 
 	// Another repository of the org, calling for brochure.
-	status, msg := call(issuer.Claims("Itema-as/impostor", 700000099, "refs/heads/main"), "1.27-alpine")
+	status, msg := call(issuer.Claims("Itema-as/impostor", 700000099, "refs/heads/main"), "1.30-alpine")
 	if status != http.StatusForbidden || !strings.Contains(msg, "repository id 700000099") {
 		t.Errorf("a call from another repository: HTTP %d %q, want 403 naming its repository id", status, msg)
 	}
 	// brochure's own repository, from a branch other than main.
-	status, msg = call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/feature"), "1.27-alpine")
+	status, msg = call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/feature"), "1.30-alpine")
 	if status != http.StatusForbidden || !strings.Contains(msg, "refs/heads/feature") {
 		t.Errorf("a call from refs/heads/feature: HTTP %d %q, want 403 naming the ref", status, msg)
 	}
@@ -323,7 +323,7 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 	}
 
 	// The deploy. brochure has no staging, so main deploys to prod.
-	status, env := call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/main"), "1.27-alpine")
+	status, env := call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/main"), "1.30-alpine")
 	if status != http.StatusOK || env != "prod" {
 		t.Fatalf("the deploy from main: HTTP %d %q, want 200 and prod", status, env)
 	}
@@ -337,7 +337,7 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 			}
 			return strings.TrimSpace(string(out))
 		}
-		if got := git("log", "-1", "--format=%s"); got != "Deploy brochure prod 1.27-alpine" {
+		if got := git("log", "-1", "--format=%s"); got != "Deploy brochure prod 1.30-alpine" {
 			t.Errorf("the Platform repository's head is %q, want the deploy", got)
 		}
 		if got := git("log", "-1", "--format=%an <%ae>"); got != "e2e-developer <1000001+e2e-developer@users.noreply.github.com>" {
