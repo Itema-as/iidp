@@ -16,9 +16,21 @@ spec:
       labels:
         {{- include "application.labels" . | nindent 8 }}
     spec:
+      # The preStop sleep below comes out of this budget, so the container
+      # still gets Kubernetes' default 30 seconds after it to shut down.
+      terminationGracePeriodSeconds: 35
       containers:
         - name: {{ include "application.name" . }}
           image: {{ include "application.image" . | quote }}
+          # Kubernetes removes a terminating Pod from its endpoints at the
+          # same time as it starts stopping the container, and Traefik
+          # takes a moment to notice. Without the sleep, a rollout answers
+          # 502 while Traefik still routes to the old Pod. A native sleep
+          # action, so images without a sleep binary work too.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           ports:
             - name: http
               containerPort: {{ include "application.port" . }}

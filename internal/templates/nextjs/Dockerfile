@@ -20,8 +20,12 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 
+# A real, writable home: a --system user otherwise gets /nonexistent, where
+# npm can't keep its cache or logs, and npx (which Prisma and similar tools
+# use for migrations) fails.
 RUN addgroup --system --gid 1001 nodejs \
-  && adduser --system --uid 1001 nextjs
+  && adduser --system --uid 1001 --ingroup nodejs --home /home/nextjs nextjs
+ENV HOME=/home/nextjs
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

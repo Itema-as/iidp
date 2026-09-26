@@ -130,23 +130,32 @@ write_files:
         rm -rf "$helm_tmp"
       fi
 
-      log "installing ArgoCD (argo-cd chart $ARGOCD_CHART_VERSION)"
-      kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-      # Rendered from the argo-cd chart itself, not the upstream
-      # install.yaml: the objects this creates already have the selectors
-      # the argocd bootstrap Application's chart takeover expects (chart
-      # and cloud-init use the same fullnameOverride and crds.install), so
-      # the first sync only ever patches instead of having to delete and
-      # recreate Deployments and the application controller's StatefulSet
-      # (docs/implementation-notes/04-bootstrap.md, "Installing from the
-      # chart, not the upstream manifests"). Server-side apply is required:
-      # the ArgoCD CRDs exceed the annotation size limit of client-side
-      # apply.
-      helm template argocd argo-cd --repo https://argoproj.github.io/argo-helm \
-        --version "$ARGOCD_CHART_VERSION" --namespace argocd --include-crds \
-        --set fullnameOverride=argocd --set crds.install=true \
-        | kubectl apply -n argocd --server-side --force-conflicts -f -
-      kubectl wait --for=condition=established crd/applications.argoproj.io --timeout=120s
+      # Once the argocd bootstrap Application exists, ArgoCD manages itself
+      # at the version bootstrap/versions.yaml pins, with the Platform's
+      # customisations (Dex, KSOPS). Re-applying the stock chart over it
+      # would reset those until ArgoCD self-heals, so a re-run leaves it
+      # alone (docs/implementation-notes/75-cutover-friction.md).
+      if kubectl -n argocd get applications.argoproj.io argocd >/dev/null 2>&1; then
+        log "ArgoCD manages itself (Application argocd); not re-installing it"
+      else
+        log "installing ArgoCD (argo-cd chart $ARGOCD_CHART_VERSION)"
+        kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+        # Rendered from the argo-cd chart itself, not the upstream
+        # install.yaml: the objects this creates already have the selectors
+        # the argocd bootstrap Application's chart takeover expects (chart
+        # and cloud-init use the same fullnameOverride and crds.install), so
+        # the first sync only ever patches instead of having to delete and
+        # recreate Deployments and the application controller's StatefulSet
+        # (docs/implementation-notes/04-bootstrap.md, "Installing from the
+        # chart, not the upstream manifests"). Server-side apply is required:
+        # the ArgoCD CRDs exceed the annotation size limit of client-side
+        # apply.
+        helm template argocd argo-cd --repo https://argoproj.github.io/argo-helm \
+          --version "$ARGOCD_CHART_VERSION" --namespace argocd --include-crds \
+          --set fullnameOverride=argocd --set crds.install=true \
+          | kubectl apply -n argocd --server-side --force-conflicts -f -
+        kubectl wait --for=condition=established crd/applications.argoproj.io --timeout=120s
+      fi
 
       # The age private key exists only in this Secret, in the layout KSOPS
       # mounts into argocd-repo-server (key keys.txt). Generated once; a

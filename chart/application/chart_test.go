@@ -233,6 +233,30 @@ func TestProbesRequestTheProbePath(t *testing.T) {
 	}
 }
 
+// A terminating Pod waits before its container is stopped, so Traefik has
+// dropped it from its endpoints by then and a rollout answers no 502. The
+// wait comes out of the grace period, which is raised by as much so the
+// container still gets the default 30 seconds after it (#75).
+func TestPodsDrainBeforeStopping(t *testing.T) {
+	for _, tc := range []struct{ fixture, deployment string }{
+		{"prod-small.yaml", "shop"},
+		{"static-site.yaml", "brochure"},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			objects := render(t, tc.fixture)
+			c := container(t, objects, tc.deployment)
+			sleep := get[int](t, c, "lifecycle", "preStop", "sleep", "seconds")
+			if sleep <= 0 {
+				t.Fatalf("preStop sleep = %d seconds, want a positive wait", sleep)
+			}
+			grace := get[int](t, mustObject(t, objects, "Deployment/"+tc.deployment), "spec", "template", "spec", "terminationGracePeriodSeconds")
+			if grace != 30+sleep {
+				t.Errorf("terminationGracePeriodSeconds = %d, want %d (30 after the %d-second preStop sleep)", grace, 30+sleep, sleep)
+			}
+		})
+	}
+}
+
 func TestPlainEnvIsPassedToTheContainer(t *testing.T) {
 	c := container(t, render(t, "staging-medium.yaml"), "shop-staging")
 	vars := envVars(t, c)

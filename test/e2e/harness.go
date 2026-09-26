@@ -609,6 +609,74 @@ func (c *Cluster) CheckHTTP200(ctx context.Context, host string, timeout time.Du
 	})
 }
 
+// CheckRolloutServes restarts deployment in namespace and polls "/" on
+// host through Traefik the whole time, the way CheckHTTP200 does, until
+// the rollout has finished and the old Pod has had time to stop. Any
+// answer other than 200, a 502 while Traefik still routes to a stopping
+// Pod in particular, fails it (#75).
+func (c *Cluster) CheckRolloutServes(ctx context.Context, namespace, deployment, host string) error {
+	client := &http.Client{
+		Timeout:       5 * time.Second,
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // kind has no real certificate to check
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	target := fmt.Sprintf("https://127.0.0.1:%d/", c.HTTPSPort)
+	stop := make(chan struct{})
+	type result struct {
+		requests int
+		failures []string
+	}
+	done := make(chan result)
+	go func() {
+		var r result
+		for {
+			select {
+			case <-stop:
+				done <- r
+				return
+			default:
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+			if err != nil {
+				r.failures = append(r.failures, err.Error())
+				continue
+			}
+			req.Host = host
+			r.requests++
+			resp, err := client.Do(req)
+			switch {
+			case err != nil:
+				r.failures = append(r.failures, err.Error())
+			case resp.StatusCode != http.StatusOK:
+				r.failures = append(r.failures, resp.Status)
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	out, err := c.Kubectl(ctx, "-n", namespace, "rollout", "restart", "deployment/"+deployment)
+	if err == nil {
+		out, err = c.Kubectl(ctx, "-n", namespace, "rollout", "status", "deployment/"+deployment, "--timeout=3m")
+	}
+	if err == nil {
+		// The old Pod keeps its endpoint until its preStop sleep ends and it
+		// stops; keep polling through that.
+		err = sleep(ctx, 45*time.Second)
+	}
+	close(stop)
+	r := <-done
+	if err != nil {
+		return fmt.Errorf("rollout of %s/%s: %w\n%s", namespace, deployment, err, out)
+	}
+	if len(r.failures) > 0 {
+		return fmt.Errorf("GET %s (Host: %s) during a rollout of %s/%s: %d of %d requests failed, first: %s", target, host, namespace, deployment, len(r.failures), r.requests, r.failures[0])
+	}
+	c.Log("GET %s (Host: %s): %d requests during a rollout of %s/%s, all 200", target, host, r.requests, namespace, deployment)
+	return nil
+}
+
 // SignIn is what an unauthenticated browser's request to a login-protected
 // host must be answered with: a redirect straight to the identity
 // provider's authorize endpoint, nothing of oauth2-proxy's own in between
