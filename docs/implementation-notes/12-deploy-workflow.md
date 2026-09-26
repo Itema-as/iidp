@@ -36,6 +36,8 @@ Confirmed via Context7 (`/websites/github_en_rest`, "generate a JSON Web Token (
 
 ## Installing `iidp` inside the generated workflow
 
+**Superseded by #74.** Application repositories now call a reusable workflow in this repository, which installs the release its own commit belongs to; see [`74-reusable-deploy-workflow.md`](74-reusable-deploy-workflow.md).
+
 The workflow needs `iidp` itself to run `ci set-image`. Chosen: `gh release download` (preinstalled on GitHub-hosted runners), authenticated with `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` (a valid token is enough to call the API at the authenticated rate limit, even for a different, public repository), against a fixed pattern `iidp_*_linux_amd64.tar.gz` (`.goreleaser.yaml`'s `name_template`). The version to pin to is `internal/version.Version` at template-generation time, with `dev` (a `go build` with no `-ldflags`, i.e. this ticket's own dev builds and anyone building the CLI from source) mapped to `latest` (`gh release download` with no tag argument): `apprepo.Creator.Create` resolves this once (`templateIidpVersion`) and both the workflow template and the CLI's closing output ("The deploy workflow ... is pinned to iidp `<version>`") use the same resolved string, so the two can never disagree. The release repository is `platform.CLIRepository` (`Org + "/iidp"`), a new constant next to `platform.Repository`, so it changes in the one place the org constant does.
 
 ## The GitHub Actions `${{ }}` / Go `text/template` `{{ }}` collision

@@ -3,7 +3,9 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # Release tags only (v0.2.2, v1.0.0-rc1), never the moving major tag
+      # (v0) the major-tag job below keeps pointing at the newest release.
+      - "v[0-9]+.[0-9]+.[0-9]+*"
 
 permissions:
   contents: write
@@ -74,3 +76,44 @@ jobs:
           # v0.2.0); a re-run of the job went through, so push once more.
           helm push "dist/application-${version}.tgz" "oci://ghcr.io/${owner}/charts" \
             || { echo "helm push failed; retrying once in 15s"; sleep 15; helm push "dist/application-${version}.tgz" "oci://ghcr.io/${owner}/charts"; }
+
+  # Moves the major tag (v0 for v0.x.y) to this release, so every
+  # Application repository calling the reusable deploy workflow at @v0
+  # (.github/workflows/application-deploy.yaml) gets it with no edit.
+  # Only forward: a release that finishes after a newer one leaves the tag
+  # alone. Pre-releases (v1.0.0-rc1) never move it. A tag pushed with the
+  # workflow's GITHUB_TOKEN starts no workflow run, and the release
+  # trigger above only matches vX.Y.Z tags anyway
+  # (docs/implementation-notes/74-reusable-deploy-workflow.md).
+  major-tag:
+    name: Move the major tag
+    needs: [goreleaser, chart]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: major-tag
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Move the major tag forward to this release
+        run: |
+          set -euo pipefail
+          if ! [[ "${GITHUB_REF_NAME}" =~ ^v([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+            echo "${GITHUB_REF_NAME} is a pre-release; the major tag stays where it is."
+            exit 0
+          fi
+          major="v${BASH_REMATCH[1]}"
+          release="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          git fetch --force origin "refs/tags/${major}:refs/tags/${major}" 2>/dev/null || true
+          if current="$(git rev-parse -q --verify "refs/tags/${major}^{commit}")"; then
+            if ! git merge-base --is-ancestor "${current}" "${release}"; then
+              echo "${major} is at ${current}, which ${GITHUB_REF_NAME} doesn't descend from; a newer release has moved it already. Leaving it."
+              exit 0
+            fi
+          fi
+          git tag --force "${major}" "${release}"
+          git push --force origin "refs/tags/${major}"
+          echo "${major} now points at ${GITHUB_REF_NAME} (${release})."

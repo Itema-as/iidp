@@ -316,7 +316,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		for _, f := range appRepo.Files {
 			fmt.Fprintf(out, "  %s\n", f)
 		}
-		fmt.Fprintf(out, "\nThe deploy workflow (.github/workflows/deploy.yaml) is pinned to iidp %s.\n", appRepo.IidpVersion)
+		fmt.Fprintf(out, "\nThe deploy workflow (.github/workflows/deploy.yaml) calls %s, so every iidp release in that major version reaches it with no edit.\n", appRepo.DeployWorkflowRef)
 	}
 
 	var adoptResult apprepo.AdoptResult

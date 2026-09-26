@@ -899,22 +899,22 @@ func TestAppCreatePathAddsTheDeployWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "ghcr.io/"+strings.ToLower(platform.Org)+"/shop") {
-		t.Errorf("deploy.yaml lacks the expected image reference:\n%s", content)
+	// A short caller of the reusable deploy workflow at the major tag (v0
+	// for this dev build), with the Application's name and the Deploy
+	// gate's URL, rendered in from platform.yaml's baseDomain since CI
+	// can't read the private Platform repository
+	// (docs/implementation-notes/74-reusable-deploy-workflow.md).
+	for _, want := range []string{
+		"uses: " + platform.DeployWorkflow + "@v0\n",
+		"application: shop\n",
+		"deploy-gate-url: https://deploy.app.itma.no\n",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("deploy.yaml lacks %q:\n%s", want, content)
+		}
 	}
-	if !strings.Contains(content, "iidp ci set-image shop auto") {
-		t.Errorf("deploy.yaml lacks the main-branch set-image invocation:\n%s", content)
-	}
-	if !strings.Contains(content, "iidp ci set-image shop prod") {
-		t.Errorf("deploy.yaml lacks the tag-promotion set-image invocation:\n%s", content)
-	}
-	// The workflow cannot read the private Platform repository, so the
-	// Deploy gate's URL is rendered in from platform.yaml's baseDomain.
-	if !strings.Contains(content, "IIDP_DEPLOY_GATE_URL: https://deploy.app.itma.no\n") {
-		t.Errorf("deploy.yaml does not name the Platform's Deploy gate:\n%s", content)
-	}
-	if !strings.Contains(stdout, "pinned to iidp latest") {
-		t.Errorf("stdout lacks the dev-build iidp version note:\n%s", stdout)
+	if !strings.Contains(stdout, "calls "+platform.DeployWorkflow+"@v0") {
+		t.Errorf("stdout doesn't say which reusable workflow deploy.yaml calls:\n%s", stdout)
 	}
 }
 

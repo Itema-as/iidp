@@ -301,9 +301,8 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 		}
 	}
 
-	iidpVersion := templateIidpVersion()
 	migrationCommand := det.MigrationCommand(req.Postgres, req.MigrationCommand, req.MigrationCommandSet)
-	data := templates.Data{Name: req.AppName, Owner: strings.ToLower(req.Owner), IidpVersion: iidpVersion, DeployGateURL: req.DeployGateURL, MigrationCommand: migrationCommand}
+	data := templates.Data{Name: req.AppName, DeployWorkflowRef: DeployWorkflowRef(), DeployGateURL: req.DeployGateURL, MigrationCommand: migrationCommand}
 
 	if !det.HasDockerfile {
 		if _, err := templates.RenderDockerfile(det.Framework, data, dir); err != nil {
@@ -458,7 +457,7 @@ func pullRequestBody(req AdoptRequest, files []string, det Detection, migrationC
 		case ".dockerignore":
 			b.WriteString("- `.dockerignore`: keeps the build context small and the image free of files it does not need.\n")
 		case templates.DeployWorkflowPath:
-			b.WriteString("- `.github/workflows/deploy.yaml`: on a push to the default branch, builds the image with buildx, pushes it to GHCR tagged with the commit SHA, and writes that tag into the Platform repository (`iidp ci set-image`); on a `v*` tag, retags the same image with the version, with no rebuild, and promotes it to prod. **The first merged run of this workflow is what deploys the Application for the first time.**\n")
+			b.WriteString("- `.github/workflows/deploy.yaml`: calls iidp's reusable deploy workflow (`" + DeployWorkflowRef() + "`). On a push to the default branch, it builds the image with buildx, pushes it to GHCR tagged with the commit SHA, and deploys that tag through the Platform's Deploy gate (`iidp ci set-image`); on a `v*` tag, it retags the same image with the version, with no rebuild, and promotes it to prod. **The first merged run of this workflow is what deploys the Application for the first time.**\n")
 		case templates.AppConfigPath:
 			if migrationCommand != "" {
 				fmt.Fprintf(&b, "- `%s`: settings the deploy workflow sends the Platform with every deploy, from the commit it deploys. It sets the migration command, `%s`, which runs before every rollout, in the new image, with `DATABASE_URL` set.\n", templates.AppConfigPath, migrationCommand)
