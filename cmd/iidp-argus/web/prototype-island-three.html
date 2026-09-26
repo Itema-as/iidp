@@ -8,7 +8,7 @@
   Islets connect only to the Platform, by aerial cableways from its spire; islets
   sit on fixed orbits and never move. ?layout=bridges shows the alternative: one
   orbit, a straight bridge each, widening as it fills. ?variant=day|dusk|night.
-  After 8 seconds without input the camera tours the islets where something is happening. Loads three.js from a CDN, so it needs internet.
+  The automatic camera hovers while nobody touches the map, flies to changes, then drifts back out. Loads three.js from a CDN, so it needs internet.
   Left-drag pans, right-drag rotates, scroll zooms. ?do=arrive,deleteApp runs events on load.
 -->
 <html lang="en">
@@ -76,8 +76,7 @@
 <aside id="panel">
   <h1>Push the Platform around</h1>
   <p class="note">Fake data. Left-drag pans, right-drag rotates, scroll zooms. Hover anything.</p>
-  <label class="opt"><input type="checkbox" id="idleTour" checked> Idle tour after 8 s without input</label>
-  <label class="opt"><input type="checkbox" id="flyNew" checked> Fly to Applications as they arrive</label>
+  <label class="opt"><input type="checkbox" id="autoCam" checked> Automatic camera: hovers when idle, visits changes</label>
   <h2>Events</h2>
   <div class="actions">
     <button data-act="arrive">An Application arrives</button>
@@ -142,15 +141,15 @@ const tipComp = c => `${c.label} (Platform component)\nCondition: ${condLabel(c)
 const DAY = { name: 'Day', skyTop: '#c9d6e2', skyBottom: '#e9eff4', water: '#b7c8d6', shallows: '#c9d6e0', ripple: 'rgba(255,255,255,0.16)',
   rock: '#2b3540', top: '#3c4a58', plaza: '#4c5c6c', curb: '#6d7e8e', path: '#57687a', engDark: '#232d36', engLight: '#8a9bab',
   wall: '#f5f7f9', plinth: '#c5ced6', parapet: '#d5dce2', glass: '#86bde9', glassDark: '#50606d', glow: 0.08, lamp: 0.2,
-  hemi: 1.2, hemiSky: '#ffffff', hemiGround: '#3a4a5a', sun: 2.6, sunColor: '#fff6e8', sunPos: [-40, 80, 25], cable: '#c9d4dd', cloud: '#ffffff' };
+  hemi: 1.2, hemiSky: '#ffffff', hemiGround: '#3a4a5a', sun: 2.6, sunColor: '#fff6e8', sunPos: [-40, 80, 25], cable: '#c9d4dd', cloud: '#ffffff', nameGlow: '#000000', nameGlowI: 0, signGlow: 0.15 };
 const DUSK = { ...DAY, name: 'Dusk', skyTop: '#565d86', skyBottom: '#f0b48d', water: '#7c84b8', shallows: '#9aa1cf', ripple: 'rgba(255,225,200,0.14)',
   rock: '#262b3c', top: '#3a4359', plaza: '#4a5369', curb: '#6a7386', path: '#545e70', engDark: '#20242e', engLight: '#8b93a6',
   wall: '#f1ece8', plinth: '#c4bdb9', parapet: '#d8d1cd', glass: '#ffcf86', glassDark: '#4c5563', glow: 0.6, lamp: 1.5,
-  hemi: 1.0, hemiSky: '#c4c0f2', hemiGround: '#4a4060', sun: 2.4, sunColor: '#ffa25e', sunPos: [-70, 24, -20], cable: '#bdb6c8', cloud: '#ffe9dc' };
+  hemi: 1.0, hemiSky: '#c4c0f2', hemiGround: '#4a4060', sun: 2.4, sunColor: '#ffa25e', sunPos: [-70, 24, -20], cable: '#bdb6c8', cloud: '#ffe9dc', nameGlow: '#ffc98a', nameGlowI: 0.7, signGlow: 0.6 };
 const NIGHT = { ...DAY, name: 'Night', skyTop: '#0c1a2b', skyBottom: '#1f3854', water: '#11253a', shallows: '#1b3552', ripple: 'rgba(170,205,255,0.07)',
   rock: '#1d2630', top: '#36434f', plaza: '#415060', curb: '#5a6c7e', path: '#485868', engDark: '#161d24', engLight: '#6a7d8f',
   wall: '#d5dde3', plinth: '#8f9ba5', parapet: '#aab5be', glass: '#ffcb6b', glassDark: '#2b3642', glow: 1.5, lamp: 2.4,
-  hemi: 1.0, hemiSky: '#9fb7ff', hemiGround: '#1c2533', sun: 1.2, sunColor: '#a9c0ff', sunPos: [-30, 70, 40], cable: '#7f93a6', cloud: '#c9d6ea' };
+  hemi: 1.0, hemiSky: '#9fb7ff', hemiGround: '#1c2533', sun: 1.2, sunColor: '#a9c0ff', sunPos: [-30, 70, 40], cable: '#7f93a6', cloud: '#c9d6ea', nameGlow: '#8fd3ff', nameGlowI: 1.8, signGlow: 1.2 };
 const PALETTES = { day: DAY, dusk: DUSK, night: NIGHT };
 const ACCENT = { build: '#5fd3ff', work: '#ffc233', stuck: '#ff7a1a', bad: '#e0655a', grey: '#9aa2a8', gold: '#e5bf57',
   silo: '#e7ecf0', backup: '#58a6ff', warn: '#ffcc33', lamp: '#ffe2a0' };
@@ -169,7 +168,7 @@ camera.position.copy(OFFSET);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.screenSpacePanning = false;
 controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
-controls.panSpeed = 2.4; controls.zoomSpeed = 1.4; controls.rotateSpeed = 0.7;
+controls.panSpeed = 1.5; controls.zoomSpeed = 1.4; controls.rotateSpeed = 0.7;
 controls.maxPolarAngle = Math.PI * 0.43; controls.minPolarAngle = Math.PI * 0.1; controls.minZoom = 0.25; controls.maxZoom = 7;
 const hemi = new THREE.HemisphereLight('#ffffff', '#3a4a5a', 1);
 const sun = new THREE.DirectionalLight('#ffffff', 2);
@@ -186,6 +185,9 @@ addEventListener('resize', resize); resize();
 
 // ================================================================ helpers
 const cache = new Map();
+// While set, every mesh made is ground: it may be walked over and never hides a label.
+let groundMode = false;
+const asGround = f => { groundMode = true; try { return f(); } finally { groundMode = false; } };
 const C = (k, f) => { if (!cache.has(k)) cache.set(k, f()); return cache.get(k); };
 const mat = (color, o = {}) => C('m' + color + JSON.stringify(o), () => new THREE.MeshStandardMaterial({ color, roughness: 0.82, ...o }));
 const glowMat = (color, i = 1.5) => C('g' + color + i, () => new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: i, roughness: 0.4 }));
@@ -194,7 +196,7 @@ function tex(w, h, draw) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
 }
 function mesh(parent, geo, m, x = 0, y = 0, z = 0, cast = true) {
-  const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = cast; o.receiveShadow = true; parent.add(o); return o;
+  const o = new THREE.Mesh(geo, m); if (groundMode) o.userData.ground = true; o.position.set(x, y, z); o.castShadow = cast; o.receiveShadow = true; parent.add(o); return o;
 }
 const boxM = (p, w, h, d, m, x, y, z, cast) => mesh(p, new THREE.BoxGeometry(w, h, d), m, x, y, z, cast);
 const cylM = (p, rt, rb, h, m, x, y, z, seg = 28, cast) => mesh(p, new THREE.CylinderGeometry(rt, rb, h, seg), m, x, y, z, cast);
@@ -221,11 +223,15 @@ function textTex(s, { px = 64, color = '#fff', bg = null, weight = 800, stroke =
     t.userData = { aspect: w / h }; return t;
   });
 }
-// occlude: the label hides behind anything in front of it instead of drawing over everything.
+// occlude: the label fades when a structure stands in front of it. Ground, water and cables never hide it.
+let labels = [];
 function sprite(parent, s, height, y, o = {}) {
   const t = textTex(s, o), occ = !!o.occlude;
-  const sp = new THREE.Sprite(C('sp' + t.uuid + occ, () => new THREE.SpriteMaterial({ map: t, depthTest: occ, depthWrite: false, transparent: true })));
-  sp.scale.set(height * t.userData.aspect, height, 1); sp.position.y = y; if (!occ) sp.renderOrder = 20; parent.add(sp); return sp;
+  const sp = new THREE.Sprite(occ ? new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true })
+    : C('sp' + t.uuid, () => new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true })));
+  sp.scale.set(height * t.userData.aspect, height, 1); sp.position.y = y; sp.renderOrder = 20; parent.add(sp);
+  if (occ) { sp.userData.own = true; sp.userData.fade = 1; labels.push(sp); }
+  return sp;
 }
 // Screen-facing directions for this camera: U runs right on screen, V towards the viewer.
 const Ux = Math.SQRT1_2, Uz = -Math.SQRT1_2, Vx = Math.SQRT1_2, Vz = Math.SQRT1_2;
@@ -245,9 +251,19 @@ function rimName(parent, s, rIn, rOut, P, y) {
       }
     });
   }));
-  const m = C('rimm' + t.uuid, () => new THREE.MeshStandardMaterial({ map: t, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -4 }));
+  // The glow mask: just the floor of each letter, so the cut lights up like an inlay after dark.
+  const glow = C(`rimg|${s}|${rIn}|${rOut}`, () => tex(1024, 1024, g => {
+    g.fillStyle = '#000'; g.fillRect(0, 0, 1024, 1024);
+    const c = 512, k = 512 / rOut, r = (rIn + rOut) / 2 * k, px = Math.round((rOut - rIn) * k * 0.6);
+    g.font = `800 ${px}px system-ui,sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const chars = [...s], widths = chars.map(ch => g.measureText(ch).width + px * 0.1), total = widths.reduce((a, b) => a + b, 0);
+    let ang = Math.PI / 4 + total / 2 / r;
+    chars.forEach((ch, i) => { const a = ang - widths[i] / 2 / r; ang -= widths[i] / r; g.save(); g.translate(c + Math.cos(a) * r, c + Math.sin(a) * r); g.rotate(a - Math.PI / 2); g.fillStyle = '#fff'; g.fillText(ch, 0, 0); g.restore(); });
+  }));
+  const m = C('rimm' + t.uuid + P.name, () => new THREE.MeshStandardMaterial({ map: t, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -4,
+    emissiveMap: glow, emissive: P.nameGlow, emissiveIntensity: P.nameGlowI }));
   const o = new THREE.Mesh(new THREE.RingGeometry(rIn, rOut, 96), m);
-  o.rotation.x = -Math.PI / 2; o.position.y = y; o.receiveShadow = true; parent.add(o); return o;
+  o.rotation.x = -Math.PI / 2; o.position.y = y; o.receiveShadow = true; o.userData.ground = true; parent.add(o); return o;
 }
 // Clouds: many soft lumps per texture, lighter on top, so fog reads as cloud rather than blobs.
 const cloudTex = i => C('cloud' + i, () => tex(256, 256, g => {
@@ -295,6 +311,17 @@ const octTex = () => C('oct', () => tex(128, 128, g => {
   g.closePath(); g.fillStyle = ACCENT.stuck; g.fill(); g.lineWidth = 7; g.strokeStyle = '#fff'; g.stroke();
   g.fillStyle = '#fff'; g.font = '900 78px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('!', 64, 68);
 }));
+function signTex(host, emissive) {
+  return C(`sign|${host}|${emissive}`, () => tex(512, 136, (g, w, h) => {
+    if (emissive) { g.fillStyle = '#1b2330'; g.fillRect(0, 0, w, h); }
+    else { const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, '#2f81f7'); gr.addColorStop(1, '#1a5bc4'); g.fillStyle = gr; g.fillRect(0, 0, w, h); }
+    g.strokeStyle = emissive ? '#9ec6ff' : 'rgba(255,255,255,0.9)'; g.lineWidth = 5;
+    g.beginPath(); g.arc(62, h / 2, 34, 0, 7); g.stroke();
+    g.beginPath(); g.ellipse(62, h / 2, 15, 34, 0, 0, 7); g.stroke();
+    g.beginPath(); g.moveTo(28, h / 2); g.lineTo(96, h / 2); g.stroke();
+    g.fillStyle = '#fff'; g.font = `700 ${host.length > 14 ? 44 : 52}px system-ui,sans-serif`; g.textBaseline = 'middle'; g.fillText(host, 116, h / 2 + 2);
+  }));
+}
 const padTex = k => C('pad' + k, () => tex(128, 128, g => {
   g.fillStyle = '#2b3641'; g.beginPath(); g.arc(64, 64, 62, 0, 7); g.fill();
   g.strokeStyle = '#f2f5f7'; g.lineWidth = 5; g.beginPath(); g.arc(64, 64, 50, 0, 7); g.stroke();
@@ -402,7 +429,7 @@ function environment(parent, e, u, v, P) {
   boxM(tower, b.w + 0.08, 0.14, b.d + 0.08, mat(key === 'ok' ? P.parapet : key === 'bad' ? ACCENT.bad : ACCENT.grey), 0, b.h + 0.07, 0);
   if (k !== 'preview' && e.activity !== 'leaving') {
     const pad = new THREE.Mesh(new THREE.CircleGeometry(Math.min(b.w, b.d) * 0.36, 40), C('padm' + k, () => new THREE.MeshStandardMaterial({ map: padTex(k === 'prod' ? 'P' : 'S'), transparent: true, roughness: 0.9 })));
-    pad.rotation.x = -Math.PI / 2; pad.rotation.z = Math.PI / 4; pad.position.y = b.h + 0.15; pad.receiveShadow = true; tower.add(pad);
+    pad.rotation.x = -Math.PI / 2; pad.position.y = b.h + 0.15; pad.receiveShadow = true; tower.add(pad);
   }
   if (k === 'preview') sprite(g, '#' + e.name.slice(3), 0.34, b.h + 0.5, { px: 44, color: '#f2f5f7', stroke: '#2b3641' });
   if (arriving) {
@@ -438,10 +465,17 @@ function environment(parent, e, u, v, P) {
       }
     }
     if (c.kind === 'domain' && e.activity !== 'leaving') {
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.42), C('sign' + c.host, () => new THREE.MeshStandardMaterial({ map: textTex(c.host, { px: 52, color: '#fff', bg: '#2f81f7', weight: 700 }), emissive: '#2f81f7', emissiveIntensity: 0.35, side: THREE.DoubleSide })));
-      const [sx0, sz0] = uv(0, -b.d * 0.5);
-      sign.rotation.y = Math.PI / 4; sign.position.set(sx0, b.h + 0.75, sz0); sign.castShadow = true; tower.add(sign);
-      for (const o of [-0.6, 0.6]) { const [px, pz] = uv(o, -b.d * 0.5); cylM(tower, 0.025, 0.025, 0.5, mat('#39444e'), px, b.h + 0.4, pz, 6); }
+      // A framed sign on legs at the back of the roof, facing the same way as the building's front, lit after dark.
+      const sw = Math.min(1.9, b.w - 0.15), sh = 0.5, z0 = -b.d / 2 + 0.14, sy = b.h + 0.2 + 0.35 + sh / 2;
+      for (const lx of [-sw * 0.32, sw * 0.32]) boxM(tower, 0.06, 0.4, 0.06, mat('#2b3641'), lx, b.h + 0.2 + 0.2, z0);
+      boxM(tower, sw + 0.1, sh + 0.1, 0.08, mat('#1f2933'), 0, sy, z0);
+      const face = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), C('signf' + c.host + P.name, () => new THREE.MeshStandardMaterial({
+        map: signTex(c.host, false), emissiveMap: signTex(c.host, false), emissive: '#ffffff', emissiveIntensity: P.signGlow, roughness: 0.5 })));
+      face.position.set(0, sy, z0 + 0.045); tower.add(face);
+      for (const lx of [-sw * 0.3, sw * 0.3]) {
+        boxM(tower, 0.03, 0.03, 0.22, mat('#2b3641'), lx, sy + sh / 2 + 0.08, z0 + 0.1, false);
+        mesh(tower, new THREE.SphereGeometry(0.045, 8, 6), glowMat(ACCENT.lamp, P.lamp + 0.3), lx, sy + sh / 2 + 0.06, z0 + 0.21, false);
+      }
     }
     if (c.kind === 'task') {
       const [cx, cz] = uv(-(b.w / 2 + 0.8), -0.2), ct = group(body, cx, 0, cz);
@@ -503,7 +537,8 @@ function spots(app) {
   pr.slice(0, 3).forEach((e, i) => out.push({ e, u: -2.1 + i * 2.1, v: 1.75 }));
   return out;
 }
-function islandBase(g, R, P, top) {
+function islandBase(g, R, P, top) { return asGround(() => islandBase0(g, R, P, top)); }
+function islandBase0(g, R, P, top) {
   const base = mesh(g, new THREE.CylinderGeometry(R, R * 0.78, 1.6, 56), [mat(P.rock), mat(top), mat(P.rock)], 0, -0.8, 0, false);
   base.receiveShadow = true;
   mesh(g, new THREE.CylinderGeometry(R + 0.06, R + 0.06, 0.08, 56), mat(P.curb), 0, 0.0, 0, false);
@@ -519,11 +554,13 @@ function islet(parent, app, pos, dockDir, P) {
     ring.computeLineDistances(); g.add(ring);
   } else {
     islandBase(g, RI, P, P.top);
-    mesh(g, new THREE.CylinderGeometry(4.7, 4.7, 0.09, 56), mat(P.plaza), 0, 0.045, 0, false);
-    // One path from the plaza to the dock.
-    const len = RI - 4.2, px = dockDir.x * (4.2 + len / 2), pz = dockDir.z * (4.2 + len / 2);
-    const path = boxM(g, len + 0.2, 0.08, 1.0, mat(P.path), px, 0.04, pz, false); path.rotation.y = -Math.atan2(dockDir.z, dockDir.x);
-    for (let i = 0; i < 4; i++) { const a = Math.PI / 4 + i * Math.PI / 2 + 0.3; lamp(g, Math.cos(a) * 4.35, Math.sin(a) * 4.35, P); }
+    asGround(() => {
+      mesh(g, new THREE.CylinderGeometry(4.7, 4.7, 0.09, 56), mat(P.plaza), 0, 0.045, 0, false);
+      // One path from the plaza to the dock.
+      const len = RI - 4.2, px = dockDir.x * (4.2 + len / 2), pz = dockDir.z * (4.2 + len / 2);
+      const path = boxM(g, len + 0.2, 0.08, 1.0, mat(P.path), px, 0.04, pz, false); path.rotation.y = -Math.atan2(dockDir.z, dockDir.x);
+      for (let i = 0; i < 4; i++) { const a = Math.PI / 4 + i * Math.PI / 2 + 0.3; lamp(g, Math.cos(a) * 4.35, Math.sin(a) * 4.35, P); }
+    });
   }
   rimName(g, app.name.toUpperCase(), 4.75, RI - 0.05, P, bare ? -0.52 : 0.06);
   for (const s of spots(app)) environment(g, s.e, s.u, s.v, P);
@@ -543,8 +580,10 @@ function islet(parent, app, pos, dockDir, P) {
 function platform(parent, P) {
   const g = group(parent);
   islandBase(g, RC, P, P.top);
-  mesh(g, new THREE.CylinderGeometry(RC - 1.2, RC - 1.2, 0.09, 64), mat(P.plaza), 0, 0.045, 0, false);
-  mesh(g, new THREE.CylinderGeometry(3.3, 3.5, 0.5, 48), mat(P.curb), 0, 0.25, 0);
+  asGround(() => {
+    mesh(g, new THREE.CylinderGeometry(RC - 1.2, RC - 1.2, 0.09, 64), mat(P.plaza), 0, 0.045, 0, false);
+    mesh(g, new THREE.CylinderGeometry(3.3, 3.5, 0.5, 48), mat(P.curb), 0, 0.25, 0);
+  });
   rimName(g, 'PLATFORM', RC - 1.15, RC - 0.05, P, 0.06);
   const byKind = Object.fromEntries(model.comps.map(c => [c.kind, c]));
   // ArgoCD: the spire the cableways hang from.
@@ -591,12 +630,17 @@ function platform(parent, P) {
       h = 1.8;
     }
     if (kind === 'external-dns') {
-      cylM(cg, 0.08, 0.12, 1.5, mat('#8fa0ad'), 0, 0.75, 0, 12);
-      const head = group(cg, 0, 1.55, 0);
-      const dish = mesh(head, new THREE.SphereGeometry(0.8, 24, 12, 0, Math.PI * 2, 0, Math.PI / 3), C('dish', () => new THREE.MeshStandardMaterial({ color: '#eef2f5', side: THREE.DoubleSide, roughness: 0.5 })), 0, 0, 0);
-      dish.rotation.x = -Math.PI / 2.4;
-      anim(t => { head.rotation.y = t / 2200; });
-      h = 2.3;
+      // An antenna: a mast, a turning head, a bowl-shaped dish and a feed horn in front of it.
+      cylM(cg, 0.07, 0.13, 1.5, mat('#8fa0ad'), 0, 0.75, 0, 12);
+      const yaw = group(cg, 0, 1.55, 0);
+      boxM(yaw, 0.24, 0.16, 0.24, mat('#5d6d7b'), 0, 0, 0);
+      const tilt = group(yaw, 0, 0.1, 0); tilt.rotation.x = 0.95;
+      const prof = []; for (let i = 0; i <= 14; i++) { const r = i / 14 * 0.78; prof.push(new THREE.Vector2(r, r * r * 0.5)); }
+      mesh(tilt, new THREE.LatheGeometry(prof, 40), C('dishm', () => new THREE.MeshStandardMaterial({ color: '#eef2f5', side: THREE.DoubleSide, roughness: 0.45 })), 0, 0.02, 0);
+      cylM(tilt, 0.016, 0.016, 0.6, mat('#8fa0ad'), 0, 0.32, 0, 6);
+      mesh(tilt, new THREE.ConeGeometry(0.07, 0.14, 12), mat('#5d6d7b'), 0, 0.62, 0);
+      anim(t => { yaw.rotation.y = t / 2600; });
+      h = 2.4;
     }
     if (kind === 'oauth2-proxy') {
       boxM(cg, 0.8, 2.6, 0.8, wall, 0, 1.3, 0); boxM(cg, 1.1, 0.35, 1.1, gold, 0, 2.78, 0);
@@ -653,7 +697,7 @@ function cableway(root, app, pos, P) {
   const sag = new THREE.Vector3(0, -1.6, 0);
   const curve = new THREE.CubicBezierCurve3(a, a.clone().lerp(b, 0.33).add(sag), a.clone().lerp(b, 0.66).add(sag), b);
   const cm = planned ? C('cabP' + P.cable, () => new THREE.MeshStandardMaterial({ color: P.cable, transparent: true, opacity: 0.3 })) : mat(P.cable, { metalness: 0.3, roughness: 0.4 });
-  const cable = mesh(root, new THREE.TubeGeometry(curve, 48, 0.06, 6), cm, 0, 0, 0, true);
+  const cable = asGround(() => mesh(root, new THREE.TubeGeometry(curve, 48, 0.06, 6), cm, 0, 0, 0, true));
   pulses(root, app, i => curve.getPointAt(i));
   if (app.sinkAt) anim(t => { const q = clamp01((t - app.sinkAt) / 1200); cable.visible = pg.visible = q < 1; pg.position.y = -q * 5; });
 }
@@ -706,7 +750,7 @@ function rebuild() {
   }
   water.material.color.set(p.water); water.userData.rip.material.map = rippleTex(p); water.userData.rip.material.needsUpdate = true;
   if (root) { scene.remove(root); dispose(root); }
-  anims = []; root = new THREE.Group(); scene.add(root);
+  anims = []; labels = []; root = new THREE.Group(); scene.add(root);
   platform(root, p);
   const lay = ringLayout();
   for (const a of model.apps) {
@@ -738,17 +782,40 @@ function fit() {
   camera.zoom = fitZoom = FRUST / (Math.max(s.x, s.z) * 0.4); camera.updateProjectionMatrix(); controls.update();
 }
 let fly = null, fitZoom = 1;
-// Idle tour: after a while without input, circle slowly and visit islets where something is happening.
-let lastInput = performance.now(), touring = false, nextStop = 0, stops = 0;
-for (const ev of ['pointerdown', 'wheel', 'keydown']) addEventListener(ev, () => { lastInput = performance.now(); if (touring) { touring = false; controls.autoRotate = false; fly = null; } }, { passive: true });
-function tour(t) {
-  if (!document.getElementById('idleTour').checked || t - lastInput < 8000) return;
-  if (!touring) { touring = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.35; nextStop = t + 1500; }
-  if (t < nextStop || fly) return;
-  const live = model.apps.filter(a => !a.sinkAt && a.cur), busy = live.filter(a => a.envs.some(e => e.activity || e.cond !== 'healthy'));
-  const list = busy.length ? busy : live, a = list[stops % Math.max(1, list.length)];
-  if (stops % 4 === 3 || !a) flyTo(0, 0, fitZoom); else flyTo(a.cur.x, a.cur.z, 1.7);
-  stops++; nextStop = t + 9000;
+
+// The automatic camera: while nobody is using the map it hovers over the whole Platform,
+// flies to wherever something happens, lingers, and drifts back out. Only input on the map counts.
+let lastInput = performance.now() - 4000, cam = 'none', pending = null, focusUntil = 0;
+for (const ev of ['pointerdown', 'wheel']) renderer.domElement.addEventListener(ev, () => {
+  lastInput = performance.now(); if (cam !== 'none') { cam = 'none'; controls.autoRotate = false; fly = null; }
+}, { passive: true });
+function attention(x, z) { pending = { x, z, at: performance.now() }; }
+const attend = a => { if (a && a.cur) attention(a.cur.x, a.cur.z); else if (a) { const p = target(a, ringLayout()); attention(p.x, p.z); } };
+const appOf = e => model.apps.find(a => a.name === e.app);
+function camera_(t) {
+  if (!document.getElementById('autoCam').checked || t - lastInput < 5000) return;
+  if (pending && t - pending.at > 15000) pending = null;
+  if (pending) { flyTo(pending.x, pending.z, 1.9); pending = null; cam = 'focus'; focusUntil = t + 8000; controls.autoRotate = true; controls.autoRotateSpeed = 0.5; return; }
+  if (cam === 'focus' && t > focusUntil && !fly) { flyTo(0, 0, fitZoom); cam = 'hover'; controls.autoRotateSpeed = 0.22; }
+  if (cam === 'none') { cam = 'hover'; controls.autoRotate = true; controls.autoRotateSpeed = 0.22; }
+}
+// Labels fade when a structure stands between them and the camera; ground, water and cables don't count.
+let lastOcc = 0;
+const vA = new THREE.Vector3(), nA = new THREE.Vector2(), occRay = new THREE.Raycaster();
+const isGround = o => { for (; o; o = o.parent) if (o.userData.ground) return true; return false; };
+function occlude(t) {
+  if (t - lastOcc > 120) {
+    lastOcc = t;
+    for (const sp of labels) {
+      sp.getWorldPosition(vA); const d = vA.clone().project(camera); nA.set(d.x, d.y);
+      occRay.setFromCamera(nA, camera);
+      const far = occRay.ray.origin.distanceTo(vA) - 0.3;
+      const hit = occRay.intersectObject(root, true).find(h => h.distance < far && !h.object.isSprite && !h.object.isLine && !h.object.isLineSegments
+        && !(h.object.material && h.object.material.transparent) && !isGround(h.object));
+      sp.userData.fade = hit ? 0.08 : 1;
+    }
+  }
+  for (const sp of labels) sp.material.opacity += (sp.userData.fade - sp.material.opacity) * 0.2;
 }
 function flyTo(x, z, zoom = 2) {
   const off = camera.position.clone().sub(controls.target);
@@ -757,7 +824,8 @@ function flyTo(x, z, zoom = 2) {
 renderer.setAnimationLoop(() => {
   const t = performance.now();
   for (const f of anims) f(t);
-  tour(t);
+  camera_(t);
+  occlude(t);
   if (water) { const m = water.userData.rip.material.map; if (m) { m.offset.x = t / 90000; m.offset.y = t / 140000; } }
   if (fly) {
     const q = clamp01((t - fly.t0) / 1500), e = ease(q);
@@ -804,7 +872,7 @@ const POOL = ['ledger', 'kantine', 'roomsy', 'fakturo', 'radar', 'intranet', 'on
 function removeApp(a) {
   const t0 = performance.now();
   for (const e of a.envs) { if (e.activity === 'unreleased') e.wasUnreleased = true; e.activity = 'leaving'; e.leaveAt = t0; e.stuck = false; }
-  log(`${a.name} leaving: final backups running`);
+  attend(a); log(`${a.name} leaving: final backups running`);
   later(3500, () => { const t = performance.now(); a.envs.forEach((e, i) => { e.crumbleAt = t + i * 150; }); });
   later(5000, () => { a.sinkAt = performance.now(); });
   later(6700, () => { model.apps = model.apps.filter(x => x !== a); model.free.push(a.slot); log(`${a.name} left`); });
@@ -817,35 +885,35 @@ const ACTIONS = {
     if (Math.random() < 0.5) list.push(mkEnv(name, 'staging', [cap('postgres')], { activity: 'arriving', bornAt: t + 300, quiet: true }));
     const a = addApp(name, list, { isNew: true });
     log(`${name} arrived, setting up`);
-    if (document.getElementById('flyNew').checked) { const p = target(a, ringLayout()); flyTo(p.x, p.z); }
+    attend(a);
     later(7000, () => { for (const e of a.envs) if (e.activity === 'arriving') e.activity = null; a.isNew = false; log(`${name} is serving`); });
   },
   firstDeploy() {
     const e = envs().find(v => v.activity === 'unreleased'); if (!e) return log('no Unreleased Environment left');
-    e.activity = 'arriving'; e.bornAt = performance.now(); log(`${e.app} ${e.name} got its first image, arriving`);
+    e.activity = 'arriving'; e.bornAt = performance.now(); attend(appOf(e)); log(`${e.app} ${e.name} got its first image, arriving`);
     later(6500, () => { e.activity = null; log(`${e.app} ${e.name} is serving`); });
   },
-  deploy() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; log(`Deploy to ${e.app} ${e.name}`); later(4500, () => { if (e.activity === 'deploying' && !e.stuck) { e.activity = null; log(`${e.app} ${e.name} deployed`); } }); },
-  stuck() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; log(`Deploy to ${e.app} ${e.name}`); later(2500, () => { e.stuck = true; e.why = 'migration Job failed'; log(`${e.app} ${e.name} Deploy stuck: migration Job failed`); }); },
-  update() { const e = pick(idle()); if (!e) return; e.activity = 'updating'; log(`${e.app} ${e.name} updating (secret set)`); later(4000, () => { if (!e.stuck) { e.activity = null; log(`${e.app} ${e.name} updated`); } }); },
-  degrade() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'degraded'; log(`${e.app} ${e.name} Degraded: CrashLoopBackOff`); } },
-  unknown() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'unknown'; log(`${e.app} ${e.name} Unknown: pod status Unknown`); } },
-  warn() { const c = pick(envs().flatMap(e => e.caps.filter(k => k.kind === 'postgres' && !k.warn).map(k => [e, k]))); if (c) { c[1].warn = true; log(`${c[0].app} ${c[0].name} database: backups failing`); } },
+  deploy() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; attend(appOf(e)); log(`Deploy to ${e.app} ${e.name}`); later(4500, () => { if (e.activity === 'deploying' && !e.stuck) { e.activity = null; log(`${e.app} ${e.name} deployed`); } }); },
+  stuck() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; log(`Deploy to ${e.app} ${e.name}`); later(2500, () => { e.stuck = true; e.why = 'migration Job failed'; attend(appOf(e)); log(`${e.app} ${e.name} Deploy stuck: migration Job failed`); }); },
+  update() { const e = pick(idle()); if (!e) return; e.activity = 'updating'; attend(appOf(e)); log(`${e.app} ${e.name} updating (secret set)`); later(4000, () => { if (!e.stuck) { e.activity = null; log(`${e.app} ${e.name} updated`); } }); },
+  degrade() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'degraded'; attend(appOf(e)); log(`${e.app} ${e.name} Degraded: CrashLoopBackOff`); } },
+  unknown() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'unknown'; attend(appOf(e)); log(`${e.app} ${e.name} Unknown: pod status Unknown`); } },
+  warn() { const c = pick(envs().flatMap(e => e.caps.filter(k => k.kind === 'postgres' && !k.warn).map(k => [e, k]))); if (c) { c[1].warn = true; attend(appOf(c[0])); log(`${c[0].app} ${c[0].name} database: backups failing`); } },
   preview() {
     const a = pick(model.apps.filter(x => !x.sinkAt && x.envs.some(e => e.name === 'staging'))); if (!a) return;
     const n = 40 + Math.floor(Math.random() * 60), e = mkEnv(a.name, `pr-${n}`, [cap('login')], { activity: 'arriving', bornAt: performance.now() });
-    a.envs.push(e); log(`${a.name} pr-${n} preview arriving`); later(6500, () => { e.activity = null; log(`${a.name} pr-${n} preview is serving`); });
+    a.envs.push(e); attend(a); log(`${a.name} pr-${n} preview arriving`); later(6500, () => { e.activity = null; log(`${a.name} pr-${n} preview is serving`); });
   },
   closePreview() {
     const e = pick(envs().filter(v => v.name.startsWith('pr-') && v.activity !== 'leaving')); if (!e) return log('no preview open');
-    e.activity = 'leaving'; e.leaveAt = performance.now(); log(`${e.app} ${e.name} leaving`);
+    e.activity = 'leaving'; e.leaveAt = performance.now(); attend(appOf(e)); log(`${e.app} ${e.name} leaving`);
     later(3000, () => { e.crumbleAt = performance.now(); });
     later(4400, () => { const a = model.apps.find(x => x.name === e.app); if (a) a.envs = a.envs.filter(v => v !== e); log(`${e.app} ${e.name} left`); });
   },
   deleteApp() { const a = pick(deletable()); if (a) removeApp(a); },
   deleteTwo() { const a = pick(deletable()); if (!a) return; removeApp(a); setTimeout(() => { const b = pick(deletable()); if (b) { removeApp(b); rebuild(); } }, 1200); },
-  bump() { const c = model.comps.find(k => k.kind === 'cert-manager'); c.activity = 'updating'; c.stuck = false; log('cert-manager updating (chart bump)'); later(4000, () => { c.activity = null; log('cert-manager updated'); }); },
-  traefik() { const c = model.comps.find(k => k.kind === 'traefik'); c.cond = c.cond === 'healthy' ? 'degraded' : 'healthy'; log(`Traefik ${c.cond === 'healthy' ? 'recovered' : 'Degraded'}`); },
+  bump() { const c = model.comps.find(k => k.kind === 'cert-manager'); c.activity = 'updating'; c.stuck = false; attention(0, 0); log('cert-manager updating (chart bump)'); later(4000, () => { c.activity = null; log('cert-manager updated'); }); },
+  traefik() { const c = model.comps.find(k => k.kind === 'traefik'); c.cond = c.cond === 'healthy' ? 'degraded' : 'healthy'; attention(0, 0); log(`Traefik ${c.cond === 'healthy' ? 'recovered' : 'Degraded'}`); },
   lose() { model.clusterLost = !model.clusterLost; log(model.clusterLost ? 'Argus lost the cluster' : 'Argus reconnected'); },
   settle() {
     for (const e of envs()) { if (e.activity !== 'unreleased' && e.activity !== 'leaving') e.activity = null; e.stuck = false; e.cond = 'healthy'; for (const c of e.caps) { c.warn = false; c.cond = 'healthy'; } }
@@ -861,6 +929,10 @@ log('Argus connected (fake data)');
 rebuild();
 const params = new URLSearchParams(location.search);
 for (const a of (params.get('do') || '').split(',').filter(Boolean)) { if (ACTIONS[a]) { ACTIONS[a](); rebuild(); } }
+// ?at=x,z,zoom&cam=dx,dy,dz frames a spot for screenshots.
+if (params.get('at')) { const [x, z, zm] = params.get('at').split(',').map(Number), o = (params.get('cam') || '70,62,70').split(',').map(Number);
+  controls.target.set(x, 0, z); camera.position.set(x + o[0], o[1], z + o[2]); camera.zoom = zm; camera.updateProjectionMatrix(); document.getElementById('autoCam').checked = false; }
+if (params.get('focus') === 'platform') { controls.target.set(0, 0, 0); camera.position.copy(OFFSET); camera.zoom = 2.6; camera.updateProjectionMatrix(); document.getElementById('autoCam').checked = false; }
 </script>
 </body>
 </html>
