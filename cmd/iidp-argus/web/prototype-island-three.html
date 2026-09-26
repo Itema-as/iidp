@@ -5,10 +5,10 @@
   new visuals. The rendering decision for the Argus map (#99) is still SVG
   without WebGL; this file is for comparison.
 
-  Two ways to connect islets to the Platform, and only to the Platform:
-    ?variant=lines    aerial cableways from the Platform spire; islets on fixed orbits, never move
-    ?variant=bridges  one orbit, a straight bridge each; the orbit widens and islets glide as it fills
-  The Night toggle is separate. Loads three.js from a CDN, so it needs internet.
+  Islets connect only to the Platform, by aerial cableways from its spire; islets
+  sit on fixed orbits and never move. ?layout=bridges shows the alternative: one
+  orbit, a straight bridge each, widening as it fills. ?variant=day|dusk|night.
+  After 8 seconds without input the camera tours the islets where something is happening. Loads three.js from a CDN, so it needs internet.
   Left-drag pans, right-drag rotates, scroll zooms. ?do=arrive,deleteApp runs events on load.
 -->
 <html lang="en">
@@ -68,15 +68,15 @@
 <div id="err">Couldn't start. This prototype loads three.js from a CDN and needs WebGL.</div>
 <button id="togglePanel">Hide panel</button>
 <div id="switcher">
-  <button id="prev" aria-label="Previous variant">‹</button>
+  <button id="prev" aria-label="Previous palette">‹</button>
   <div class="label" id="variantLabel"></div>
-  <button id="next" aria-label="Next variant">›</button>
+  <button id="next" aria-label="Next palette">›</button>
 </div>
 <div id="tip"></div>
 <aside id="panel">
   <h1>Push the Platform around</h1>
   <p class="note">Fake data. Left-drag pans, right-drag rotates, scroll zooms. Hover anything.</p>
-  <label class="opt"><input type="checkbox" id="night"> Night</label>
+  <label class="opt"><input type="checkbox" id="idleTour" checked> Idle tour after 8 s without input</label>
   <label class="opt"><input type="checkbox" id="flyNew" checked> Fly to Applications as they arrive</label>
   <h2>Events</h2>
   <div class="actions">
@@ -139,15 +139,21 @@ function tipEnv(e) {
 const tipComp = c => `${c.label} (Platform component)\nCondition: ${condLabel(c)}\nActivity: ${actLabel(c)}`;
 
 // ================================================================ look
-const DAY = { sky: '#dfe7ee', water: '#b7c8d6', shallows: '#c9d6e0', ripple: 'rgba(255,255,255,0.16)', rock: '#2b3540', top: '#3c4a58',
-  plaza: '#4c5c6c', curb: '#6d7e8e', path: '#57687a', engDark: '#232d36', engLight: '#6a7d8e', wall: '#f5f7f9', plinth: '#c5ced6',
-  parapet: '#d5dce2', glass: '#86bde9', glassDark: '#50606d', glow: 0.08, lamp: 0.2, hemi: 1.2, sun: 2.6, sunColor: '#fff6e8', cable: '#c9d4dd' };
-const NIGHT = { ...DAY, sky: '#070e15', water: '#0a1620', shallows: '#10233a', ripple: 'rgba(160,200,255,0.05)', rock: '#161d24', top: '#2c3743',
-  plaza: '#374452', curb: '#4d5c6b', path: '#3f4d5b', engDark: '#141b21', engLight: '#4a5b6a', wall: '#c7d0d8', plinth: '#8a96a0',
-  parapet: '#a3aeb7', glass: '#ffcb6b', glassDark: '#26313a', glow: 1.7, lamp: 2.2, hemi: 0.3, sun: 0.55, sunColor: '#9fb7ff', cable: '#5f7486' };
+const DAY = { name: 'Day', skyTop: '#c9d6e2', skyBottom: '#e9eff4', water: '#b7c8d6', shallows: '#c9d6e0', ripple: 'rgba(255,255,255,0.16)',
+  rock: '#2b3540', top: '#3c4a58', plaza: '#4c5c6c', curb: '#6d7e8e', path: '#57687a', engDark: '#232d36', engLight: '#8a9bab',
+  wall: '#f5f7f9', plinth: '#c5ced6', parapet: '#d5dce2', glass: '#86bde9', glassDark: '#50606d', glow: 0.08, lamp: 0.2,
+  hemi: 1.2, hemiSky: '#ffffff', hemiGround: '#3a4a5a', sun: 2.6, sunColor: '#fff6e8', sunPos: [-40, 80, 25], cable: '#c9d4dd', cloud: '#ffffff' };
+const DUSK = { ...DAY, name: 'Dusk', skyTop: '#565d86', skyBottom: '#f0b48d', water: '#7c84b8', shallows: '#9aa1cf', ripple: 'rgba(255,225,200,0.14)',
+  rock: '#262b3c', top: '#3a4359', plaza: '#4a5369', curb: '#6a7386', path: '#545e70', engDark: '#20242e', engLight: '#8b93a6',
+  wall: '#f1ece8', plinth: '#c4bdb9', parapet: '#d8d1cd', glass: '#ffcf86', glassDark: '#4c5563', glow: 0.6, lamp: 1.5,
+  hemi: 1.0, hemiSky: '#c4c0f2', hemiGround: '#4a4060', sun: 2.4, sunColor: '#ffa25e', sunPos: [-70, 24, -20], cable: '#bdb6c8', cloud: '#ffe9dc' };
+const NIGHT = { ...DAY, name: 'Night', skyTop: '#0c1a2b', skyBottom: '#1f3854', water: '#11253a', shallows: '#1b3552', ripple: 'rgba(170,205,255,0.07)',
+  rock: '#1d2630', top: '#36434f', plaza: '#415060', curb: '#5a6c7e', path: '#485868', engDark: '#161d24', engLight: '#6a7d8f',
+  wall: '#d5dde3', plinth: '#8f9ba5', parapet: '#aab5be', glass: '#ffcb6b', glassDark: '#2b3642', glow: 1.5, lamp: 2.4,
+  hemi: 1.0, hemiSky: '#9fb7ff', hemiGround: '#1c2533', sun: 1.2, sunColor: '#a9c0ff', sunPos: [-30, 70, 40], cable: '#7f93a6', cloud: '#c9d6ea' };
+const PALETTES = { day: DAY, dusk: DUSK, night: NIGHT };
 const ACCENT = { build: '#5fd3ff', work: '#ffc233', stuck: '#ff7a1a', bad: '#e0655a', grey: '#9aa2a8', gold: '#e5bf57',
   silo: '#e7ecf0', backup: '#58a6ff', warn: '#ffcc33', lamp: '#ffe2a0' };
-const VARIANTS = { lines: 'Lines: cableways from the Platform', bridges: 'Bridges: one orbit, glides as it fills' };
 
 // ================================================================ three.js setup
 const stage = document.getElementById('stage');
@@ -163,6 +169,7 @@ camera.position.copy(OFFSET);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.screenSpacePanning = false;
 controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.panSpeed = 2.4; controls.zoomSpeed = 1.4; controls.rotateSpeed = 0.7;
 controls.maxPolarAngle = Math.PI * 0.43; controls.minPolarAngle = Math.PI * 0.1; controls.minZoom = 0.25; controls.maxZoom = 7;
 const hemi = new THREE.HemisphereLight('#ffffff', '#3a4a5a', 1);
 const sun = new THREE.DirectionalLight('#ffffff', 2);
@@ -214,32 +221,48 @@ function textTex(s, { px = 64, color = '#fff', bg = null, weight = 800, stroke =
     t.userData = { aspect: w / h }; return t;
   });
 }
+// occlude: the label hides behind anything in front of it instead of drawing over everything.
 function sprite(parent, s, height, y, o = {}) {
-  const t = textTex(s, o), sp = new THREE.Sprite(C('sp' + t.uuid, () => new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true })));
-  sp.scale.set(height * t.userData.aspect, height, 1); sp.position.y = y; sp.renderOrder = 20; parent.add(sp); return sp;
+  const t = textTex(s, o), occ = !!o.occlude;
+  const sp = new THREE.Sprite(C('sp' + t.uuid + occ, () => new THREE.SpriteMaterial({ map: t, depthTest: occ, depthWrite: false, transparent: true })));
+  sp.scale.set(height * t.userData.aspect, height, 1); sp.position.y = y; if (!occ) sp.renderOrder = 20; parent.add(sp); return sp;
 }
 // Screen-facing directions for this camera: U runs right on screen, V towards the viewer.
 const Ux = Math.SQRT1_2, Uz = -Math.SQRT1_2, Vx = Math.SQRT1_2, Vz = Math.SQRT1_2;
 const uv = (u, v) => [u * Ux + v * Vx, u * Uz + v * Vz];
-// A name cut into stone: a lit lower lip and a shadowed upper wall, then the dark floor of the cut.
-function carve(parent, s, u, v, height, P) {
-  const t = C(`carve|${s}|${P.engDark}`, () => {
-    const px = 110, m = document.createElement('canvas').getContext('2d'); m.font = `800 ${px}px system-ui,sans-serif`;
-    const w = Math.ceil(m.measureText(s).width) + 60, h = px + 40;
-    const x = tex(w, h, g => {
-      g.font = `800 ${px}px system-ui,sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillText(s, w / 2, h / 2 - 5);
-      g.fillStyle = P.engLight; g.fillText(s, w / 2, h / 2 + 5);
-      g.fillStyle = P.engDark; g.fillText(s, w / 2, h / 2);
+// The name cut into the rim, following its curve, centred on the side that faces the viewer.
+function rimName(parent, s, rIn, rOut, P, y) {
+  const t = C(`rim|${s}|${rIn}|${rOut}|${P.engDark}|${P.engLight}`, () => tex(1024, 1024, g => {
+    const c = 512, k = 512 / rOut, r = (rIn + rOut) / 2 * k, px = Math.round((rOut - rIn) * k * 0.6);
+    g.font = `800 ${px}px system-ui,sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const chars = [...s], widths = chars.map(ch => g.measureText(ch).width + px * 0.1), total = widths.reduce((a, b) => a + b, 0);
+    // In this texture the viewer is at 45 degrees; text runs clockwise-to-anticlockwise so it reads left to right on screen.
+    let ang = Math.PI / 4 + total / 2 / r;
+    chars.forEach((ch, i) => {
+      const a = ang - widths[i] / 2 / r; ang -= widths[i] / r;
+      for (const [dr, col] of [[4, P.engLight], [-2, 'rgba(0,0,0,0.45)'], [0, P.engDark]]) {
+        g.save(); g.translate(c + Math.cos(a) * (r + dr), c + Math.sin(a) * (r + dr)); g.rotate(a - Math.PI / 2); g.fillStyle = col; g.fillText(ch, 0, 0); g.restore();
+      }
     });
-    x.userData = { aspect: w / h }; return x;
-  });
-  const m = C('carvem' + t.uuid, () => new THREE.MeshStandardMaterial({ map: t, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -4 }));
-  const o = new THREE.Mesh(new THREE.PlaneGeometry(height * t.userData.aspect, height), m);
-  const [x, z] = uv(u, v);
-  // Flat on the ground, then turned so it reads left to right on screen.
-  o.rotation.order = 'YXZ'; o.rotation.set(-Math.PI / 2, Math.PI / 4, 0);
-  o.position.set(x, 0.09, z); o.receiveShadow = true; parent.add(o); return o;
+  }));
+  const m = C('rimm' + t.uuid, () => new THREE.MeshStandardMaterial({ map: t, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -4 }));
+  const o = new THREE.Mesh(new THREE.RingGeometry(rIn, rOut, 96), m);
+  o.rotation.x = -Math.PI / 2; o.position.y = y; o.receiveShadow = true; parent.add(o); return o;
+}
+// Clouds: many soft lumps per texture, lighter on top, so fog reads as cloud rather than blobs.
+const cloudTex = i => C('cloud' + i, () => tex(256, 256, g => {
+  let seed = 7 + i * 131; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let k = 0; k < 40; k++) {
+    const a = rnd() * 6.283, d = Math.pow(rnd(), 0.6) * 72, x = 128 + Math.cos(a) * d * 1.3, y = 138 + Math.sin(a) * d * 0.62, r = 24 + rnd() * 34;
+    const sh = Math.max(200, Math.min(255, Math.round(236 - (y - 138) * 0.35)));
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, `rgba(${sh},${Math.min(255, sh + 4)},${Math.min(255, sh + 8)},0.5)`); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+  }
+}));
+function cloud(parent, i, opacity, tint) {
+  const c = new THREE.Sprite(new THREE.SpriteMaterial({ map: cloudTex(i % 3), color: tint, transparent: true, opacity, depthWrite: false }));
+  c.userData.own = true; parent.add(c); return c;
 }
 
 // ================================================================ animation
@@ -333,12 +356,12 @@ function smoke(g, y, color = '#50565b') {
     anim(t => { const k = ((t / 1000 + i * 0.7) % 2.8) / 2.8; p.position.set(k * 0.7, y + 0.2 + k * 2.6, -k * 0.35); p.scale.setScalar(0.45 + k * 1.6); p.material.opacity = 0.8 * (1 - k); });
   }
 }
-function fogBank(g, h) {
-  for (let i = 0; i < 6; i++) {
-    const p = puff(g, '#e9eef2', 0.8);
-    anim(t => { const a = i * 1.05 + t / 3500; p.position.set(Math.cos(a) * 1.1, h * (0.25 + 0.13 * i), Math.sin(a) * 1.1); p.scale.setScalar(2.4 + 0.35 * Math.sin(t / 800 + i)); });
+function fogBank(g, h, P) {
+  for (let i = 0; i < 7; i++) {
+    const c = cloud(g, i, 0.93, P.cloud), a0 = i * 0.9, sz = 2.4 + (i % 3) * 0.7, yy = h * (0.12 + 0.14 * i);
+    anim(t => { const a = a0 + t / 7000; c.position.set(Math.cos(a) * 1.05, yy + Math.sin(t / 1600 + i) * 0.12, Math.sin(a) * 1.05); c.scale.set(sz * 1.7, sz, 1); c.material.rotation = Math.sin(t / 5000 + i) * 0.12; });
   }
-  sprite(g, '?', 0.9, h + 0.7, { px: 80, color: '#5a6873', stroke: '#eef2f5' });
+  sprite(g, '?', 0.9, h + 1.1, { px: 80, color: '#5a6873', stroke: '#eef2f5' });
 }
 function warnBeacon(g, x, y, z) {
   const b = group(g, x, y, z);
@@ -401,14 +424,24 @@ function environment(parent, e, u, v, P) {
       if (c.warn) warnBeacon(s, 0, 1.45, 0);
     }
     if (c.kind === 'login') {
-      const [ax, az] = uv(0, b.d / 2 * 1.41 + 0.45);
-      const arch = mesh(body, new THREE.TorusGeometry(0.45, 0.07, 8, 24, Math.PI), mat(bad ? ACCENT.bad : ACCENT.gold, { metalness: 0.4, roughness: 0.4 }), ax, 0, az);
-      arch.rotation.y = Math.PI / 4;
+      // A gate: two posts, a gold lintel with a ring for a key, two open leaves.
+      const [ax, az] = uv(0, b.d / 2 * 1.41 + 0.5), gate = group(body, ax, 0, az);
+      gate.rotation.y = Math.PI / 4; gate.scale.setScalar(Math.min(1, b.w / 1.5));
+      const post = mat(bad ? ACCENT.bad : '#2b3641'), gold = mat(bad ? ACCENT.bad : ACCENT.gold, { metalness: 0.5, roughness: 0.35 });
+      for (const sx of [-0.58, 0.58]) { boxM(gate, 0.15, 1.0, 0.15, post, sx, 0.5, 0); mesh(gate, new THREE.SphereGeometry(0.09, 12, 8), gold, sx, 1.06, 0); }
+      boxM(gate, 1.36, 0.1, 0.12, gold, 0, 0.94, 0);
+      mesh(gate, new THREE.TorusGeometry(0.08, 0.025, 8, 16), gold, 0, 1.1, 0);
+      for (const sd of [-1, 1]) {
+        const leaf = group(gate, sd * 0.5, 0, 0); leaf.rotation.y = sd * 0.85;
+        for (let k = 0; k < 4; k++) boxM(leaf, 0.03, 0.6, 0.03, gold, -sd * (0.07 + k * 0.12), 0.4, 0);
+        for (const yy of [0.14, 0.68]) boxM(leaf, 0.46, 0.03, 0.03, gold, -sd * 0.23, yy, 0);
+      }
     }
     if (c.kind === 'domain' && e.activity !== 'leaving') {
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.42), C('sign' + c.host, () => new THREE.MeshStandardMaterial({ map: textTex(c.host, { px: 52, color: '#fff', bg: '#2f81f7', weight: 700 }), emissive: '#2f81f7', emissiveIntensity: 0.35, side: THREE.DoubleSide })));
-      sign.rotation.y = Math.PI / 4; sign.position.set(0, b.h + 0.75, 0); sign.castShadow = true; tower.add(sign);
-      for (const o of [-0.6, 0.6]) { const [px, pz] = uv(o, 0); cylM(tower, 0.025, 0.025, 0.5, mat('#39444e'), px, b.h + 0.4, pz, 6); }
+      const [sx0, sz0] = uv(0, -b.d * 0.5);
+      sign.rotation.y = Math.PI / 4; sign.position.set(sx0, b.h + 0.75, sz0); sign.castShadow = true; tower.add(sign);
+      for (const o of [-0.6, 0.6]) { const [px, pz] = uv(o, -b.d * 0.5); cylM(tower, 0.025, 0.025, 0.5, mat('#39444e'), px, b.h + 0.4, pz, 6); }
     }
     if (c.kind === 'task') {
       const [cx, cz] = uv(-(b.w / 2 + 0.8), -0.2), ct = group(body, cx, 0, cz);
@@ -441,7 +474,7 @@ function environment(parent, e, u, v, P) {
     const red = puff(g, '#ff4d3d', 0.5, true); red.position.y = 0.4;
     anim(t => { const k = 0.5 + 0.5 * Math.sin(t / 260); red.scale.setScalar(2.4 + 1.2 * k); red.material.opacity = 0.2 + 0.35 * k; });
   }
-  if (e.cond === 'unknown') fogBank(g, b.h);
+  if (e.cond === 'unknown') fogBank(g, b.h, P);
   if (act === 'leaving') {
     // Floors come off from the top while the final backup rises from the silo.
     const floors = Math.max(2, Math.round(b.h / 0.6));
@@ -477,7 +510,7 @@ function islandBase(g, R, P, top) {
   mesh(g, new THREE.CylinderGeometry(R + 1.6, R + 1.6, 0.04, 56), C('shal' + P.shallows, () => new THREE.MeshStandardMaterial({ color: P.shallows, transparent: true, opacity: 0.75, roughness: 0.3 })), 0, -0.66, 0, false);
 }
 // dockDir: unit vector (world x, z) from the islet towards the Platform.
-function islet(parent, app, pos, dockDir, P, variant) {
+function islet(parent, app, pos, dockDir, P) {
   const g = group(parent, pos.x, 0, pos.z);
   const bare = app.envs.every(v => v.activity === 'unreleased' || v.wasUnreleased);
   if (bare) {
@@ -492,7 +525,7 @@ function islet(parent, app, pos, dockDir, P, variant) {
     const path = boxM(g, len + 0.2, 0.08, 1.0, mat(P.path), px, 0.04, pz, false); path.rotation.y = -Math.atan2(dockDir.z, dockDir.x);
     for (let i = 0; i < 4; i++) { const a = Math.PI / 4 + i * Math.PI / 2 + 0.3; lamp(g, Math.cos(a) * 4.35, Math.sin(a) * 4.35, P); }
   }
-  carve(g, app.name.toUpperCase(), 0, 5.05, 0.95, P).position.y = bare ? -0.52 : 0.09;
+  rimName(g, app.name.toUpperCase(), 4.75, RI - 0.05, P, bare ? -0.52 : 0.06);
   for (const s of spots(app)) environment(g, s.e, s.u, s.v, P);
   if (app.isNew) {
     // A ripple on the water announces the arrival.
@@ -512,7 +545,7 @@ function platform(parent, P) {
   islandBase(g, RC, P, P.top);
   mesh(g, new THREE.CylinderGeometry(RC - 1.2, RC - 1.2, 0.09, 64), mat(P.plaza), 0, 0.045, 0, false);
   mesh(g, new THREE.CylinderGeometry(3.3, 3.5, 0.5, 48), mat(P.curb), 0, 0.25, 0);
-  carve(g, 'PLATFORM', 0, RC - 0.6, 1.0, P);
+  rimName(g, 'PLATFORM', RC - 1.15, RC - 0.05, P, 0.06);
   const byKind = Object.fromEntries(model.comps.map(c => [c.kind, c]));
   // ArgoCD: the spire the cableways hang from.
   const argo = byKind.argocd, sp = group(g, 0, 0.5, 0); sp.userData.tip = tipComp(argo);
@@ -522,7 +555,7 @@ function platform(parent, P) {
   beacon.userData.own = true;
   const halo = puff(sp, '#ffe08a', 0.6, true); halo.position.y = 9.45;
   anim(t => { const k = 0.5 + 0.5 * Math.sin(t / (argo.activity ? 140 : 600)); beacon.material.emissiveIntensity = 1 + 2.5 * k; halo.scale.setScalar(2 + 2 * k); halo.material.opacity = 0.25 + 0.45 * k; });
-  sprite(sp, 'ArgoCD', 0.7, 10.5, { px: 44, color: '#eef2f5', stroke: '#1b232a', weight: 700 });
+  sprite(sp, 'ArgoCD', 0.7, 10.5, { px: 44, color: '#eef2f5', stroke: '#1b232a', weight: 700, occlude: true });
   if (argo.activity) sweep(sp, { w: 1.2, d: 1.2, h: 9 }, argo.stuck);
   // The rest stand on a circle round the spire.
   const ring = { traefik: 25, 'deploy-gate': 75, 'cert-manager': 125, cnpg: 175, 'external-dns': 225, 'oauth2-proxy': 280, alloy: 330 };
@@ -583,7 +616,7 @@ function platform(parent, P) {
       }
       h = 4.2;
     }
-    sprite(cg, c.label, 0.62, h + 0.7, { px: 44, color: '#eef2f5', stroke: '#1b232a', weight: 700 });
+    sprite(cg, c.label, 0.62, h + 0.7, { px: 44, color: '#eef2f5', stroke: '#1b232a', weight: 700, occlude: true });
     if (c.activity) sweep(cg, { w: 1.6, d: 1.4, h }, c.stuck);
     if (c.stuck) siren(cg, h);
     if (c.cond === 'degraded') smoke(cg, h);
@@ -606,7 +639,7 @@ function ringLayout() {
   const r = Math.max(22, (n * 15.5) / (2 * Math.PI));
   return new Map(apps.map((a, i) => { const ang = Math.PI / 4 + (i / n) * Math.PI * 2; return [a, { x: Math.cos(ang) * r, z: Math.sin(ang) * r }]; }));
 }
-const target = (a, lay) => variant === 'lines' ? orbitSlot(a.slot) : lay.get(a);
+const target = (a, lay) => layout === 'lines' ? orbitSlot(a.slot) : lay.get(a);
 // A cable from the spire's gold ring to the islet's pylon. Deploys run along it as light.
 function cableway(root, app, pos, P) {
   const dir = new THREE.Vector3(pos.x, 0, pos.z).normalize();
@@ -653,15 +686,18 @@ function pulses(root, app, at) {
 }
 
 // ================================================================ build, loop, camera
-let root = null, variant = new URLSearchParams(location.search).get('variant');
-if (!VARIANTS[variant]) variant = 'lines';
+const qs = new URLSearchParams(location.search);
+let root = null, palette = qs.get('variant'), layout = qs.get('layout') === 'bridges' ? 'bridges' : 'lines';
+if (!PALETTES[palette]) palette = 'day';
 let water = null, fitted = false;
-const P = () => document.getElementById('night').checked ? NIGHT : DAY;
+const P = () => PALETTES[palette];
+const skyTex = p => C('sky' + p.name, () => tex(4, 512, (g, w, h) => { const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, p.skyTop); gr.addColorStop(1, p.skyBottom); g.fillStyle = gr; g.fillRect(0, 0, w, h); }));
 function dispose(o) { o.traverse(x => { if (x.geometry) x.geometry.dispose(); if (x.userData.own && x.material) x.material.dispose(); }); }
 function rebuild() {
   const p = P();
-  scene.background = new THREE.Color(p.sky); scene.fog = new THREE.Fog(p.sky, 120, 320);
-  hemi.intensity = p.hemi; sun.intensity = p.sun; sun.color.set(p.sunColor);
+  scene.background = skyTex(p); scene.fog = null;
+  hemi.intensity = p.hemi; hemi.color.set(p.hemiSky); hemi.groundColor.set(p.hemiGround);
+  sun.intensity = p.sun; sun.color.set(p.sunColor); sun.position.set(...p.sunPos);
   if (!water) {
     water = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200), new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.1 }));
     water.rotation.x = -Math.PI / 2; water.position.y = -0.7; water.receiveShadow = true; scene.add(water);
@@ -675,10 +711,10 @@ function rebuild() {
   const lay = ringLayout();
   for (const a of model.apps) {
     const tgt = target(a, lay);
-    if (!a.cur || variant === 'lines') a.cur = { ...tgt };
+    if (!a.cur || layout === 'lines') a.cur = { ...tgt };
     const dirTo = () => { const v = new THREE.Vector3(-a.cur.x, 0, -a.cur.z).normalize(); return v; };
-    const g = islet(root, a, a.cur, dirTo(), p, variant);
-    if (variant === 'lines') cableway(root, a, a.cur, p);
+    const g = islet(root, a, a.cur, dirTo(), p);
+    if (layout === 'lines') cableway(root, a, a.cur, p);
     else {
       bridge(root, a, p);
       anim(() => { a.cur.x += (tgt.x - a.cur.x) * 0.04; a.cur.z += (tgt.z - a.cur.z) * 0.04; g.position.x = a.cur.x; g.position.z = a.cur.z; });
@@ -686,22 +722,34 @@ function rebuild() {
   }
   if (model.clusterLost) {
     const bb = new THREE.Box3().setFromObject(root);
-    for (let i = 0; i < 22; i++) {
-      const f = puff(root, '#e8eef2', 0.75), x = THREE.MathUtils.lerp(bb.min.x, bb.max.x, ((i * 37) % 100) / 100), z = THREE.MathUtils.lerp(bb.min.z, bb.max.z, ((i * 61) % 100) / 100);
-      anim(t => { f.position.set(x + Math.sin(t / 3000 + i) * 2, 3 + (i % 4), z); f.scale.setScalar(20); });
+    for (let i = 0; i < 30; i++) {
+      const f = cloud(root, i, 0.9, p.cloud), x = THREE.MathUtils.lerp(bb.min.x, bb.max.x, ((i * 37) % 100) / 100), z = THREE.MathUtils.lerp(bb.min.z, bb.max.z, ((i * 61) % 100) / 100);
+      anim(t => { f.position.set(x + Math.sin(t / 5000 + i) * 3, 3 + (i % 5) * 1.2, z); f.scale.set(26, 14, 1); f.material.rotation = Math.sin(t / 9000 + i) * 0.1; });
     }
   }
   document.getElementById('lost').style.display = model.clusterLost ? 'block' : 'none';
-  document.getElementById('variantLabel').textContent = VARIANTS[variant];
+  document.getElementById('variantLabel').textContent = p.name + (layout === 'lines' ? ' · cableways' : ' · bridges');
   if (!fitted) { fit(); fitted = true; }
   renderPanel();
 }
 function fit() {
   const bb = new THREE.Box3().setFromObject(root), c = bb.getCenter(new THREE.Vector3()), s = bb.getSize(new THREE.Vector3());
   controls.target.set(c.x, 0, c.z); camera.position.copy(controls.target).add(OFFSET);
-  camera.zoom = FRUST / (Math.max(s.x, s.z) * 0.4); camera.updateProjectionMatrix(); controls.update();
+  camera.zoom = fitZoom = FRUST / (Math.max(s.x, s.z) * 0.4); camera.updateProjectionMatrix(); controls.update();
 }
-let fly = null;
+let fly = null, fitZoom = 1;
+// Idle tour: after a while without input, circle slowly and visit islets where something is happening.
+let lastInput = performance.now(), touring = false, nextStop = 0, stops = 0;
+for (const ev of ['pointerdown', 'wheel', 'keydown']) addEventListener(ev, () => { lastInput = performance.now(); if (touring) { touring = false; controls.autoRotate = false; fly = null; } }, { passive: true });
+function tour(t) {
+  if (!document.getElementById('idleTour').checked || t - lastInput < 8000) return;
+  if (!touring) { touring = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.35; nextStop = t + 1500; }
+  if (t < nextStop || fly) return;
+  const live = model.apps.filter(a => !a.sinkAt && a.cur), busy = live.filter(a => a.envs.some(e => e.activity || e.cond !== 'healthy'));
+  const list = busy.length ? busy : live, a = list[stops % Math.max(1, list.length)];
+  if (stops % 4 === 3 || !a) flyTo(0, 0, fitZoom); else flyTo(a.cur.x, a.cur.z, 1.7);
+  stops++; nextStop = t + 9000;
+}
 function flyTo(x, z, zoom = 2) {
   const off = camera.position.clone().sub(controls.target);
   fly = { from: controls.target.clone(), to: new THREE.Vector3(x, 0, z), off, z0: camera.zoom, z1: zoom, t0: performance.now() };
@@ -709,6 +757,7 @@ function flyTo(x, z, zoom = 2) {
 renderer.setAnimationLoop(() => {
   const t = performance.now();
   for (const f of anims) f(t);
+  tour(t);
   if (water) { const m = water.userData.rip.material.map; if (m) { m.offset.x = t / 90000; m.offset.y = t / 140000; } }
   if (fly) {
     const q = clamp01((t - fly.t0) / 1500), e = ease(q);
@@ -737,13 +786,12 @@ renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
 function renderPanel() {
   document.getElementById('feed').replaceChildren(...model.feed.slice(0, 14).map(f => { const li = document.createElement('li'); li.innerHTML = `<time>${f.t}</time>`; li.append(f.msg); return li; }));
 }
-const KEYS = Object.keys(VARIANTS);
-function setVariant(v) { variant = v; fitted = false; const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u); rebuild(); }
-const step = d => setVariant(KEYS[(KEYS.indexOf(variant) + d + KEYS.length) % KEYS.length]);
+const KEYS = Object.keys(PALETTES);
+function setVariant(v) { palette = v; const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u); rebuild(); }
+const step = d => setVariant(KEYS[(KEYS.indexOf(palette) + d + KEYS.length) % KEYS.length]);
 document.getElementById('prev').onclick = () => step(-1);
 document.getElementById('next').onclick = () => step(1);
 document.addEventListener('keydown', e => { if (e.target.closest('input')) return; if (e.key === 'ArrowLeft') step(-1); if (e.key === 'ArrowRight') step(1); });
-document.getElementById('night').onchange = () => rebuild();
 document.getElementById('togglePanel').onclick = e => { document.body.classList.toggle('nopanel'); resize(); e.target.textContent = document.body.classList.contains('nopanel') ? 'Show panel' : 'Hide panel'; };
 
 const clock = () => new Date().toTimeString().slice(0, 8);
@@ -812,7 +860,6 @@ seed();
 log('Argus connected (fake data)');
 rebuild();
 const params = new URLSearchParams(location.search);
-if (params.get('night') === '1') { document.getElementById('night').checked = true; rebuild(); }
 for (const a of (params.get('do') || '').split(',').filter(Boolean)) { if (ACTIONS[a]) { ACTIONS[a](); rebuild(); } }
 </script>
 </body>
