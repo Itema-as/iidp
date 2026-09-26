@@ -198,6 +198,65 @@ The tasks travel with the deploy like the migration command: `iidp ci set-image`
 
 The Environment deploys once a deploy workflow writes the first image tag. Until then ArgoCD shows it as Synced and Healthy with nothing running: with `--staging`, that is prod until the first `v*` tag promotes staging's image ([`chart/application/README.md`](chart/application/README.md#an-environment-without-an-image)).
 
+### `app status`
+
+See how every Environment of an Application is doing right now:
+
+```sh
+iidp app status shop
+iidp app status shop --json
+```
+
+```
+shop (Itema-as/shop)
+
+prod
+  Status:    Synced, Healthy, last sync Succeeded 2026-09-21 10:03 UTC
+  Image:     ghcr.io/itema-as/shop:1.0.1, deployed 2026-09-21 10:00 UTC
+  Pods:      1/1 ready, 0 restarts
+  Migration: last run succeeded 2026-09-21 10:02 UTC
+  Tasks:     nightly-cleanup (0 3 * * *): last run succeeded 2026-09-22 01:00 UTC
+  Addresses: https://shop.app.itma.no
+  ArgoCD:    https://argocd.platform.itma.no/applications/argocd/shop-prod
+  Logs:      https://itema.grafana.net/explore?...
+```
+
+One block per Environment, `prod`, then `staging`, then any others by name. For each: ArgoCD's sync status and health and its last sync (with ArgoCD's message when it failed); the image the Deployment runs and when the Platform repository's commit that set that tag was made; the pods ready, in total and their restarts; the last migration Job; each Scheduled task's schedule and last run; the addresses; and links to the Environment in ArgoCD and to its logs in Grafana Cloud. Times are in UTC. It shows no logs. An Environment the Platform repository has but ArgoCD has not picked up yet says so, and one with no image yet says nothing has been deployed.
+
+It asks the Deploy gate's service at `https://deploy.<baseDomain>` (from `platform.yaml`; if the Platform repository cannot be read it says so on stderr and asks `https://deploy.app.itma.no`), sending your `gh auth` token. The service shows the status only to someone GitHub lets read the Application's repository, the one it is bound to; nothing on your machine talks to Kubernetes ([ADR-0007](docs/adr/0007-app-status-reads-through-the-deploy-gate.md)). It fails, with the service's reason, when you cannot read that repository ("no access"), when the Application is not bound to one (run `iidp app bind`), when there is no such Application ("unknown Application"), and when the service cannot be reached or cannot read the cluster ("unavailable").
+
+`--json` prints the service's answer as it is. Fields are only ever added to it, never renamed or removed:
+
+```json
+{
+  "application": "shop",
+  "repository": "Itema-as/shop",
+  "environments": [
+    {
+      "name": "prod",
+      "namespace": "shop-prod",
+      "argocd": {"application": "shop-prod", "sync": "Synced", "health": "Healthy",
+                 "operation": {"phase": "Succeeded", "message": "...", "startedAt": "...", "finishedAt": "..."}},
+      "image": {"repository": "ghcr.io/itema-as/shop", "tag": "1.0.1", "deployedAt": "2026-09-21T10:00:00Z"},
+      "pods": {"ready": 1, "total": 1, "restarts": 0},
+      "migration": {"result": "succeeded", "startedAt": "...", "finishedAt": "..."},
+      "tasks": [{"name": "nightly-cleanup", "schedule": "0 3 * * *", "lastScheduleTime": "...",
+                 "lastRun": {"result": "succeeded", "startedAt": "...", "finishedAt": "..."}}],
+      "addresses": ["https://shop.app.itma.no"],
+      "links": {"argocd": "https://argocd.platform.itma.no/applications/argocd/shop-prod", "grafana": "https://itema.grafana.net/explore?..."}
+    }
+  ]
+}
+```
+
+- `argocd` is `null` for an Environment ArgoCD has not picked up yet; `operation` is `null` before its first sync. `sync` is `Synced`, `OutOfSync` or `Unknown`; `health` is ArgoCD's (`Healthy`, `Progressing`, `Degraded`, `Suspended`, `Missing`, `Unknown`); `phase` is `Running`, `Terminating`, `Succeeded`, `Failed` or `Error`.
+- `image` is `null` before the first deploy. `deployedAt` is absent when no commit in the Platform repository set the tag, as for a Preview Environment.
+- `migration` is `null` when no migration Job has run; `tasks` is `[]` without Scheduled tasks; a task's `lastRun` is `null` before its first run. A `result` is `succeeded`, `failed` or `running`.
+- `links` is absent when `platform.yaml` names neither `argocdURL` nor `grafanaURL`, and each link when its URL is not set.
+- Times are RFC 3339, in UTC.
+
+See [`docs/implementation-notes/94-app-status.md`](docs/implementation-notes/94-app-status.md).
+
 ## Repository layout
 
 The layout follows [`docs/design.md`](docs/design.md). Not every directory exists yet; each ticket adds its part (this skeleton adds `cmd/iidp` and `internal/cli`, `internal/platform`, `internal/version`):

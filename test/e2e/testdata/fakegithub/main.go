@@ -6,9 +6,11 @@
 //   - the OIDC issuer's key set, GET /.well-known/jwks, from the file
 //     JWKS_FILE: the public half of the key the test signs its tokens
 //     with, so the gate verifies them exactly as it verifies GitHub's;
-//   - under /api, the three GitHub REST calls the gate makes: an
-//     installation token (checking the App JWT against the public key in
-//     APP_PUBLIC_KEY_FILE), the App's slug, and its bot account's id.
+//   - under /api, the three GitHub REST calls the gate makes for a deploy:
+//     an installation token (checking the App JWT against the public key
+//     in APP_PUBLIC_KEY_FILE), the App's slug, and its bot account's id;
+//   - and the one a status call makes with a developer's own token,
+//     GET /repositories/{id} (docs/implementation-notes/94-app-status.md).
 //
 // test/e2e/deploygate.go builds it, loads it into the cluster and runs it;
 // it is never published. It sits under testdata so that the pattern
@@ -37,6 +39,12 @@ const (
 	InstallationToken = "e2e-installation-token"
 	AppSlug           = "iidp-deploy"
 	BotUserID         = 41898282
+
+	// DeveloperToken is the gh auth token test/e2e sends to the gate's
+	// status endpoint, and ReadableRepositoryID the one repository id it
+	// may read: the fixture's binding of shop.
+	DeveloperToken       = "e2e-developer-token"
+	ReadableRepositoryID = "700000002"
 )
 
 func main() {
@@ -73,6 +81,22 @@ func main() {
 			return
 		}
 		writeJSON(w, map[string]any{"id": BotUserID, "login": AppSlug + "[bot]"})
+	})
+	// The status endpoint's access check, made with the developer's own
+	// token: DeveloperToken can read ReadableRepositoryID (shop's) and
+	// nothing else, which GitHub answers with 404; any other token is not
+	// a token GitHub knows.
+	mux.HandleFunc("GET /api/repositories/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+DeveloperToken {
+			http.Error(w, `{"message": "Bad credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		if r.PathValue("id") != ReadableRepositoryID {
+			http.Error(w, `{"message": "Not Found"}`, http.StatusNotFound)
+			return
+		}
+		writeJSON(w, map[string]any{"id": 700000002, "full_name": "Itema-as/shop", "private": true,
+			"permissions": map[string]bool{"pull": true}})
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	log.Print("fakegithub listening on :8080")
