@@ -14,12 +14,15 @@
 //	POST /v1/deploy
 //	Authorization: Bearer <OIDC token>
 //	{"application": "shop", "environment": "auto", "tag": "<sha or version>",
-//	 "migrationCommand": "<from iidp.yaml; optional>"}
+//	 "migrationCommand": "<from iidp.yaml; optional>",
+//	 "tasks": [{"name": "...", "schedule": "...", "command": "..."}]}
 //
-// The same commit may also set the Environment's migration command, from
-// the calling repository's iidp.yaml: the one other thing a deploy may
-// change, and only for an Environment with Postgres
-// (docs/implementation-notes/66-migration-command-in-repo.md).
+// The same commit may also set the Environment's migration command and
+// its Scheduled tasks, from the calling repository's iidp.yaml: the two
+// other things a deploy may change. A migration command needs an
+// Environment with Postgres
+// (docs/implementation-notes/66-migration-command-in-repo.md), and tasks a
+// Web service (docs/implementation-notes/91-scheduled-tasks.md).
 //
 // It answers 200 with what it wrote, or an error status with
 // {"error": "<what was refused and why>"}, which iidp ci set-image prints
@@ -74,6 +77,12 @@ type Request struct {
 	// iidp.yaml without one) clears it; anything else sets it, in the same
 	// commit as the tag. See internal/appconfig.
 	MigrationCommand *string `json:"migrationCommand,omitempty"`
+	// Tasks are the Scheduled tasks of the Application repository's
+	// iidp.yaml at the commit deployed. They replace the Environment's
+	// tasks in the same commit as the tag: none (the key absent, or no
+	// iidp.yaml) removes them. Left out when empty, so a gate from before
+	// tasks still takes a deploy from a repository that declares none.
+	Tasks []appconfig.Task `json:"tasks,omitempty"`
 }
 
 // Response is what a successful call wrote.
@@ -86,11 +95,14 @@ type Response struct {
 	// Commit is the Platform repository commit, "" when Unchanged.
 	Commit string `json:"commit,omitempty"`
 	// Unchanged is true when the Environment already ran Tag, with the
-	// migration command asked for.
+	// migration command and the tasks asked for.
 	Unchanged bool `json:"unchanged,omitempty"`
 	// MigrationCommandChanged is true when Commit changed the
 	// Environment's migration command.
 	MigrationCommandChanged bool `json:"migrationCommandChanged,omitempty"`
+	// TasksChanged is true when Commit changed the Environment's
+	// Scheduled tasks.
+	TasksChanged bool `json:"tasksChanged,omitempty"`
 }
 
 // ErrorResponse is the body of every refusal.
@@ -220,7 +232,7 @@ func (g *Gate) serveDeploy(w http.ResponseWriter, r *http.Request) {
 			status = ref.status
 		case errors.Is(err, platformrepo.ErrApplicationMissing), errors.Is(err, platformrepo.ErrEnvironmentMissing):
 			status = http.StatusNotFound
-		case errors.Is(err, platformrepo.ErrPostgresMissing):
+		case errors.Is(err, platformrepo.ErrPostgresMissing), errors.Is(err, platformrepo.ErrTasksOnStaticSite):
 			status = http.StatusConflict
 		}
 		g.log().Warn("deploy refused", append(attrs, "status", status, "error", err.Error())...)
@@ -269,6 +281,12 @@ func (g *Gate) deploy(r *http.Request) (Response, oidc.Claims, Request, error) {
 			return Response{}, claims, req, refuse(http.StatusBadRequest, "%v", err)
 		}
 	}
+	if err := appconfig.ValidateTasks(req.Tasks); err != nil {
+		return Response{}, claims, req, refuse(http.StatusBadRequest, "%v", err)
+	}
+	if err := appconfig.CheckTaskNamesFit(req.Application, req.Tasks); err != nil {
+		return Response{}, claims, req, refuse(http.StatusBadRequest, "%v", err)
+	}
 
 	if !claims.RepositoryOwnerID.Is(g.OrgID) {
 		return Response{}, claims, req, refuse(http.StatusForbidden, "refused: %s belongs to %s (owner id %s), and only repositories in %s (owner id %d) can deploy to the Platform", claims.Repository, claims.RepositoryOwner, claims.RepositoryOwnerID, platform.Org, g.OrgID)
@@ -313,6 +331,7 @@ func (g *Gate) deploy(r *http.Request) (Response, oidc.Claims, Request, error) {
 		Application:      req.Application,
 		Tag:              req.Tag,
 		MigrationCommand: req.MigrationCommand,
+		Tasks:            req.Tasks,
 		Body:             body,
 		Environment: func(dir string) (string, error) {
 			environment, err := g.authorize(dir, claims, req, promote)
@@ -333,6 +352,7 @@ func (g *Gate) deploy(r *http.Request) (Response, oidc.Claims, Request, error) {
 		Commit:                  res.Commit,
 		Unchanged:               res.Unchanged,
 		MigrationCommandChanged: res.MigrationCommandChanged,
+		TasksChanged:            res.TasksChanged,
 	}, claims, req, nil
 }
 

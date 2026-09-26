@@ -3,6 +3,7 @@ module github.com/Itema-as/iidp
 go 1.27.0
 
 require (
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	golang.org/x/term v0.46.0

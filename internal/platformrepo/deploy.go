@@ -8,7 +8,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
+	"github.com/Itema-as/iidp/internal/appconfig"
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/render"
@@ -40,11 +42,22 @@ type ImageTagChange struct {
 	// without Postgres is refused with ErrPostgresMissing, and nothing is
 	// written (docs/implementation-notes/66-migration-command-in-repo.md).
 	MigrationCommand *string
+	// Tasks are written into the top-level tasks list in the same commit
+	// as the tag, replacing whatever the Environment had: none removes
+	// them, since tasks only ever come from the deployed commit's
+	// iidp.yaml. Tasks for a Static site are refused with
+	// ErrTasksOnStaticSite, and nothing is written
+	// (docs/implementation-notes/91-scheduled-tasks.md).
+	Tasks []appconfig.Task
 }
 
 // ErrPostgresMissing is wrapped when a deploy carries a migration command
 // for an Environment that has no Postgres Capability.
 var ErrPostgresMissing = errors.New("the Environment has no Postgres Capability")
+
+// ErrTasksOnStaticSite is wrapped when a deploy carries Scheduled tasks
+// for a Static site.
+var ErrTasksOnStaticSite = errors.New("the Application is a Static site")
 
 // DeployResult is what SetImageTag wrote.
 type DeployResult struct {
@@ -55,12 +68,14 @@ type DeployResult struct {
 	// Commit is the commit that wrote it, or "" when Unchanged.
 	Commit string
 	// Unchanged is true when the Environment already ran this tag with
-	// this migration command: nothing was committed, so a retried request
-	// is harmless.
+	// this migration command and these tasks: nothing was committed, so a
+	// retried request is harmless.
 	Unchanged bool
 	// MigrationCommandChanged is true when the commit changed
 	// postgres.migrationCommand.
 	MigrationCommandChanged bool
+	// TasksChanged is true when the commit changed the tasks.
+	TasksChanged bool
 }
 
 // SetImageTag writes change.Tag into image.tag of an Environment's
@@ -68,9 +83,10 @@ type DeployResult struct {
 // asks change.Environment which Environment to write, refuses one without
 // a live application.yaml, edits image.tag in place (every other key, and
 // every comment, untouched), and postgres.migrationCommand too when the
-// change carries one, commits both as "Deploy <application> <environment>
-// <tag>" and pushes, with the same retry-once-on-a-moved-main logic as
-// CreateApplication. Every check runs again on the retry's fresh clone.
+// change carries one, and the tasks list to the change's tasks, commits
+// them together as "Deploy <application> <environment> <tag>" and pushes,
+// with the same retry-once-on-a-moved-main logic as CreateApplication.
+// Every check runs again on the retry's fresh clone.
 func (w *Writer) SetImageTag(ctx context.Context, change ImageTagChange) (DeployResult, error) {
 	if change.Environment == nil {
 		return DeployResult{}, errors.New("SetImageTag: no Environment decision")
@@ -140,6 +156,18 @@ func (w *Writer) attemptSetImageTag(ctx context.Context, change ImageTagChange) 
 		}
 		changed = changed || res.MigrationCommandChanged
 	}
+	data, res.TasksChanged, err = render.SetTasks(data, change.Tasks)
+	switch {
+	case errors.Is(err, render.ErrTasksOnStaticSite):
+		return DeployResult{}, fmt.Errorf("%w: %s's %s Environment is a Static site, which serves files and has no command of its own to run on a schedule, so it cannot take the tasks in iidp.yaml. Remove tasks from iidp.yaml, or run them from a Web service", ErrTasksOnStaticSite, change.Application, environment)
+	case err != nil:
+		return DeployResult{}, fmt.Errorf("%s: %w", valuesRelPath, err)
+	}
+	var tasksNote string
+	if res.TasksChanged {
+		tasksNote = tasksCommitNote(change.Tasks)
+	}
+	changed = changed || res.TasksChanged
 	if !changed {
 		res.Unchanged = true
 		return res, nil
@@ -154,6 +182,9 @@ func (w *Writer) attemptSetImageTag(ctx context.Context, change ImageTagChange) 
 	message := fmt.Sprintf("Deploy %s %s %s", change.Application, environment, change.Tag)
 	if migrationNote != "" {
 		message += "\n\n" + migrationNote
+	}
+	if tasksNote != "" {
+		message += "\n\n" + tasksNote
 	}
 	if change.Body != "" {
 		message += "\n\n" + change.Body
@@ -177,6 +208,20 @@ func (w *Writer) attemptSetImageTag(ctx context.Context, change ImageTagChange) 
 		return DeployResult{}, err
 	}
 	return res, nil
+}
+
+// tasksCommitNote is the paragraph of a deploy's commit message that says
+// its Scheduled tasks changed, one line per task, so the Platform
+// repository's log shows when a task was added, changed or removed.
+func tasksCommitNote(tasks []appconfig.Task) string {
+	if len(tasks) == 0 {
+		return "Remove the Scheduled tasks: iidp.yaml declares none."
+	}
+	lines := []string{"Scheduled tasks, from iidp.yaml:"}
+	for _, task := range tasks {
+		lines = append(lines, fmt.Sprintf("- %s (%s): %s", task.Name, task.Schedule, task.Command))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // HasEnvironment reports whether application has a live environment (an

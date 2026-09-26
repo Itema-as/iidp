@@ -1,0 +1,14 @@
+application:
+  name: warehouse
+environment: prod
+platform:
+  baseDomain: app.itma.no
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/warehouse
+  tag: 2.0.0
+size: large
+tasks:
+  - name: sync
+    schedule: "0 * * * *"
+    command: ./sync

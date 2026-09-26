@@ -187,6 +187,17 @@ login:
 
 `postgres.migrationCommand` is an output of deploys, not something the CLI or a developer sets. The CLI writes it `""` and never changes it. The Deploy gate sets it from the `iidp.yaml` of the commit being deployed or promoted, in the same commit as `image.tag` (see "The migration command travels with the deploy", below), so the migration Job always runs the command that belongs to the image it runs in. A deploy from a commit without an `iidp.yaml` leaves it as it is, which is how an Application made before the file keeps the command it has. See [`docs/implementation-notes/66-migration-command-in-repo.md`](implementation-notes/66-migration-command-in-repo.md).
 
+`tasks`, the Environment's Scheduled tasks, is an output of deploys too, and the CLI never writes it: a values file has no `tasks` key until a deploy brings some. The Deploy gate writes it from the deployed commit's `iidp.yaml`, in the same commit as `image.tag`, and a deploy without tasks removes the key (see "Scheduled tasks travel with the deploy", below). Each entry has a `name`, a `schedule` and a `command`, and becomes one CronJob:
+
+```yaml
+tasks:
+    - name: nightly-cleanup
+      schedule: 0 3 * * *
+      command: node scripts/cleanup.js
+```
+
+`runTasks` (chart default `true`) is not written by the CLI or the gate either; a Preview Environment sets it to `false` so it renders no CronJob from the tasks it shares with staging ([`chart/application/README.md`](../chart/application/README.md)). `iidp app add-capability --staging` does not copy prod's `tasks`: staging's first deploy brings its own.
+
 When the first write comes depends on the Application: prod without staging gets it on the next push to `main`; with `--staging`, staging gets it on the next push to `main` and prod only on the first `v*` tag, when the deploy workflow promotes staging's image, which can be weeks later; an Adopt Environment waits for its pull request to be merged; and a staging Environment added later with `add-capability --staging` starts empty again. `iidp ci set-image` refuses an empty tag, so nothing in the Platform's own flow ever turns a released Environment back into an unreleased one. Doing so by hand would make ArgoCD prune everything the Environment runs except its database. The chart marks the Postgres `Cluster`, `ObjectStore` and `ScheduledBackup` `Prune=false`, so they stay running and the Environment shows OutOfSync until the edit is undone. The same applies to a hand-set `postgres.enabled: false`. `iidp app delete` is a cascade deletion, not a prune, and still removes the database after its final backup. See [`docs/implementation-notes/47-unreleased-environment.md`](implementation-notes/47-unreleased-environment.md).
 
 `secrets` (a list of Secret names, empty until `iidp secret set` adds to it) is documented below.
@@ -314,9 +325,9 @@ An Application repository's CI never writes the Platform repository itself. Its 
 **The workflow's side.** `iidp ci set-image` runs only in GitHub Actions, in a job with `permissions: id-token: write`. It:
 
 1. Takes the gate's URL from `--gate-url` or `IIDP_DEPLOY_GATE_URL`. It cannot read this repository to find it, so `iidp app create` renders it into the workflow from `platform.yaml`'s `baseDomain` (`https://deploy.<baseDomain>`, `platformrepo.Config.DeployGateURL`).
-2. Reads `iidp.yaml` in the directory it runs in, which the workflow makes a checkout of the commit it deploys or promotes (below). A file it cannot read (an unknown setting, a command that is not a string or not one line) fails the deploy before any call.
+2. Reads `iidp.yaml` in the directory it runs in, which the workflow makes a checkout of the commit it deploys or promotes (below). A file it cannot read (an unknown setting, a command that is not a string or not one line, a task the gate would refuse) fails the deploy before any call.
 3. Requests a GitHub Actions OIDC token whose audience is exactly that URL (`ACTIONS_ID_TOKEN_REQUEST_URL` with `audience=<url>`, authenticated with `ACTIONS_ID_TOKEN_REQUEST_TOKEN`).
-4. Calls `POST <gate>/v1/deploy` with `Authorization: Bearer <token>` and `{"application": "<app>", "environment": "<prod|staging|auto>", "tag": "<tag>", "migrationCommand": "<from iidp.yaml>"}`, where `migrationCommand` is left out when there is no `iidp.yaml`. On a refusal it prints the gate's message, which says what was refused and why, and fails. A gate that cannot be reached, or answers 502, 503 or 504, is tried twice more; repeating a deploy is harmless.
+4. Calls `POST <gate>/v1/deploy` with `Authorization: Bearer <token>` and `{"application": "<app>", "environment": "<prod|staging|auto>", "tag": "<tag>", "migrationCommand": "<from iidp.yaml>", "tasks": [{"name": "...", "schedule": "...", "command": "..."}]}`, where `migrationCommand` is left out when there is no `iidp.yaml`, and `tasks` when it declares none. On a refusal it prints the gate's message, which says what was refused and why, and fails. A gate that cannot be reached, or answers 502, 503 or 504, is tried twice more; repeating a deploy is harmless.
 
 No secret and no variable is involved, and `gh auth login` is not consulted.
 
@@ -329,7 +340,7 @@ No secret and no variable is involved, and `gh auth login` is not consulted.
 5. The Environment: `main` deploys to `staging` when the Application has one and to `prod` otherwise; a `v*` tag promotes to `prod`. `auto` means that Environment; naming another one is refused (HTTP 403), and one the Application does not have is HTTP 404.
 6. The image: the Environment's `image.repository` in its `values.yaml`, with the requested tag, exists in its registry. The gate asks with a manifest `HEAD`, as a pull would, using the Platform's GHCR pull token for `ghcr.io` and no credential for any other registry ([`docs/implementation-notes/61-image-check.md`](implementation-notes/61-image-check.md)). A tag the registry does not have is refused with HTTP 422, naming the image and the tag. A registry that cannot be reached, answers 5xx, or refuses the gate's token is HTTP 503, "couldn't check", and nothing is committed unchecked; the workflow retries a 503 twice, and the deploy can be re-run. A tag the Environment already runs is not checked again.
 
-Only then does it edit `image.tag` in place in the Environment's `values.yaml` (`render.SetImageTag`, every other key and comment untouched), and `postgres.migrationCommand` when the call carries one (below), and commit both as `Deploy <app> <environment> <tag>`, with a body naming the new migration command when it changed, then the calling repository, its commit, the ref and the workflow. The author is the token's `actor`, `<actor_id>+<actor>@users.noreply.github.com`; the committer is the App's bot, `iidp-deploy[bot] <<bot id>+iidp-deploy[bot]@users.noreply.github.com>`. It pushes with an installation token minted for the call, and when `main` moved it clones afresh, checks everything in steps 4 to 6 again and retries once, as every CLI command does. An Environment that already runs the tag, with the migration command asked for, gets no commit. The tag itself must be a valid image tag.
+Only then does it edit `image.tag` in place in the Environment's `values.yaml` (`render.SetImageTag`, every other key and comment untouched), and `postgres.migrationCommand` when the call carries one and `tasks` (both below), and commit them together as `Deploy <app> <environment> <tag>`, with a body naming the new migration command and the new tasks when they changed, then the calling repository, its commit, the ref and the workflow. The author is the token's `actor`, `<actor_id>+<actor>@users.noreply.github.com`; the committer is the App's bot, `iidp-deploy[bot] <<bot id>+iidp-deploy[bot]@users.noreply.github.com>`. It pushes with an installation token minted for the call, and when `main` moved it clones afresh, checks everything in steps 4 to 6 again and retries once, as every CLI command does. An Environment that already runs the tag, with the migration command and tasks asked for, gets no commit. The tag itself must be a valid image tag.
 
 ### The migration command travels with the deploy
 
@@ -340,7 +351,7 @@ An Application's migration command belongs to its code: the two Environments run
 migrationCommand: npx prisma migrate deploy
 ```
 
-`migrationCommand` is the only setting today; the file is where later code-coupled settings would go, and any other key is refused. `iidp app create --path create` writes the file, `--path adopt` adds it in its pull request unless the repository has one, and `add-capability --postgres` prints the line to add.
+`migrationCommand` and `tasks` (below) are the settings today; the file is where later code-coupled settings would go, and any other key is refused. `iidp app create --path create` writes the file, `--path adopt` adds it in its pull request unless the repository has one, and `add-capability --postgres` prints the line to add.
 
 The deploy workflow's `build` job runs `iidp ci set-image` in its checkout of the pushed commit; the `promote` job checks out the tagged commit before it promotes, so prod gets the command of the code it gets, and promoting an older tag brings that tag's command. What the call carries decides what the gate does with `postgres.migrationCommand`:
 
@@ -355,5 +366,31 @@ The deploy workflow's `build` job runs `iidp ci set-image` in its checkout of th
 - It must be one line (it runs as `sh -c <command>`; chain steps with `&&`), with no control character but a tab, and at most 1024 bytes. Otherwise HTTP 400, before anything is cloned.
 - A non-empty command for an Environment whose `postgres.enabled` is not `true` is refused with HTTP 409, "Add the Postgres Capability first", and nothing is written. Clearing is always allowed; where there is nothing to clear, it changes nothing.
 - A call with the tag the Environment already runs but another command still commits the command. The generated workflow never makes one, since every commit has its own tag. ArgoCD leaves hooks out of its diff, so such a commit alone would not start an automated sync: the command would run with the next rollout.
+
+### Scheduled tasks travel with the deploy
+
+A Web service's Scheduled tasks are declared in the same file, and belong to the code for the same reason: a task runs a command from the image, and the command must exist in the image each Environment runs ([`docs/implementation-notes/91-scheduled-tasks.md`](implementation-notes/91-scheduled-tasks.md)):
+
+```yaml
+tasks:
+  - name: nightly-cleanup
+    schedule: "0 3 * * *"
+    command: node scripts/cleanup.js
+```
+
+The call carries the deployed commit's tasks, and the gate replaces the Environment's `tasks` with them. Unlike the migration command there is no "leave it as it is" case, since no one but the gate ever writes tasks:
+
+| The deployed commit has | The call carries | The gate |
+|---|---|---|
+| no `iidp.yaml`, or one without `tasks`, or `tasks: []` | no `tasks` | removes `tasks`, if the Environment had any |
+| `iidp.yaml` with `tasks` | `"tasks": [...]` | sets them |
+
+So deleting a task from `iidp.yaml` stops it with the next deploy, and promoting a `v*` tag gives prod exactly that tag's tasks. The gate's rules, which `iidp ci set-image` also checks before it calls (`internal/appconfig`):
+
+- At most 5 tasks. Each `name` is lowercase letters, digits and dashes, starts with a letter, does not end with a dash, and is used once; `<app>-staging-<name>` must be at most 52 characters, Kubernetes' limit on a CronJob's name, whichever Environment is deployed. Each `schedule` is five cron fields (minute, hour, day of month, month, day of week) that Kubernetes accepts, without a macro such as `@daily` and without a time zone: tasks always run on Europe/Oslo time. Each `command` is one line of at most 1024 bytes, the same rule as the migration command. Otherwise HTTP 400, before anything is cloned.
+- Tasks for an Environment whose `kind` is `static-site` are refused with HTTP 409 ("is a Static site"), and nothing is written. A Static site with no tasks deploys as always.
+- A call with the tag the Environment already runs but other tasks commits the tasks. Unlike a hook, a CronJob is in ArgoCD's diff, so such a commit syncs on its own.
+
+The chart renders each task as a CronJob `<name>[-staging]-<task>`; see [`chart/application/README.md`](../chart/application/README.md) for its settings.
 
 `platform.yaml`'s `githubApp.id`/`githubApp.installationId` (the table above) stay documentation only. The gate reads the App's id, installation id and key from the Secret cloud-init writes for ArgoCD's own Platform-repository credential.

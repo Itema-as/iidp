@@ -60,6 +60,7 @@ Helm renders first. It produces no output.
 {{- if .Values.login.enabled -}}
 {{- $_ = include "application.login.checkDomains" . -}}
 {{- end -}}
+{{- $_ = include "application.tasks.check" . -}}
 {{- $_ = include "application.login.groups" . -}}
 {{- if and .Values.postgres.enabled (hasKey .Values.postgres "finalBackupTimeout") (not (regexMatch "^[1-9][0-9]*$" (.Values.postgres.finalBackupTimeout | toString))) -}}
 {{- fail (printf "postgres.finalBackupTimeout must be a positive whole number of seconds, got %v" .Values.postgres.finalBackupTimeout) -}}
@@ -217,6 +218,51 @@ edit here, the same as any other pinned version in this repository.
 */}}
 {{- define "application.postgres.finalBackupKubectlImage" -}}
 docker.io/bitnami/kubectl@sha256:6e9c5284a0dac06e84de9f4d97852d2e6513442ee7ec3a66d35009eec86e1e62
+{{- end -}}
+
+{{/*
+Refuses Scheduled tasks the chart cannot render: any on a Static site
+(nginx serving files has no command of the Application's to run), and a
+task without a DNS-label name, with a name used twice, or without a
+schedule or command. The Deploy gate refuses all of these first and checks
+the schedule's syntax too (internal/appconfig); this is the chart's own
+guard for a hand-edited values file. With runTasks, each CronJob's name
+must also fit Kubernetes' 52 characters; without it nothing is rendered,
+so the name is not checked (a Preview Environment's longer name must not
+refuse staging's tasks it does not run). It produces no output.
+*/}}
+{{- define "application.tasks.check" -}}
+{{- if and .Values.tasks (eq (include "application.kind" .) "static-site") -}}
+{{- fail "tasks needs kind: web-service; a Static site has no command of its own to run on a schedule" -}}
+{{- end -}}
+{{- $seen := dict -}}
+{{- range .Values.tasks -}}
+{{- $name := .name | default "" | toString -}}
+{{- if not (regexMatch "^[a-z]([-a-z0-9]*[a-z0-9])?$" $name) -}}
+{{- fail (printf "tasks: name %q must be lowercase letters, digits and dashes, start with a letter and not end with a dash" $name) -}}
+{{- end -}}
+{{- if hasKey $seen $name -}}
+{{- fail (printf "tasks: name %q is used twice" $name) -}}
+{{- end -}}
+{{- $_ := set $seen $name true -}}
+{{- if not (.schedule | default "" | toString) -}}
+{{- fail (printf "tasks: %q has no schedule" $name) -}}
+{{- end -}}
+{{- if not (.command | default "" | toString) -}}
+{{- fail (printf "tasks: %q has no command" $name) -}}
+{{- end -}}
+{{- if and $.Values.runTasks (gt (len (include "application.tasks.name" (list $ $name))) 52) -}}
+{{- fail (printf "tasks: the CronJob name %q is longer than the 52 characters Kubernetes allows; shorten the task's name" (include "application.tasks.name" (list $ $name))) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The CronJob of a Scheduled task, from a list of the root context and the
+task's name: <fullname>-<task name>.
+*/}}
+{{- define "application.tasks.name" -}}
+{{- printf "%s-%s" (include "application.fullname" (index . 0)) (index . 1) -}}
 {{- end -}}
 
 {{/*
@@ -452,11 +498,27 @@ The resources a size maps to. The numbers are the Platform's convention and
 live only here (docs/design.md, "Conventions the chart encodes").
 */}}
 {{- define "application.resources" -}}
+{{- include "application.resourcesFor" (.Values.size | toString) -}}
+{{- end -}}
+
+{{/*
+The resources of a Scheduled task's run, whatever the Application's size:
+the smallest size's, so a task Pod starting next to the Application takes
+as little of the single node as any Environment can.
+*/}}
+{{- define "application.tasks.resources" -}}
+{{- include "application.resourcesFor" "small" -}}
+{{- end -}}
+
+{{/*
+The resources of the size given as the context, as requests and limits.
+*/}}
+{{- define "application.resourcesFor" -}}
 {{- $sizes := dict
   "small" (dict "cpu" "250m" "memory" "256Mi")
   "medium" (dict "cpu" "500m" "memory" "512Mi")
   "large" (dict "cpu" "1" "memory" "1Gi") -}}
-{{- $size := .Values.size | toString -}}
+{{- $size := . -}}
 {{- $resources := get $sizes $size -}}
 {{- if not $resources -}}
 {{- fail (printf "size must be one of %s, got %q" (join ", " (keys $sizes | sortAlpha)) $size) -}}

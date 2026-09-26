@@ -30,4 +30,5 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #76 | [76-login-in-zone-domains.md](76-login-in-zone-domains.md) |
 | #77, #78 | [77-login-redirect.md](77-login-redirect.md) |
 | #81 | [81-nginx-stable-template.md](81-nginx-stable-template.md) |
+| #91 | [91-scheduled-tasks.md](91-scheduled-tasks.md) |
 | #92 | [92-sign-in-groups.md](92-sign-in-groups.md) |

@@ -102,6 +102,21 @@ postgres:
   # bounded; a large database (or a slow bucket) may need it raised.
   finalBackupTimeout: 1800
 
+# Scheduled tasks, for a Web service only: each is a CronJob named
+# <name>[-staging]-<task name> that runs command with sh -c on schedule
+# (five cron fields, Europe/Oslo time), in a one-off container from the
+# Application's image with its env, secrets and DATABASE_URL, at the small
+# size. Written by the Deploy gate from the deployed commit's iidp.yaml;
+# a deploy without tasks removes the key. Each entry:
+#   - name: nightly-cleanup
+#     schedule: "0 3 * * *"
+#     command: node scripts/cleanup.js
+tasks: []
+
+# false renders no CronJob for tasks, whatever tasks holds. Preview
+# Environments set it, since they share staging's values but run no tasks.
+runTasks: true
+
 login:
   # The Itema login Capability: every Ingress of the Environment gets the
   # Traefik ForwardAuth middleware annotation for the bootstrap's shared

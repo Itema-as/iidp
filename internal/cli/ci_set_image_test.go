@@ -65,7 +65,7 @@ type fakeGate struct {
 
 type gateCall struct {
 	path, authorization string
-	body                map[string]string
+	body                map[string]any
 }
 
 type gateResponse struct {
@@ -77,7 +77,7 @@ func newFakeGate(t *testing.T, responses ...gateResponse) *fakeGate {
 	t.Helper()
 	f := &fakeGate{responses: responses}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]string
+		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.calls = append(f.calls, gateCall{path: r.Method + " " + r.URL.Path, authorization: r.Header.Get("Authorization"), body: body})
@@ -318,7 +318,8 @@ func TestCISetImageSendsTheMigrationCommandFromIidpYAML(t *testing.T) {
 			if code != 0 || gate.callCount() != 1 {
 				t.Fatalf("exit code = %d, gate calls = %d\n%s", code, gate.callCount(), stderr)
 			}
-			got, present := gate.calls[0].body["migrationCommand"]
+			sent, present := gate.calls[0].body["migrationCommand"]
+			got, _ := sent.(string)
 			if present != tc.present || got != tc.want {
 				t.Errorf("migrationCommand sent = %q (present: %v), want %q (present: %v)", got, present, tc.want, tc.present)
 			}

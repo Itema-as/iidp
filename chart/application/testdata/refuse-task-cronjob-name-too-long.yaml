@@ -1,0 +1,14 @@
+application:
+  name: shop
+environment: staging
+platform:
+  baseDomain: app.itma.no
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 1.4.2
+tasks:
+  # shop-staging- is 13 characters, and 13 + 40 is more than 52.
+  - name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    schedule: "0 3 * * *"
+    command: echo long

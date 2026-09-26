@@ -30,3 +30,7 @@ postgres:
   backupRetention: 30d
 login:
   enabled: false
+tasks:
+  - name: nightly-cleanup
+    schedule: "0 3 * * *"
+    command: node scripts/cleanup.js

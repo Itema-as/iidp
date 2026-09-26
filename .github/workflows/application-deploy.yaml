@@ -14,8 +14,9 @@
 #
 # Both jobs run `iidp ci set-image` in a checkout of the commit they deploy
 # (the pushed commit, or the tagged one), because it reads iidp.yaml there
-# and sends its migrationCommand with the image: each Environment always
-# runs the migration command of the code it runs. In a called workflow the
+# and sends its migrationCommand and Scheduled tasks with the image: each
+# Environment always runs the migration command and the tasks of the code
+# it runs. In a called workflow the
 # github context is the caller's, so actions/checkout checks out the
 # Application repository at the triggering ref.
 #
@@ -134,8 +135,8 @@ jobs:
       id-token: write
     steps:
       # The tagged commit, for its iidp.yaml: prod gets the migration
-      # command that belongs to the code it gets, even when an older tag
-      # is promoted.
+      # command and the Scheduled tasks that belong to the code it gets,
+      # even when an older tag is promoted.
       - name: Checkout the tagged commit
         uses: actions/checkout@v7
 

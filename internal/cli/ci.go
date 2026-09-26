@@ -69,10 +69,11 @@ func newCISetImageCommand(deps Dependencies) *cobra.Command {
 			"gate's URL is --gate-url, or " + DeployGateURLEnvVar + ", which the generated\n" +
 			"workflow sets. No secret is needed; gh auth login is not consulted.\n\n" +
 			"Run it in the checkout of the commit being deployed or promoted: it reads\n" +
-			"migrationCommand from " + appconfig.FileName + " there and sends it with the tag, so the\n" +
-			"gate sets the Environment's migration command in the same commit. An\n" +
-			appconfig.FileName + " without migrationCommand clears it; with no " + appconfig.FileName + " at all,\n" +
-			"the Environment's migration command is left as it is.",
+			"migrationCommand and tasks from " + appconfig.FileName + " there and sends them with the tag,\n" +
+			"so the gate sets the Environment's migration command and Scheduled tasks in\n" +
+			"the same commit. An " + appconfig.FileName + " without migrationCommand clears it; with no\n" +
+			appconfig.FileName + " at all, the Environment's migration command is left as it is.\n" +
+			"No tasks, or no " + appconfig.FileName + ", removes the Environment's Scheduled tasks.",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.application = args[0]
@@ -107,10 +108,14 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 	}
 
 	// The workflow runs this in the checkout of the commit it deploys or
-	// promotes, so the migration command read here is that commit's.
-	migrationCommand, err := readMigrationCommand()
+	// promotes, so the migration command and tasks read here are that
+	// commit's.
+	migrationCommand, tasks, err := readAppConfig()
 	if err != nil {
 		return err
+	}
+	if err := appconfig.CheckTaskNamesFit(opts.application, tasks); err != nil {
+		return fmt.Errorf("%s: %w", appconfig.FileName, err)
 	}
 
 	ctx := cmd.Context()
@@ -124,6 +129,7 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 		Environment:      opts.environment,
 		Tag:              opts.tag,
 		MigrationCommand: migrationCommand,
+		Tasks:            tasks,
 	}, deps.CIRetryDelay)
 	if err != nil {
 		return err
@@ -138,30 +144,43 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 	default:
 		fmt.Fprintf(out, "Migration command from %s: %s\n", appconfig.FileName, *migrationCommand)
 	}
+	if len(tasks) == 0 {
+		fmt.Fprintf(out, "No Scheduled tasks in %s.\n", appconfig.FileName)
+	} else {
+		fmt.Fprintf(out, "Scheduled tasks from %s, on Europe/Oslo time:\n", appconfig.FileName)
+		for _, task := range tasks {
+			fmt.Fprintf(out, "  %s (%s): %s\n", task.Name, task.Schedule, task.Command)
+		}
+	}
 	if res.Unchanged {
-		fmt.Fprintf(out, "%s %s already runs %s with this migration command; nothing to deploy.\n", res.Application, res.Environment, res.Tag)
+		fmt.Fprintf(out, "%s %s already runs %s with this migration command and these Scheduled tasks; nothing to deploy.\n", res.Application, res.Environment, res.Tag)
 		return nil
 	}
 	fmt.Fprintf(out, "Deploy %s %s %s\n", res.Application, res.Environment, res.Tag)
 	if res.MigrationCommandChanged {
 		fmt.Fprintf(out, "The migration command changed with it.\n")
 	}
+	if res.TasksChanged {
+		fmt.Fprintf(out, "The Scheduled tasks changed with it.\n")
+	}
 	fmt.Fprintf(out, "\nThe Deploy gate committed %s to %s:\n  %s\n", shortCommit(res.Commit), platform.Repository, res.File)
 	return nil
 }
 
-// readMigrationCommand reads iidp.yaml in the current directory: nil when
-// there is none (the gate then leaves the Environment's command as it is),
-// "" when it sets none (the gate clears it), and the command otherwise.
-func readMigrationCommand() (*string, error) {
+// readAppConfig reads iidp.yaml in the current directory. The migration
+// command is nil when there is none (the gate then leaves the
+// Environment's command as it is), "" when it sets none (the gate clears
+// it), and the command otherwise. The tasks are nil without the file or
+// without tasks, which the gate takes as "remove them".
+func readAppConfig() (*string, []appconfig.Task, error) {
 	f, ok, err := appconfig.Read(".")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return &f.MigrationCommand, nil
+	return &f.MigrationCommand, f.Tasks, nil
 }
 
 // validateCIEnvironment refuses anything but the three values ci set-image
