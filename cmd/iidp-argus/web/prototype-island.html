@@ -3,22 +3,24 @@
   PROTOTYPE, throwaway. Not Argus. Answers one question for the Argus map (#97):
   "What does the island look like, and how is it laid out?" (#102).
 
-  Three structurally different directions, switchable with ?variant=A|B|C, the
-  bottom bar, or the arrow keys. The data is fake and lives in memory; the
-  buttons on the right push it through the states decided in #100.
+  Iteration 2: the Archipelago direction (C) from iteration 1, with the
+  feedback applied. The variants are three palettes of the same design,
+  switchable with ?variant=pale|night|moss, the bottom bar, or the arrow keys.
+  Iteration 1 (one island, tabletop board, archipelago) is in this branch's
+  history.
 
-  Layout rule shared by all three: an Application takes a slot when it
-  arrives, the next free slot in a fixed spiral (or grid) order, and keeps it
-  for life. A deleted Application frees its slot for the next arrival. Nothing
-  already on the map ever moves.
+  Layout: the Platform is the city centre. Applications are islets around it
+  on a hex spiral; an islet in an outer ring bridges to an inner neighbour, so
+  no bridge crosses another islet. An Application keeps its islet for life.
 
-  Open the file directly in a browser. No server, no build.
+  Fake data in memory. Open the file directly in a browser: no server, no build.
+  ?do=arrive,deleteApp runs events on load.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PROTOTYPE · Argus island</title>
+<title>PROTOTYPE · Argus archipelago</title>
 <style>
   :root { --panel:#11161c; --ink:#e6edf3; --muted:#8b98a5; --line:#26303a; }
   * { box-sizing:border-box; }
@@ -44,7 +46,6 @@
   #feed time { color:var(--muted); margin-right:6px; font-variant-numeric:tabular-nums; }
   #state { font-size:12px; }
   #state .app { margin:8px 0 2px; font-weight:600; }
-  #state .app small { color:var(--muted); font-weight:400; }
   #state .env { display:flex; justify-content:space-between; gap:8px; padding-left:10px; color:#c9d4dd; }
   #state .env span:last-child { color:var(--muted); text-align:right; }
   .c-degraded { color:#ff7b72 !important; } .c-unknown { color:#9aa5b1 !important; }
@@ -53,12 +54,11 @@
   /* Prototype chrome: deliberately plain so it reads as not-the-design. */
   #switcher { position:fixed; left:calc((100% - 330px) / 2); bottom:18px; transform:translateX(-50%);
     display:flex; align-items:center; gap:2px; background:#0d1117; color:#f0f6fc;
-    border:1px solid #3d444d; border-radius:6px; box-shadow:0 6px 24px rgba(0,0,0,.45);
-    font-size:13px; z-index:10; }
+    border:1px solid #3d444d; border-radius:6px; box-shadow:0 6px 24px rgba(0,0,0,.45); font-size:13px; z-index:10; }
   body.nopanel #switcher { left:50%; }
   #switcher button { background:none; border:0; color:inherit; padding:8px 12px; font-size:16px; }
   #switcher button:hover { background:#1f2630; }
-  #switcher .label { padding:0 10px; min-width:190px; text-align:center; }
+  #switcher .label { padding:0 10px; min-width:230px; text-align:center; }
   #togglePanel { position:fixed; top:12px; right:342px; z-index:10; background:#0d1117ee; }
   body.nopanel #togglePanel { right:12px; }
   #tip { position:fixed; pointer-events:none; background:#0d1117f2; color:#e6edf3; border:1px solid #3d444d;
@@ -71,25 +71,35 @@
     background:#0d1117cc; color:#e6edf3; padding:5px 9px; border-radius:4px; }
 
   /* SVG text */
-  .lbl { font-size:13px; font-weight:650; fill:var(--lbl); paint-order:stroke; stroke:var(--halo); stroke-width:3px; }
-  .sub { font-size:10.5px; fill:var(--sub); text-anchor:middle; paint-order:stroke; stroke:var(--halo); stroke-width:3px; }
-  .chip { font-size:10.5px; text-anchor:middle; font-weight:600; paint-order:stroke; stroke:var(--halo); stroke-width:3px; }
-  .newtag { font-size:10px; font-weight:750; letter-spacing:.08em; fill:var(--new); }
+  .sub { font-size:9.5px; fill:var(--sub); text-anchor:middle; paint-order:stroke; stroke:var(--halo); stroke-width:3px; }
+  .newtag { font-size:10.5px; font-weight:800; letter-spacing:.08em; fill:var(--new); text-anchor:middle;
+    paint-order:stroke; stroke:var(--halo); stroke-width:3px; }
+  .engrave { font-size:17px; font-weight:800; letter-spacing:.6px; text-anchor:middle; }
+  .pad { font-size:11px; font-weight:800; text-anchor:middle; }
+  .signtxt { font-size:5.2px; font-weight:700; text-anchor:middle; fill:#fff; }
   .fogq { font-size:15px; font-weight:700; fill:#52606b; text-anchor:middle; }
   .badgeq { font-size:12px; font-weight:800; fill:#fff; text-anchor:middle; }
+  .warnq { font-size:8px; font-weight:900; fill:#3a2a00; text-anchor:middle; }
 
-  /* State animations. Everything respects reduced motion. */
-  .scaffold * { stroke-dasharray:3 3; animation:march 1s linear infinite; }
-  .scaffold.halted * { animation:none; stroke-dasharray:none; }
+  /* Animations. Every animated element gets an animation-delay computed from
+     its own start time or a shared clock, so a re-render continues an
+     animation instead of restarting it. */
+  .march { stroke-dasharray:3 3; animation:march 1s linear infinite; }
   @keyframes march { to { stroke-dashoffset:-12; } }
   .smoke { transform-box:fill-box; transform-origin:center; animation:rise 2.7s ease-out infinite; opacity:0; }
   @keyframes rise { 0% { transform:translate(0,0) scale(.5); opacity:.85; } 100% { transform:translate(8px,-34px) scale(1.9); opacity:0; } }
   .dust { transform-box:fill-box; transform-origin:center; animation:puff 1.8s ease-out infinite; opacity:0; }
-  @keyframes puff { 0% { transform:scale(.4); opacity:.8; } 100% { transform:scale(2.2) translateY(-4px); opacity:0; } }
+  @keyframes puff { 0% { transform:scale(.4); opacity:.85; } 100% { transform:scale(2.4) translateY(-5px); opacity:0; } }
+  .burst { transform-box:fill-box; transform-origin:center; animation:burst 1.3s ease-out forwards; opacity:0; }
+  @keyframes burst { 0% { transform:scale(.3); opacity:.9; } 100% { transform:scale(4) translateY(-4px); opacity:0; } }
+  .packet { transform-box:fill-box; animation:packet 1.5s ease-in infinite; opacity:0; }
+  @keyframes packet { 0% { transform:translateY(0); opacity:0; } 15% { opacity:1; } 100% { transform:translateY(-46px); opacity:0; } }
   .hook { animation:bob 1.6s ease-in-out infinite alternate; }
   @keyframes bob { to { transform:translateY(7px); } }
   .badge { animation:throb 1.6s ease-in-out infinite; transform-box:fill-box; transform-origin:center bottom; }
   @keyframes throb { 50% { transform:scale(1.12); } }
+  .warnglow { animation:glow 1.4s ease-in-out infinite; }
+  @keyframes glow { 50% { opacity:.15; } }
   .flicker { animation:flick 1.3s steps(2) infinite; }
   @keyframes flick { 50% { opacity:.25; } }
   .blink { animation:flick 1s steps(2) infinite; }
@@ -98,10 +108,12 @@
   @keyframes lamp { 50% { opacity:.35; } }
   .ghost { opacity:.55; }
   .faded { opacity:.32; }
-  .pop { animation:pop .9s cubic-bezier(.2,1.4,.4,1); transform-box:fill-box; transform-origin:center bottom; }
+  .pop { animation:pop .9s cubic-bezier(.2,1.4,.4,1) both; transform-box:fill-box; transform-origin:center bottom; }
   @keyframes pop { from { transform:translateY(-18px) scale(.7); opacity:0; } }
-  .crumble { animation:crumble 1.2s ease-in forwards; transform-box:fill-box; transform-origin:center bottom; }
-  @keyframes crumble { 30% { transform:translateX(2px) rotate(1deg); } to { transform:scaleY(.04); opacity:0; } }
+  .crumble { animation:crumble 1.3s ease-in forwards; transform-box:fill-box; transform-origin:center bottom; }
+  @keyframes crumble { 15% { transform:translateX(2px) rotate(1.5deg); } 30% { transform:translateX(-2px) rotate(-1deg); } to { transform:scaleY(.04); opacity:0; } }
+  .sink { animation:sink 1.6s ease-in forwards; }
+  @keyframes sink { to { transform:translateY(26px); opacity:0; } }
   .fogdrift { animation:drift 6s ease-in-out infinite alternate; }
   @keyframes drift { to { transform:translateX(6px); } }
   @media (prefers-reduced-motion: reduce) { * { animation:none !important; } }
@@ -113,25 +125,28 @@
     <defs>
       <filter id="blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5"/></filter>
       <filter id="blurBig" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="16"/></filter>
+      <pattern id="hazard" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="7" height="7" fill="#1b1b1b"/><rect width="3.5" height="7" fill="#ff8a1f"/>
+      </pattern>
     </defs>
     <g id="world"></g>
     <g id="labels"></g>
     <g id="overlay"></g>
   </svg>
 </div>
-<div id="title">Argus · island prototype (throwaway)</div>
+<div id="title">Argus · archipelago prototype, iteration 2 (throwaway)</div>
 <div id="lost">Argus has lost the cluster. Showing the last known state.</div>
 <button id="togglePanel">Hide panel</button>
 <div id="switcher">
-  <button id="prev" aria-label="Previous variant">‹</button>
+  <button id="prev" aria-label="Previous palette">‹</button>
   <div class="label" id="variantLabel"></div>
-  <button id="next" aria-label="Next variant">›</button>
+  <button id="next" aria-label="Next palette">›</button>
 </div>
 <div id="tip"></div>
 
 <aside id="panel">
   <h1>Push the Platform around</h1>
-  <p class="note">Fake data. Drag to pan, scroll to zoom, hover anything. Switch direction with the bar or ← →.</p>
+  <p class="note">Fake data. Drag to pan, scroll to zoom, hover anything. Switch palette with the bar or ← →.</p>
   <h2>Events</h2>
   <div class="actions">
     <button data-act="arrive">An Application arrives</button>
@@ -145,6 +160,7 @@
     <button data-act="preview">Open a preview</button>
     <button data-act="closePreview">Close a preview</button>
     <button data-act="deleteApp">Delete an Application</button>
+    <button data-act="deleteTwo">Delete two at once</button>
     <button data-act="bump">Bump cert-manager</button>
     <button data-act="traefik">Traefik degrades / recovers</button>
     <button data-act="lose">Lose / regain the cluster</button>
@@ -164,14 +180,17 @@ const U = 16, CS = Math.cos(Math.PI / 6);
 // Ground (x, y) and height z to screen. +x runs right-down, +y left-down.
 const P = (x, y, z = 0) => [(x - y) * CS * U, (x + y) * 0.5 * U - z * U];
 const pts = a => a.map(p => P(...p).map(n => n.toFixed(1)).join(',')).join(' ');
+// Lay text flat on the ground (runs along +x), or upright on a face of constant y (runs along +x).
+const groundM = (x, y, z = 0) => { const [ex, ey] = P(x, y, z); return `matrix(${CS} 0.5 ${-CS} 0.5 ${ex.toFixed(1)} ${ey.toFixed(1)})`; };
+const faceM = (x, y, z) => { const [ex, ey] = P(x, y, z); return `matrix(${CS} 0.5 0 1 ${ex.toFixed(1)} ${ey.toFixed(1)})`; };
 function el(tag, attrs, parent) {
   const e = document.createElementNS(NS, tag);
-  if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (attrs) for (const k in attrs) if (attrs[k] !== undefined) e.setAttribute(k, attrs[k]);
   if (parent) parent.appendChild(e);
   return e;
 }
 function txt(parent, x, y, s, cls, extra = {}) {
-  const t = el('text', { x: x.toFixed(1), y: y.toFixed(1), class: cls, ...extra }, parent);
+  const t = el('text', { x: +x.toFixed(1), y: +y.toFixed(1), class: cls, ...extra }, parent);
   t.textContent = s;
   return t;
 }
@@ -182,6 +201,11 @@ function prism(g, x, y, w, d, h, c, z0 = 0, attrs = {}) {
   el('polygon', { points: pts([[x, y, z1], [x + w, y, z1], [x + w, y + d, z1], [x, y + d, z1]]), fill: c.top }, grp);
   return grp;
 }
+function pyramid(g, x, y, w, d, z0, hh, c) {
+  const apex = [x + w / 2, y + d / 2, z0 + hh];
+  el('polygon', { points: pts([[x + w, y, z0], [x + w, y + d, z0], apex]), fill: c.right }, g);
+  el('polygon', { points: pts([[x, y + d, z0], [x + w, y + d, z0], apex]), fill: c.left }, g);
+}
 function cyl(g, cx, cy, r, h, c, z0 = 0) {
   const [tx, ty] = P(cx, cy, z0 + h), [bx, by] = P(cx, cy, z0);
   const rx = r * 1.414 * CS * U, ry = r * 1.414 * 0.5 * U;
@@ -189,10 +213,9 @@ function cyl(g, cx, cy, r, h, c, z0 = 0) {
   el('ellipse', { cx: tx, cy: ty, rx, ry, fill: c.top }, g);
   return [tx, ty - ry];
 }
-function flat(g, poly, z, attrs) { return el('polygon', { points: pts(poly.map(([x, y]) => [x, y, z])), ...attrs }, g); }
+const flat = (g, poly, z, attrs) => el('polygon', { points: pts(poly.map(([x, y]) => [x, y, z])), ...attrs }, g);
 function extrude(g, poly, z0, h, c) {
-  const n = poly.length, cx = poly.reduce((s, p) => s + p[0], 0) / n, cy = poly.reduce((s, p) => s + p[1], 0) / n;
-  const sides = [];
+  const n = poly.length, cx = poly.reduce((s, p) => s + p[0], 0) / n, cy = poly.reduce((s, p) => s + p[1], 0) / n, sides = [];
   for (let i = 0; i < n; i++) {
     const a = poly[i], b = poly[(i + 1) % n], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
     let nx = b[1] - a[1], ny = -(b[0] - a[0]);
@@ -207,70 +230,65 @@ const hexPoly = (cx, cy, R) => Array.from({ length: 6 }, (_, i) => {
   const a = Math.PI / 180 * (60 * i + 30);
   return [cx + R * Math.cos(a), cy + R * Math.sin(a)];
 });
-function octagon(cx, cy, r) {
-  return Array.from({ length: 8 }, (_, i) => {
-    const a = Math.PI / 8 + i * Math.PI / 4;
-    return (cx + r * Math.cos(a)).toFixed(1) + ',' + (cy + r * Math.sin(a)).toFixed(1);
-  }).join(' ');
+const octagon = (cx, cy, r) => Array.from({ length: 8 }, (_, i) => {
+  const a = Math.PI / 8 + i * Math.PI / 4;
+  return (cx + r * Math.cos(a)).toFixed(1) + ',' + (cy + r * Math.sin(a)).toFixed(1);
+}).join(' ');
+// A flat road strip between two ground points, with a dashed centre line.
+function road(g, a, b, w, T, z = 0.004, dashed = true) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1, nx = -dy / L * w / 2, ny = dx / L * w / 2;
+  flat(g, [[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]], z, { fill: T.road });
+  if (dashed) el('polyline', { points: pts([[...a, z + 0.002], [...b, z + 0.002]]), stroke: T.roadLine, 'stroke-width': 0.8, 'stroke-dasharray': '4 4', fill: 'none' }, g);
 }
 
-// ---------------------------------------------------------------- themes
+// ---------------------------------------------------------------- time
+// Loops share one clock; one-shot animations run from their own start time.
+const T0 = performance.now();
+const loop = (dur, off = 0) => `animation-delay:${(-(((performance.now() - T0) / 1000 + off) % dur)).toFixed(3)}s`;
+const once = t => `animation-delay:${(-(performance.now() - t) / 1000).toFixed(3)}s`;
+
+// ---------------------------------------------------------------- palettes
+const SLATE = {
+  islet: { top: '#34424e', left: '#1c252d', right: '#26313b' }, core: { top: '#3d4c59', left: '#1f2830', right: '#2b3641' },
+  road: '#212a32', roadLine: '#7d8d9a', rail: '#a7b6c2', eng: { dark: '#1d262e', light: '#52646f' },
+  bld: { top: '#fbfcfd', left: '#bfc8d0', right: '#dde3e8' }, bad: { top: '#ffd9d3', left: '#c4574b', right: '#df7e72' },
+  grey: { top: '#aeb6bc', left: '#636b71', right: '#848d93' }, tank: { top: '#eef2f5', left: '#9eadb8' },
+  gate: { top: '#ffe08a', left: '#b99a3e', right: '#d8b95e' }, roof: { left: '#5b6b78', right: '#72838f' },
+  sign: '#2f81f7', pad: '#2c3843', padLine: '#eef2f5', stake: '#e8edf1',
+  scaffold: '#ffc233', stuck: '#ff7a1a', smoke: '#5d6368', dust: '#bdb29c', backup: '#58a6ff',
+};
 const THEMES = {
-  A: {
-    name: 'One island', bg: 'radial-gradient(ellipse at 50% 45%, #134060 0%, #0a2336 55%, #06131f 100%)',
-    lbl: '#f2f7fa', sub: '#b9cbd6', halo: '#0b2233', new: '#ffd166',
-    shallow: '#1c5b73', land: { top: '#5f8062', left: '#3c543f', right: '#4a664c' }, plaza: '#6f8f70',
-    bld: { top: '#e4eaee', left: '#98aab6', right: '#bfcdd6' }, bad: { top: '#f0aca1', left: '#9b473f', right: '#c0675c' },
-    grey: { top: '#a3abb0', left: '#5b6367', right: '#798287' }, tank: { top: '#d9e2e8', left: '#8aa0ae' },
-    gate: { top: '#f4d58d', left: '#b08f3e', right: '#cfae5c' }, flag: '#6cc4ff', win: '#ffd479', winOff: '#34424c',
-    scaffold: '#ffd166', stuck: '#ff8a3d', fog: '#dfe7ec', smoke: '#50575c', dust: '#b5a88f', stake: '#f4efe0',
-    ok: '#58d68d', bad2: '#ff6b5e', unk: '#a7b3bd', bridge: '#9aa39a',
-  },
-  B: {
-    name: 'Tabletop board', bg: 'linear-gradient(180deg, #e3e8ec 0%, #cfd7de 100%)',
-    lbl: '#f4f7f9', sub: '#c7d1d9', halo: '#26313b', new: '#ffd166',
-    board: { top: '#2c3843', left: '#1b232b', right: '#232d36' }, plate: '#374654', plateEmpty: '#303d49', strip: '#23303a',
-    bld: { top: '#fbfcfd', left: '#bfc8d0', right: '#dde3e8' }, bad: { top: '#ffd9d3', left: '#c4574b', right: '#df7e72' },
-    grey: { top: '#aeb6bc', left: '#636b71', right: '#848d93' }, tank: { top: '#eef2f5', left: '#9eadb8' },
-    gate: { top: '#ffe08a', left: '#b99a3e', right: '#d8b95e' }, flag: '#5ab0ff', win: '#7cc4ff', winOff: '#8e99a3',
-    scaffold: '#ffd166', stuck: '#ff8a3d', fog: '#e4eaee', smoke: '#6b7277', dust: '#b9ae98', stake: '#e8edf1',
-    ok: '#3fd08b', bad2: '#ff6b5e', unk: '#a9b4be', bridge: '#9aa39a', chips: true,
-  },
-  C: {
-    name: 'Archipelago', bg: 'linear-gradient(180deg, #16394a 0%, #0c2330 60%, #081821 100%)',
-    lbl: '#f3f0f8', sub: '#c4c9d6', halo: '#0c2330', new: '#ffd166',
+  pale: { ...SLATE, name: 'Slate on pale water', bg: 'linear-gradient(180deg, #e8edf1 0%, #d2dae1 100%)',
+    reef: '#c2cdd6', win: '#7cc4ff', winOff: '#8e99a3', fog: '#eef2f5', sub: '#e6edf3', halo: '#26313b', new: '#ffb000' },
+  night: { ...SLATE, name: 'Slate at night', bg: 'radial-gradient(ellipse at 50% 40%, #16293a 0%, #0b1620 60%, #060c12 100%)',
+    reef: '#172b39', win: '#ffd479', winOff: '#3a4650', fog: '#dfe7ec', sub: '#c7d2db', halo: '#0b1620', new: '#ffd166',
+    bld: { top: '#e4eaee', left: '#98aab6', right: '#bfcdd6' } },
+  moss: { ...SLATE, name: 'Moss (iteration 1 colours)', bg: 'linear-gradient(180deg, #16394a 0%, #0c2330 60%, #081821 100%)',
     reef: '#1d4f5e', islet: { top: '#6c7d5f', left: '#3f4a37', right: '#536049' }, core: { top: '#7b8a86', left: '#485452', right: '#5e6b68' },
-    bld: { top: '#ece8f3', left: '#9a93ab', right: '#c1bad0' }, bad: { top: '#f5b2a8', left: '#a24c43', right: '#c86e62' },
-    grey: { top: '#a6a9ae', left: '#5c6066', right: '#7b7f85' }, tank: { top: '#e1dcea', left: '#958eaa' },
-    gate: { top: '#f7cf86', left: '#b28c3f', right: '#d4ad5e' }, flag: '#7fd1ff', win: '#ffb86b', winOff: '#3b3a48',
-    scaffold: '#ffd166', stuck: '#ff8a3d', fog: '#dfe4ea', smoke: '#4f5459', dust: '#b3a78f', stake: '#efeadf',
-    ok: '#58d68d', bad2: '#ff6b5e', unk: '#a7b3bd', bridge: '#8e9a95',
-  },
+    road: '#454f40', roadLine: '#a9b39b', eng: { dark: '#46523d', light: '#8e9d7f' },
+    bld: { top: '#ece8f3', left: '#9a93ab', right: '#c1bad0' }, win: '#ffb86b', winOff: '#3b3a48', fog: '#dfe4ea',
+    sub: '#e8e6ef', halo: '#0c2330', new: '#ffd166' },
 };
 
 // ---------------------------------------------------------------- model
 let seq = 0;
 const cap = (kind, o = {}) => ({ kind, cond: 'healthy', warn: false, ...o });
-const mkEnv = (app, name, caps = [], o = {}) => ({ id: ++seq, app, name, cond: 'healthy', activity: null, stuck: false, caps, seen: true, ...o });
+const mkEnv = (app, name, caps = [], o = {}) => ({ id: ++seq, app, name, cond: 'healthy', activity: null, stuck: false, caps, bornAt: -1e9, ...o });
 const model = { apps: [], comps: [], clusterLost: false, free: [], high: 0, feed: [] };
 function takeSlot() {
   if (model.free.length) { model.free.sort((a, b) => a - b); return model.free.shift(); }
   return ++model.high;
 }
-function addApp(name, envs, o = {}) {
-  const a = { name, envs, slot: takeSlot(), crumbling: false, isNew: false, ...o };
-  model.apps.push(a);
-  return a;
-}
+const addApp = (name, envs, o = {}) => { const a = { name, envs, slot: takeSlot(), isNew: false, ...o }; model.apps.push(a); return a; };
 function seed() {
   const A = (n, f) => addApp(n, f(n));
   A('shop', n => [mkEnv(n, 'prod', [cap('postgres'), cap('login')]), mkEnv(n, 'staging', [cap('postgres'), cap('login')]), mkEnv(n, 'pr-42', [cap('login')])]);
-  A('iprofil', n => [mkEnv(n, 'prod', [cap('postgres'), cap('domain')]), mkEnv(n, 'staging', [cap('postgres')])]);
+  A('iprofil', n => [mkEnv(n, 'prod', [cap('postgres'), cap('domain', { host: 'iprofil.no' })]), mkEnv(n, 'staging', [cap('postgres')])]);
   A('hello', n => [mkEnv(n, 'prod')]);
   A('api', n => [mkEnv(n, 'prod', [cap('postgres', { warn: true })], { cond: 'degraded' }), mkEnv(n, 'staging', [cap('postgres')], { activity: 'deploying' })]);
   A('wiki', n => [mkEnv(n, 'prod', [], { activity: 'unreleased' })]);
   A('timesheet', n => [mkEnv(n, 'prod', [cap('postgres'), cap('task')]), mkEnv(n, 'staging', [cap('postgres')], { activity: 'deploying', stuck: true, why: 'migration Job failed' })]);
-  A('booking', n => [mkEnv(n, 'prod', [cap('login')], { cond: 'unknown' }), mkEnv(n, 'staging', [cap('login')], { activity: 'updating' })]);
+  A('booking', n => [mkEnv(n, 'prod', [cap('login'), cap('domain', { host: 'booking.itema.no' })], { cond: 'unknown' }), mkEnv(n, 'staging', [cap('login')], { activity: 'updating' })]);
   const C = (kind, label, o = {}) => model.comps.push({ kind, label, cond: 'healthy', activity: null, stuck: false, ...o });
   C('argocd', 'ArgoCD'); C('traefik', 'Traefik'); C('deploy-gate', 'Deploy gate');
   C('cert-manager', 'cert-manager', { activity: 'updating' }); C('external-dns', 'external-dns');
@@ -283,13 +301,13 @@ const condLabel = e => e.cond[0].toUpperCase() + e.cond.slice(1);
 function tipEnv(e) {
   const lines = [`${e.app} ${e.name}`, `Condition: ${e.activity === 'unreleased' ? 'n/a' : condLabel(e)}`, `Activity: ${actLabel(e)}`];
   if (e.stuck && e.why) lines.push(`Why stuck: ${e.why}`);
-  for (const c of e.caps) lines.push(`  ${c.kind}: ${condLabel(c)}${c.warn ? ' · Warning: backups failing' : ''}`);
+  if (e.activity === 'leaving' && e.caps.some(c => c.kind === 'postgres')) lines.push('Final backup running');
+  for (const c of e.caps) lines.push(`  ${c.kind}${c.host ? ' ' + c.host : ''}: ${condLabel(c)}${c.warn ? ' · Warning: backups failing' : ''}`);
   return lines.join('\n');
 }
 const tipComp = c => `${c.label} (Platform component)\nCondition: ${condLabel(c)}\nActivity: ${actLabel(c)}`;
 
-// ---------------------------------------------------------------- shared drawing
-// Labels go on their own layer, drawn after every structure, so buildings never cover them.
+// ---------------------------------------------------------------- buildings
 let LAYER = null;
 const DIMS = { prod: [1.8, 1.8, 2.6], staging: [1.5, 1.5, 1.9], preview: [1, 1, 1.2] };
 const kindOf = e => e.name === 'prod' ? 'prod' : e.name === 'staging' ? 'staging' : 'preview';
@@ -298,30 +316,59 @@ function windows(g, b, e, T) {
   const { x, y, w, d, h } = b;
   const lit = e.cond === 'healthy' && e.activity !== 'leaving' && e.activity !== 'arriving';
   const rows = Math.max(1, Math.floor(h / 0.62)), cl = Math.max(1, Math.round(w / 0.5)), cr = Math.max(1, Math.round(d / 0.5));
-  const cls = e.cond === 'degraded' ? 'flicker' : '';
+  const extra = e.cond === 'degraded' ? { class: 'flicker', style: loop(1.3) } : {};
   for (let j = 0; j < rows; j++) {
     const v0 = (j + 0.32) / rows, v1 = (j + 0.72) / rows;
     for (let i = 0; i < cl; i++) {
       const u0 = (i + 0.25) / cl, u1 = (i + 0.75) / cl;
       el('polygon', { points: pts([[x + u0 * w, y + d, v0 * h], [x + u1 * w, y + d, v0 * h], [x + u1 * w, y + d, v1 * h], [x + u0 * w, y + d, v1 * h]]),
-        fill: lit ? T.win : T.winOff, opacity: lit && (i + j) % 3 === 1 ? 0.55 : 1, class: cls }, g);
+        fill: lit ? T.win : T.winOff, opacity: lit && (i + j) % 3 === 1 ? 0.55 : 1, ...extra }, g);
     }
     for (let i = 0; i < cr; i++) {
       const a0 = (i + 0.25) / cr, a1 = (i + 0.75) / cr;
       el('polygon', { points: pts([[x + w, y + a0 * d, v0 * h], [x + w, y + a1 * d, v0 * h], [x + w, y + a1 * d, v1 * h], [x + w, y + a0 * d, v1 * h]]),
-        fill: lit ? T.win : T.winOff, opacity: lit && (i + j) % 4 === 2 ? 0.5 : 0.9, class: cls }, g);
+        fill: lit ? T.win : T.winOff, opacity: lit && (i + j) % 4 === 2 ? 0.5 : 0.9, ...extra }, g);
     }
   }
 }
-function warnFlag(g, sx, sy, T) {
-  el('line', { x1: sx, y1: sy, x2: sx, y2: sy - 16, stroke: '#e8e8e8', 'stroke-width': 1.3 }, g);
-  el('polygon', { points: `${sx},${sy - 16} ${sx + 11},${sy - 12.5} ${sx},${sy - 9}`, fill: '#ffcc33' }, g);
+// A helipad on the roof names the Environment: P for prod, S for staging.
+function helipad(g, b, e, T) {
+  const k = kindOf(e); if (k === 'preview') return;
+  const cx = b.x + b.w / 2, cy = b.y + b.d / 2, r = Math.min(b.w, b.d) * 0.36;
+  const [px, py] = P(cx, cy, b.h), rx = r * 1.414 * CS * U, ry = r * 1.414 * 0.5 * U;
+  el('ellipse', { cx: px, cy: py, rx, ry, fill: T.pad }, g);
+  el('ellipse', { cx: px, cy: py, rx: rx * 0.82, ry: ry * 0.82, fill: 'none', stroke: T.padLine, 'stroke-width': 0.8 }, g);
+  const t = el('g', { transform: groundM(cx, cy, b.h) }, g);
+  txt(t, 0, 4, k === 'prod' ? 'P' : 'S', 'pad', { fill: T.padLine });
+}
+// A custom domain is a billboard standing on the roof, facing the viewer, with the host on it.
+function billboard(g, b, host, T) {
+  const { x, y, w, d, h } = b, yy = y + d - 0.12, x0 = x + 0.1, x1 = x + w - 0.1;
+  for (const px of [x0 + 0.15, x1 - 0.15]) { const a = P(px, yy, h), c = P(px, yy, h + 0.25); el('line', { x1: a[0], y1: a[1], x2: c[0], y2: c[1], stroke: '#39434c', 'stroke-width': 1.2 }, g); }
+  el('polygon', { points: pts([[x0, yy, h + 0.22], [x1, yy, h + 0.22], [x1, yy, h + 0.72], [x0, yy, h + 0.72]]), fill: T.sign, stroke: '#1a4f9c', 'stroke-width': 0.6 }, g);
+  const t = el('g', { transform: faceM((x0 + x1) / 2, yy, h + 0.72) }, g);
+  txt(t, 0, 5.2, host, 'signtxt');
+}
+function warnFlag(g, sx, sy) {
+  el('circle', { cx: sx + 6, cy: sy - 20, r: 11, fill: '#ffcc33', opacity: 0.45, class: 'warnglow', style: loop(1.4) }, g);
+  el('line', { x1: sx, y1: sy, x2: sx, y2: sy - 28, stroke: '#f2f2f2', 'stroke-width': 1.6 }, g);
+  el('polygon', { points: `${sx},${sy - 28} ${sx + 17},${sy - 23} ${sx},${sy - 16}`, fill: '#ffcc33', stroke: '#8a6a00', 'stroke-width': 0.6 }, g);
+  txt(g, sx + 5.5, sy - 19.2, '!', 'warnq');
+}
+function clockTower(g, x, y, T, cc) {
+  const w = 0.55, h = 1.7;
+  prism(g, x, y, w, w, h, cc || T.tank);
+  pyramid(g, x, y, w, w, h, 0.6, T.roof);
+  const face = el('g', { transform: faceM(x + w / 2, y + w, h - 0.4) }, g);
+  el('circle', { cx: 0, cy: 0, r: 4.2, fill: '#fff', stroke: '#2a3440', 'stroke-width': 0.8 }, face);
+  el('line', { x1: 0, y1: 0, x2: 0, y2: -3, stroke: '#1d252c', 'stroke-width': 0.8 }, face);
+  const hand = el('line', { x1: 0, y1: 0, x2: 2.6, y2: 0, stroke: '#d0342c', 'stroke-width': 0.7 }, face);
+  el('animateTransform', { attributeName: 'transform', type: 'rotate', from: '0 0 0', to: '360 0 0', dur: '8s', repeatCount: 'indefinite' }, hand);
+  return P(x + w / 2, y + w / 2, h + 0.6);
 }
 function drawCap(g, c, b, T) {
-  const { x, y, w, d } = b;
-  const cc = c.cond === 'degraded' ? T.bad : null;
-  const tip = { 'data-tip': `${c.kind} of this Environment\nCondition: ${condLabel(c)}${c.warn ? '\nWarning: backups failing' : ''}` };
-  const cg = el('g', tip, g);
+  const { x, y, w, d } = b, cc = c.cond === 'degraded' ? T.bad : null;
+  const cg = el('g', { 'data-tip': `${c.kind}${c.host ? ' ' + c.host : ''}\nCondition: ${condLabel(c)}${c.warn ? '\nWarning: backups failing' : ''}` }, g);
   let top;
   if (c.kind === 'postgres') top = cyl(cg, x + w + 0.55, y + 0.55, 0.38, 0.9, cc || T.tank);
   if (c.kind === 'login') {
@@ -330,72 +377,88 @@ function drawCap(g, c, b, T) {
     prism(cg, gx, gy, gw + 0.16, 0.16, 0.14, cc || T.gate, 0.75);
     top = P(gx + gw / 2, gy, 0.9);
   }
-  if (c.kind === 'domain') {
-    const [px, py] = P(x - 0.3, y + d - 0.1, 0), [qx, qy] = P(x - 0.3, y + d - 0.1, 2);
-    el('line', { x1: px, y1: py, x2: qx, y2: qy, stroke: '#dfe6ea', 'stroke-width': 1.4 }, cg);
-    el('polygon', { points: `${qx},${qy} ${qx + 16},${qy + 3} ${qx + 16},${qy + 12} ${qx},${qy + 9}`, fill: T.flag }, cg);
-    top = [qx, qy];
-  }
-  if (c.kind === 'task') {
-    const tx = x + w + 0.3, ty = y + d + 0.05;
-    prism(cg, tx, ty, 0.45, 0.45, 1.3, cc || T.tank);
-    const [sx, sy] = P(tx + 0.22, ty + 0.45, 1.0);
-    el('circle', { cx: sx, cy: sy, r: 3.2, fill: '#fff', stroke: '#445', 'stroke-width': 0.8 }, cg);
-    el('line', { x1: sx, y1: sy, x2: sx, y2: sy - 2.4, stroke: '#223', 'stroke-width': 0.8 }, cg);
-    top = P(tx + 0.22, ty + 0.22, 1.3);
-  }
-  if (c.warn && top) warnFlag(cg, top[0], top[1], T);
+  if (c.kind === 'task') top = clockTower(cg, x + w + 0.3, y + d + 0.05, T, cc);
+  if (c.warn && top) warnFlag(cg, top[0], top[1]);
+  return top;
 }
-function scaffold(g, b, T, stuck) {
+
+// ---------------------------------------------------------------- state overlays
+function scaffold(g, b, T, still) {
   const x = b.x - 0.15, y = b.y - 0.15, w = b.w + 0.3, d = b.d + 0.3, h = b.h + 0.3;
-  const s = el('g', { class: 'scaffold' + (stuck ? ' halted' : ''), stroke: stuck ? T.stuck : T.scaffold, fill: 'none', 'stroke-width': 1.2 }, g);
-  for (const [cx, cy] of [[x, y], [x + w, y], [x + w, y + d], [x, y + d]]) el('polyline', { points: pts([[cx, cy, 0], [cx, cy, h]]) }, s);
-  for (let z = 0.6; z <= h + 0.01; z += 0.6) el('polygon', { points: pts([[x, y, z], [x + w, y, z], [x + w, y + d, z], [x, y + d, z]]) }, s);
-  el('polyline', { points: pts([[x, y + d, 0], [x + w, y + d, h]]) }, s);
-  el('polyline', { points: pts([[x + w, y, 0], [x + w, y + d, h]]) }, s);
+  const s = el('g', { stroke: still ? '#8d98a2' : T.scaffold, fill: 'none', 'stroke-width': 1.2, opacity: still ? 0.55 : 1 }, g);
+  const a = still ? {} : { class: 'march', style: loop(1) };
+  for (const [cx, cy] of [[x, y], [x + w, y], [x + w, y + d], [x, y + d]]) el('polyline', { points: pts([[cx, cy, 0], [cx, cy, h]]), ...a }, s);
+  for (let z = 0.6; z <= h + 0.01; z += 0.6) el('polygon', { points: pts([[x, y, z], [x + w, y, z], [x + w, y + d, z], [x, y + d, z]]), ...a }, s);
+  el('polyline', { points: pts([[x, y + d, 0], [x + w, y + d, h]]), ...a }, s);
+  el('polyline', { points: pts([[x + w, y, 0], [x + w, y + d, h]]), ...a }, s);
 }
 function crane(g, b, T) {
   const [tx, ty] = P(b.x + b.w + 0.15, b.y - 0.15, b.h + 0.3), mt = ty - 28;
   const c = el('g', { stroke: T.scaffold, 'stroke-width': 1.6, fill: 'none' }, g);
   el('line', { x1: tx, y1: ty, x2: tx, y2: mt }, c);
   el('line', { x1: tx - 34, y1: mt, x2: tx + 10, y2: mt }, c);
-  const hook = el('g', { class: 'hook' }, c);
+  const hook = el('g', { class: 'hook', style: loop(3.2) }, c);
   el('line', { x1: tx - 27, y1: mt, x2: tx - 27, y2: mt + 14 }, hook);
   el('rect', { x: tx - 30, y: mt + 14, width: 6, height: 5, fill: T.scaffold }, hook);
 }
+// Stuck: the change stopped. Scaffolding goes grey and still, a hazard barrier rings the base.
+function barrier(g, b) {
+  const p = 0.4, x = b.x - p, y = b.y - p, w = b.w + 2 * p, d = b.d + 2 * p, z0 = 0.12, z1 = 0.38;
+  const s = el('g', {}, g);
+  for (const [cx, cy] of [[x + w, y], [x + w, y + d], [x, y + d]]) { const a = P(cx, cy, 0), c = P(cx, cy, z1 + 0.05); el('line', { x1: a[0], y1: a[1], x2: c[0], y2: c[1], stroke: '#222', 'stroke-width': 1.5 }, s); }
+  el('polygon', { points: pts([[x + w, y, z0], [x + w, y + d, z0], [x + w, y + d, z1], [x + w, y, z1]]), fill: 'url(#hazard)' }, s);
+  el('polygon', { points: pts([[x, y + d, z0], [x + w, y + d, z0], [x + w, y + d, z1], [x, y + d, z1]]), fill: 'url(#hazard)' }, s);
+}
+function badge(g, b, T) {
+  const [sx, sy] = P(b.x + b.w / 2, b.y + b.d / 2, b.h + 0.3), y = sy - 36;
+  const k = el('g', { class: 'badge', style: loop(1.6) }, g);
+  el('line', { x1: sx, y1: sy - 4, x2: sx, y2: y + 9, stroke: T.stuck, 'stroke-width': 1.6 }, k);
+  el('polygon', { points: octagon(sx, y, 10), fill: T.stuck, stroke: '#fff', 'stroke-width': 1 }, k);
+  txt(k, sx, y + 4.5, '!', 'badgeq');
+}
 function smoke(g, b, T) {
   const [sx, sy] = P(b.x + b.w / 2, b.y + b.d / 2, b.h);
-  for (let i = 0; i < 3; i++) el('circle', { cx: sx + (i - 1) * 5, cy: sy - 4, r: 5, fill: T.smoke, class: 'smoke', style: `animation-delay:${i * 0.9}s` }, g);
+  for (let i = 0; i < 3; i++) el('circle', { cx: sx + (i - 1) * 5, cy: sy - 4, r: 5, fill: T.smoke, class: 'smoke', style: loop(2.7, i * 0.9) }, g);
 }
 function dust(g, b, T) {
-  const corners = [[b.x, b.y + b.d], [b.x + b.w, b.y + b.d], [b.x + b.w, b.y], [b.x + b.w / 2, b.y + b.d]];
-  corners.forEach(([cx, cy], i) => { const [sx, sy] = P(cx, cy, 0.1); el('circle', { cx: sx, cy: sy, r: 6, fill: T.dust, class: 'dust', style: `animation-delay:${i * 0.45}s` }, g); });
+  [[b.x, b.y + b.d], [b.x + b.w, b.y + b.d], [b.x + b.w, b.y], [b.x + b.w / 2, b.y + b.d]].forEach(([cx, cy], i) => {
+    const [sx, sy] = P(cx, cy, 0.1);
+    el('circle', { cx: sx, cy: sy, r: 6, fill: T.dust, class: 'dust', style: loop(1.8, i * 0.45) }, g);
+  });
 }
 function cracks(g, b) {
-  const { x, y, w, d, h } = b;
-  el('polyline', { points: pts([[x + w * 0.3, y + d, h], [x + w * 0.45, y + d, h * 0.7], [x + w * 0.35, y + d, h * 0.45], [x + w * 0.55, y + d, h * 0.15]]), fill: 'none', stroke: '#2b2f33', 'stroke-width': 1.3 }, g);
-  el('polyline', { points: pts([[x + w, y + d * 0.2, h * 0.9], [x + w, y + d * 0.5, h * 0.6], [x + w, y + d * 0.35, h * 0.3]]), fill: 'none', stroke: '#2b2f33', 'stroke-width': 1.3 }, g);
+  const { x, y, w, d, h } = b, s = { fill: 'none', stroke: '#2b2f33', 'stroke-width': 1.3 };
+  el('polyline', { points: pts([[x + w * 0.3, y + d, h], [x + w * 0.45, y + d, h * 0.7], [x + w * 0.35, y + d, h * 0.45], [x + w * 0.55, y + d, h * 0.15]]), ...s }, g);
+  el('polyline', { points: pts([[x + w, y + d * 0.2, h * 0.9], [x + w, y + d * 0.5, h * 0.6], [x + w, y + d * 0.35, h * 0.3]]), ...s }, g);
+}
+// Leaving: a wrecking crane swings at the building while the final backup leaves the database.
+function wrecker(g, b) {
+  const [bx, by] = P(b.x + b.w + 0.7, b.y - 0.5, 0), top = by - (b.h + 1.6) * U, tipX = bx - 34;
+  const c = el('g', { stroke: '#e2a33b', 'stroke-width': 1.8, fill: 'none' }, g);
+  el('line', { x1: bx, y1: by, x2: bx, y2: top }, c);
+  el('line', { x1: bx + 8, y1: top, x2: tipX, y2: top }, c);
+  const sw = el('g', {}, c);
+  el('line', { x1: tipX, y1: top, x2: tipX, y2: top + 30, stroke: '#555', 'stroke-width': 1 }, sw);
+  el('circle', { cx: tipX, cy: top + 34, r: 5, fill: '#2d2d2d', stroke: 'none' }, sw);
+  el('animateTransform', { attributeName: 'transform', type: 'rotate', values: `-22 ${tipX} ${top};22 ${tipX} ${top};-22 ${tipX} ${top}`, dur: '2.2s', repeatCount: 'indefinite' }, sw);
+}
+function backupPackets(g, top, T) {
+  for (let i = 0; i < 3; i++) el('rect', { x: top[0] - 2.5, y: top[1] - 3, width: 5, height: 5, rx: 1, fill: T.backup, class: 'packet', style: loop(1.5, i * 0.5) }, g);
 }
 function fog(g, b, T) {
   const [sx, sy] = P(b.x + b.w / 2, b.y + b.d / 2, b.h * 0.55);
-  const f = el('g', { filter: 'url(#blur)', class: 'fogdrift' }, g);
+  const f = el('g', { filter: 'url(#blur)', class: 'fogdrift', style: loop(12) }, g);
   el('ellipse', { cx: sx, cy: sy, rx: 34, ry: 22, fill: T.fog, opacity: 0.85 }, f);
   el('ellipse', { cx: sx + 14, cy: sy - 16, rx: 24, ry: 14, fill: T.fog, opacity: 0.75 }, f);
   el('ellipse', { cx: sx - 16, cy: sy + 9, rx: 22, ry: 12, fill: T.fog, opacity: 0.75 }, f);
   txt(g, sx, sy + 5, '?', 'fogq');
 }
-function badge(g, b, T) {
-  const [sx, sy] = P(b.x + b.w / 2, b.y + b.d / 2, b.h + 0.3), y = sy - 36;
-  const k = el('g', { class: 'badge' }, g);
-  el('line', { x1: sx, y1: sy - 4, x2: sx, y2: y + 9, stroke: T.stuck, 'stroke-width': 1.6 }, k);
-  el('polygon', { points: octagon(sx, y, 10), fill: T.stuck, stroke: '#fff', 'stroke-width': 1 }, k);
-  txt(k, sx, y + 4.5, '!', 'badgeq');
-}
-function overlays(g, b, s, T) {
-  const act = s.activity;
-  if (act === 'arriving' || act === 'deploying' || act === 'updating') scaffold(g, b, T, s.stuck);
+function overlays(g, b, s, T, dbTop) {
+  const act = s.activity, changing = act === 'arriving' || act === 'deploying' || act === 'updating';
+  if (changing && !s.stuck) scaffold(g, b, T, false);
   if (act === 'arriving' && !s.stuck) crane(g, b, T);
-  if (act === 'leaving') dust(g, b, T);
+  if (s.stuck) { if (changing) scaffold(g, b, T, true); barrier(g, b); }
+  if (act === 'leaving') { dust(g, b, T); wrecker(g, b); if (dbTop) backupPackets(g, dbTop, T); }
   if (s.cond === 'degraded' && act !== 'leaving') smoke(g, b, T);
   if (s.cond === 'unknown') fog(g, b, T);
   if (s.stuck) badge(g, b, T);
@@ -407,172 +470,137 @@ function unreleased(g, b, T) {
     const a = P(cx, cy, 0), c = P(cx, cy, 0.45);
     el('line', { x1: a[0], y1: a[1], x2: c[0], y2: c[1], stroke: T.stake, 'stroke-width': 2 }, g);
   }
-  const [sx, sy] = P(x + w / 2, y + d / 2, 0);
-  txt(g, sx, sy + 4, 'Unreleased', 'sub');
-}
-function ring(g, b, T, e) {
-  const col = e.cond === 'degraded' ? T.bad2 : e.cond === 'unknown' ? T.unk : T.ok, p = 0.3;
-  flat(g, [[b.x - p, b.y - p], [b.x + b.w + p, b.y - p], [b.x + b.w + p, b.y + b.d + p], [b.x - p, b.y + b.d + p]], 0.01,
-    { fill: col, 'fill-opacity': 0.28, stroke: col, 'stroke-width': 1.5 });
-}
-function chip(g, b, T, e) {
-  const [sx, sy] = P(b.x + b.w, b.y + b.d, 0);
-  const col = e.stuck ? T.stuck : e.cond === 'degraded' ? T.bad2 : e.cond === 'unknown' ? T.unk : e.activity ? T.scaffold : T.ok;
-  const small = kindOf(e) === 'preview';
-  const s = small ? e.name : e.activity === 'unreleased' ? `${e.name} · Unreleased` : `${e.name} · ${condLabel(e)}${e.activity ? ' · ' + actLabel(e) : ''}`;
-  txt(LAYER, sx - (small ? 4 : 10), sy + 15, s, 'chip', { fill: col });
+  const t = el('g', { transform: groundM(x + w / 2, y + d / 2 + 0.25) }, g);
+  txt(t, 0, 0, 'UNRELEASED', 'pad', { fill: T.stake, style: 'font-size:6.5px;letter-spacing:.5px', opacity: 0.85 });
 }
 
 function drawEnv(g, e, x, y, T) {
-  const [w, d, h] = DIMS[kindOf(e)], b = { x, y, w, d, h };
+  const [w, d, h] = DIMS[kindOf(e)], b = { x, y, w, d, h }, now = performance.now();
   const grp = el('g', { 'data-tip': tipEnv(e) }, g);
   if (e.activity === 'unreleased' || e.wasUnreleased) {
-    const ug = el('g', e.crumbling ? { class: 'crumble' } : {}, grp);
-    unreleased(ug, b, T); if (e.activity === 'leaving' && !e.crumbling) dust(grp, b, T);
-    if (T.chips) chip(grp, b, T, e); return;
+    const ug = el('g', e.crumbleAt ? { class: 'crumble', style: once(e.crumbleAt) } : {}, grp);
+    unreleased(ug, b, T);
+    if (e.activity === 'leaving' && !e.crumbleAt) dust(grp, b, T);
+    return;
   }
-  const cls = [];
+  const cls = [], style = [];
   if (e.cond === 'unknown') cls.push('faded');
   if (e.activity === 'arriving') cls.push('ghost');
-  if (!e.seen) { cls.push('pop'); e.seen = true; }
-  if (e.crumbling) cls.push('crumble');
-  const body = el('g', { class: cls.join(' ') }, grp);
-  if (T.chips) ring(body, b, T, e);
+  if (e.crumbleAt) { cls.push('crumble'); style.push(once(e.crumbleAt)); }
+  else if (now - e.bornAt < 900) { cls.push('pop'); style.push(once(e.bornAt)); }
+  const body = el('g', { class: cls.join(' ') || undefined, style: style.join(';') || undefined }, grp);
   prism(body, x, y, w, d, h, e.activity === 'leaving' ? T.grey : e.cond === 'degraded' ? T.bad : T.bld);
   windows(body, b, e, T);
+  if (e.activity !== 'leaving') helipad(body, b, e, T);
+  const dom = e.caps.find(c => c.kind === 'domain');
+  if (dom && e.activity !== 'leaving') billboard(body, b, dom.host, T);
   if (e.activity === 'leaving') cracks(body, b);
-  for (const c of e.caps) drawCap(body, c, b, T);
-  if (!e.crumbling) overlays(grp, b, e, T);
-  if (T.chips && !e.crumbling) chip(grp, b, T, e);
-  if (e.activity === 'arriving' && !e.stuck) {
+  let dbTop = null;
+  for (const c of e.caps) if (c.kind !== 'domain') { const t = drawCap(body, c, b, T); if (c.kind === 'postgres') dbTop = t; }
+  if (e.crumbleAt) {
+    [[x, y + d], [x + w, y + d], [x + w / 2, y + d / 2]].forEach(([cx, cy], i) => {
+      const [sx, sy] = P(cx, cy, 0.2);
+      el('circle', { cx: sx, cy: sy, r: 9, fill: T.dust, class: 'burst', style: once(e.crumbleAt + i * 120) }, grp);
+    });
+  } else overlays(grp, b, e, T, dbTop);
+  if (e.activity === 'arriving' && !e.stuck && !e.quiet) {
     const [nx, ny] = P(x + w / 2, y + d / 2, h + 0.3);
-    txt(LAYER, nx, ny - 44, e.isNewApp ? 'NEW · SETTING UP' : 'NEW', 'newtag', { 'text-anchor': 'middle' });
+    txt(LAYER, nx, ny - 44, e.isNewApp ? 'NEW · SETTING UP' : 'NEW', 'newtag');
   }
 }
 
-// Fixed places inside a 7 x 6.5 district. Previews beyond three collapse into "+n".
+// ---------------------------------------------------------------- islets
+// Fixed places inside a district. Previews beyond three collapse into "+n".
 function lots(app) {
   const prod = app.envs.find(e => e.name === 'prod'), st = app.envs.find(e => e.name === 'staging');
-  const pr = app.envs.filter(e => e.name.startsWith('pr-'));
-  const out = [];
+  const pr = app.envs.filter(e => e.name.startsWith('pr-')), out = [];
   if (prod) out.push({ e: prod, x: 0.9, y: 0.9 });
   if (st) out.push({ e: st, x: 4.1, y: 1.1 });
   pr.slice(0, 3).forEach((e, i) => out.push({ e, x: 0.9 + i * 1.9, y: 4.3 }));
   return { out, extra: Math.max(0, pr.length - 3) };
 }
-function drawDistrict(g, app, ox, oy, T, labelAt = [0.2, 6.9], anchor = 'middle') {
-  const dg = el('g', {}, g);
-  const { out, extra } = lots(app);
-  for (const l of out) drawEnv(dg, l.e, ox + l.x, oy + l.y, T);
-  if (extra) { const [sx, sy] = P(ox + 6.4, oy + 5.3, 0); txt(dg, sx, sy, `+${extra} previews`, 'sub'); }
-  const [lx, ly] = P(ox + labelAt[0], oy + labelAt[1], 0);
-  if (!app.crumbling) txt(LAYER, lx, ly + 4, app.name, 'lbl', { 'text-anchor': anchor });
-  if (app.crumbling) dg.setAttribute('class', 'crumble');
+// A name cut into the ground: a dark fill with a light lip on the far edge.
+function engrave(g, s, x, y, T, size) {
+  const style = size ? `font-size:${size}px` : undefined;
+  const hi = el('g', { transform: 'translate(0,1.1)' }, g);
+  txt(el('g', { transform: groundM(x, y) }, hi), 0, 0, s, 'engrave', { fill: T.eng.light, style });
+  txt(el('g', { transform: groundM(x, y) }, g), 0, 0, s, 'engrave', { fill: T.eng.dark, style });
+}
+// The streets of an islet: a ring round the lots and a spur to each bridge landing.
+function streets(g, landings, T, ring) {
+  const [x0, y0, x1, y1] = ring;
+  road(g, [x0, y0], [x1, y0], 0.5, T); road(g, [x1, y0], [x1, y1], 0.5, T);
+  road(g, [x1, y1], [x0, y1], 0.5, T); road(g, [x0, y1], [x0, y0], 0.5, T);
+  for (const L of landings) road(g, L, [Math.min(Math.max(L[0], x0), x1), Math.min(Math.max(L[1], y0), y1)], 0.6, T);
+}
+function drawIslet(g, it, T, R) {
+  const { cx, cy, app } = it, ig = el('g', app.sinkAt ? { class: 'sink', style: once(app.sinkAt) } : {}, g);
+  const bare = app.envs.every(v => v.activity === 'unreleased' || v.wasUnreleased);
+  if (bare) flat(ig, hexPoly(cx, cy, R), -0.05, { fill: T.islet.top, opacity: 0.4, stroke: T.stake, 'stroke-dasharray': '5 4' });
+  else {
+    extrude(ig, hexPoly(cx, cy, R), -0.7, 0.7, T.islet);
+    streets(ig, it.landings, T, [cx - 3.3, cy - 3.3, cx + 3.7, cy + 3.1]);
+    road(ig, [cx - 3.3, cy + 0.35], [cx + 3.7, cy + 0.35], 0.45, T, 0.005, false);
+  }
+  engrave(ig, app.name.toUpperCase(), cx + 0.2, cy + 4.9, T);
+  const { out, extra } = lots(app), ox = cx - 3.5, oy = cy - 3.4;
+  for (const l of out) drawEnv(ig, l.e, ox + l.x, oy + l.y, T);
+  if (extra) { const [sx, sy] = P(ox + 6.4, oy + 5.3, 0); txt(LAYER, sx, sy, `+${extra} previews`, 'sub'); }
 }
 
-// Platform components, each a distinct structure.
-// Placed on a screen-aligned grid so labels never share a spot.
-const PLATFORM_BLOCK = { argocd: [1.0, 1.0], traefik: [5.0, 0.4], 'cert-manager': [0.4, 5.6], cnpg: [3.0, 3.0],
-  'external-dns': [7.2, 1.4], 'deploy-gate': [5.9, 4.0], 'oauth2-proxy': [3.2, 6.4], alloy: [6.4, 6.6] };
+// Platform components, each a distinct structure, around the city centre.
+const PLATFORM_BLOCK = { argocd: [1.2, 1.2], traefik: [5.8, 0.5], 'cert-manager': [0.5, 6.4], cnpg: [3.5, 3.5],
+  'external-dns': [8.2, 1.6], 'deploy-gate': [6.8, 4.6], 'oauth2-proxy': [3.7, 7.3], alloy: [7.6, 7.6] };
 function drawComponent(g, c, x, y, T) {
-  const grp = el('g', { 'data-tip': tipComp(c) }, g);
-  const col = c.cond === 'degraded' ? T.bad : T.bld;
+  const grp = el('g', { 'data-tip': tipComp(c) }, g), col = c.cond === 'degraded' ? T.bad : T.bld;
   let b;
   switch (c.kind) {
     case 'argocd': {
-      cyl(grp, x, y, 0.55, 3.0, col); cyl(grp, x, y, 0.4, 0.45, T.gate, 3.0);
-      const [lx, ly] = P(x, y, 3.25);
-      el('circle', { cx: lx, cy: ly, r: 9, fill: '#fff3b0', opacity: 0.6, class: 'lamp' + (c.activity ? ' fast' : '') }, grp);
-      b = { x: x - 0.55, y: y - 0.55, w: 1.1, d: 1.1, h: 3.45 }; break;
+      cyl(grp, x, y, 0.6, 3.2, col); cyl(grp, x, y, 0.45, 0.5, T.gate, 3.2);
+      const [lx, ly] = P(x, y, 3.45);
+      el('circle', { cx: lx, cy: ly, r: 10, fill: '#fff3b0', opacity: 0.6, class: 'lamp' + (c.activity ? ' fast' : ''), style: loop(c.activity ? 0.8 : 3) }, grp);
+      b = { x: x - 0.6, y: y - 0.6, w: 1.2, d: 1.2, h: 3.7 }; break;
     }
     case 'traefik':
-      prism(grp, x, y, 0.4, 0.4, 1.6, col); prism(grp, x + 1.7, y, 0.4, 0.4, 1.6, col); prism(grp, x, y, 2.1, 0.4, 0.35, T.gate, 1.6);
-      b = { x, y, w: 2.1, d: 0.4, h: 1.95 }; break;
+      prism(grp, x, y, 0.45, 0.45, 1.8, col); prism(grp, x + 1.9, y, 0.45, 0.45, 1.8, col); prism(grp, x, y, 2.35, 0.45, 0.38, T.gate, 1.8);
+      b = { x, y, w: 2.35, d: 0.45, h: 2.18 }; break;
     case 'deploy-gate':
-      prism(grp, x, y, 1.4, 1.1, 1.1, col); prism(grp, x + 0.2, y + 0.15, 1.0, 0.8, 0.35, T.gate, 1.1);
-      b = { x, y, w: 1.4, d: 1.1, h: 1.45 }; break;
+      prism(grp, x, y, 1.6, 1.2, 1.2, col); prism(grp, x + 0.2, y + 0.15, 1.2, 0.9, 0.4, T.gate, 1.2);
+      b = { x, y, w: 1.6, d: 1.2, h: 1.6 }; break;
     case 'cert-manager': {
-      prism(grp, x, y, 1.1, 1.1, 1.0, col); const [sx, sy] = P(x + 0.55, y + 0.55, 1.0);
-      el('ellipse', { cx: sx, cy: sy, rx: 7, ry: 3.5, fill: '#e0b84a' }, grp);
-      b = { x, y, w: 1.1, d: 1.1, h: 1.0 }; break;
+      prism(grp, x, y, 1.2, 1.2, 1.1, col); const [sx, sy] = P(x + 0.6, y + 0.6, 1.1);
+      el('ellipse', { cx: sx, cy: sy, rx: 8, ry: 4, fill: '#e0b84a' }, grp);
+      b = { x, y, w: 1.2, d: 1.2, h: 1.1 }; break;
     }
     case 'external-dns': case 'alloy': {
-      const hgt = c.kind === 'alloy' ? 3.4 : 2.8, [bx, by] = P(x, y, 0), [tx, ty] = P(x, y, hgt);
-      el('line', { x1: bx, y1: by, x2: tx, y2: ty, stroke: c.cond === 'degraded' ? T.bad2 : '#d8dee3', 'stroke-width': 2 }, grp);
+      const hgt = c.kind === 'alloy' ? 3.6 : 3.0, [bx, by] = P(x, y, 0), [tx, ty] = P(x, y, hgt);
+      el('line', { x1: bx, y1: by, x2: tx, y2: ty, stroke: c.cond === 'degraded' ? '#ff6b5e' : '#d8dee3', 'stroke-width': 2 }, grp);
       for (let k = 1; k <= 3; k++) el('line', { x1: tx - 7 + k, y1: ty + k * 9, x2: tx + 7 - k, y2: ty + k * 9, stroke: '#d8dee3', 'stroke-width': 1.3 }, grp);
-      el('circle', { cx: tx, cy: ty, r: 3, fill: c.kind === 'alloy' ? '#ff5c5c' : '#6cc4ff', class: 'blink' }, grp);
+      el('circle', { cx: tx, cy: ty, r: 3, fill: c.kind === 'alloy' ? '#ff5c5c' : '#6cc4ff', class: 'blink', style: loop(1) }, grp);
       b = { x: x - 0.3, y: y - 0.3, w: 0.6, d: 0.6, h: hgt }; break;
     }
     case 'cnpg':
-      prism(grp, x, y, 1.2, 1.0, 0.8, col); cyl(grp, x + 1.55, y + 0.4, 0.33, 1.1, T.tank);
-      b = { x, y, w: 1.2, d: 1.0, h: 0.8 }; break;
+      prism(grp, x, y, 1.3, 1.1, 0.9, col); cyl(grp, x + 1.7, y + 0.45, 0.36, 1.2, T.tank);
+      b = { x, y, w: 1.3, d: 1.1, h: 0.9 }; break;
     case 'oauth2-proxy':
-      prism(grp, x, y, 0.7, 0.7, 2.1, col); prism(grp, x - 0.1, y - 0.1, 0.9, 0.9, 0.3, T.gate, 2.1);
-      b = { x, y, w: 0.7, d: 0.7, h: 2.4 }; break;
+      prism(grp, x, y, 0.75, 0.75, 2.3, col); prism(grp, x - 0.1, y - 0.1, 0.95, 0.95, 0.32, T.gate, 2.3);
+      b = { x, y, w: 0.75, d: 0.75, h: 2.62 }; break;
   }
   const [lx] = P(b.x + b.w / 2, b.y + b.d / 2, 0), [, ly] = P(b.x + b.w, b.y + b.d, 0);
-  txt(LAYER, lx, ly + 13, c.label, 'sub', { style: 'font-size:9.5px' });
-  overlays(grp, b, c, T);
+  txt(LAYER, lx, ly + 13, c.label, 'sub');
+  overlays(grp, b, c, T, null);
 }
-function drawPlatform(g, ox, oy, T, place = PLATFORM_BLOCK, label = true) {
-  if (label) { const [lx, ly] = P(ox + place.argocd[0], oy + place.argocd[1], 3.5); txt(LAYER, lx, ly - 18, 'Platform', 'lbl', { 'text-anchor': 'middle' }); }
-  const items = model.comps.map(c => ({ c, x: ox + place[c.kind][0], y: oy + place[c.kind][1] })).sort((a, b) => (a.x + a.y) - (b.x + b.y));
-  for (const it of items) drawComponent(g, it.c, it.x, it.y, T);
-}
-
-// ---------------------------------------------------------------- variant A: one island
-// Slot 0 is the Platform quarter at the heart; Applications fill a square spiral around it.
-function squareSpiral(n) {
-  const out = [[0, 0]], dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-  let x = 0, y = 0, step = 1, di = 0;
-  while (out.length < n) {
-    for (let k = 0; k < 2 && out.length < n; k++) {
-      for (let s = 0; s < step && out.length < n; s++) { x += dirs[di][0]; y += dirs[di][1]; out.push([x, y]); }
-      di = (di + 1) % 4;
-    }
-    step++;
-  }
-  return out;
-}
-function renderA(g, T) {
-  const PITCH = 8.6, cells = squareSpiral(model.high + 1);
-  const at = k => [cells[k][0] * PITCH, cells[k][1] * PITCH];
-  // Land exists for every slot ever used, so the coast never jumps back when an Application leaves.
-  const tiles = cells.map((c, k) => at(k)).sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
-  for (const [x, y] of tiles) flat(g, [[x - 1.4, y - 1.4], [x + PITCH + 1.4, y - 1.4], [x + PITCH + 1.4, y + PITCH + 1.4], [x - 1.4, y + PITCH + 1.4]], -0.5, { fill: T.shallow, opacity: 0.8 });
-  for (const [x, y] of tiles) prism(g, x, y, PITCH, PITCH, 0.5, T.land, -0.5);
-  for (const [x, y] of tiles) flat(g, [[x + 0.4, y + 0.4], [x + PITCH - 0.4, y + 0.4], [x + PITCH - 0.4, y + PITCH - 0.4], [x + 0.4, y + PITCH - 0.4]], 0.003, { fill: T.plaza, opacity: 0.55 });
-  const things = [{ k: 0, draw: (x, y) => drawPlatform(g, x + 0.6, y + 0.8, T) }];
-  for (const a of model.apps) things.push({ k: a.slot, draw: (x, y) => drawDistrict(g, a, x + 0.8, y + 0.9, T) });
-  things.sort((p, q) => { const [px, py] = at(p.k), [qx, qy] = at(q.k); return (px + py) - (qx + qy); });
-  for (const t of things) t.draw(...at(t.k));
+function drawCore(g, it, T, R0) {
+  const { cx, cy } = it;
+  extrude(g, hexPoly(cx, cy, R0), -0.7, 0.7, T.core);
+  streets(g, it.landings, T, [cx - 5.6, cy - 5.6, cx + 5.8, cy + 5.2]);
+  engrave(g, 'PLATFORM', cx, cy + 7.1, T, 15);
+  const ox = cx - 4.6, oy = cy - 4.8;
+  const items = model.comps.map(c => ({ c, x: ox + PLATFORM_BLOCK[c.kind][0], y: oy + PLATFORM_BLOCK[c.kind][1] })).sort((a, b) => (a.x + a.y) - (b.x + b.y));
+  for (const i of items) drawComponent(g, i.c, i.x, i.y, T);
 }
 
-// ---------------------------------------------------------------- variant B: tabletop board
-// A board with a fixed grid of plots in creation order, four across; Platform components line the back edge.
-function renderB(g, T) {
-  const COLS = 4, PX = 9.2, PY = 8.6, rows = Math.max(2, Math.ceil(model.high / COLS));
-  const W = COLS * PX + 0.8, H = rows * PY + 0.8;
-  prism(g, -1.2, -9.4, W + 1.2, H + 9.4, 0.7, T.board, -0.7);
-  flat(g, [[-0.6, -8.8], [W - 0.6, -8.8], [W - 0.6, -1.2], [-0.6, -1.2]], 0.003, { fill: T.strip });
-  const [sx, sy] = P(-0.6, -5.0, 0);
-  txt(LAYER, sx - 10, sy, 'Platform', 'lbl', { 'text-anchor': 'end' });
-  const at = k => [((k - 1) % COLS) * PX, Math.floor((k - 1) / COLS) * PY];
-  for (let k = 1; k <= rows * COLS; k++) {
-    const [x, y] = at(k), used = model.apps.some(a => a.slot === k);
-    flat(g, [[x, y], [x + PX - 0.6, y], [x + PX - 0.6, y + PY - 0.6], [x, y + PY - 0.6]], 0.004,
-      used ? { fill: T.plate } : { fill: T.plateEmpty, stroke: '#4a5966', 'stroke-dasharray': '5 4' });
-    if (!used) { const [ex, ey] = P(x + PX / 2 - 0.3, y + PY / 2 - 0.3, 0); txt(g, ex, ey, 'free plot', 'sub'); }
-  }
-  const STRIP = { argocd: [1.2, -6.2], traefik: [4.8, -7.6], 'deploy-gate': [9.3, -7.4], 'cert-manager': [13.6, -6.9],
-    'external-dns': [18.2, -6.2], cnpg: [21.2, -7.2], 'oauth2-proxy': [26.4, -7.0], alloy: [31.5, -5.6] };
-  drawPlatform(g, 0, 0, T, STRIP, false);
-  const apps = [...model.apps].sort((a, b) => { const [ax, ay] = at(a.slot), [bx, by] = at(b.slot); return (ax + ay) - (bx + by); });
-  for (const a of apps) { const [x, y] = at(a.slot); drawDistrict(g, a, x + 0.6, y + 0.4, T, [-0.4, 7.4], 'end'); }
-}
-
-// ---------------------------------------------------------------- variant C: archipelago
-// The Platform is the central island; each Application is its own islet on a hex spiral, bridged to it.
+// ---------------------------------------------------------------- the archipelago
 function hexSpiral(n) {
   const dirs = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]], out = [[0, 0]];
   for (let k = 1; out.length < n; k++) {
@@ -581,64 +609,70 @@ function hexSpiral(n) {
   }
   return out;
 }
-function renderC(g, T) {
-  const S = 7.9, R = 5.7, R0 = 6.6, cells = hexSpiral(model.high + 1);
+const hexLen = ([q, r]) => (Math.abs(q) + Math.abs(r) + Math.abs(q + r)) / 2;
+function renderArchipelago(g, T) {
+  const S = 10.2, R = 6.9, R0 = 8.9, cells = hexSpiral(model.high + 1);
   const at = k => { const [q, r] = cells[k]; return [S * (Math.sqrt(3) * q + Math.sqrt(3) / 2 * r), S * 1.5 * r]; };
-  // Bridges first, under everything.
-  for (const a of model.apps) {
-    const [cx, cy] = at(a.slot), len = Math.hypot(cx, cy), ux = cx / len, uy = cy / len;
-    const s = [cx - ux * R * 0.8, cy - uy * R * 0.8], e = [ux * R0 * 0.85, uy * R0 * 0.85];
-    const plank = a.envs.every(v => v.activity === 'unreleased') ? { 'stroke-dasharray': '3 5' } : {};
-    el('polyline', { points: pts([[...s, -0.1], [...e, -0.1]]), stroke: T.bridge, 'stroke-width': 4, fill: 'none', ...plank }, g);
+  const core = { core: true, k: 0, cx: 0, cy: 0, landings: [] };
+  const isles = model.apps.map(a => { const [cx, cy] = at(a.slot); return { app: a, k: a.slot, cx, cy, landings: [] }; });
+  const byCell = new Map(isles.map(i => [cells[i.k].join(','), i]));
+  // Ring 1 bridges to the centre; an outer islet bridges to an inner neighbour that exists.
+  const bridges = [];
+  for (const i of isles) {
+    const [q, r] = cells[i.k], ring = hexLen([q, r]);
+    let parent = core;
+    if (ring > 1) {
+      const nbrs = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]].map(([dq, dr]) => [q + dq, r + dr]).filter(c => hexLen(c) === ring - 1);
+      parent = nbrs.map(c => byCell.get(c.join(','))).find(Boolean) || core;
+    }
+    const dx = parent.cx - i.cx, dy = parent.cy - i.cy, L = Math.hypot(dx, dy), ux = dx / L, uy = dy / L;
+    const a = [i.cx + ux * (R - 0.6), i.cy + uy * (R - 0.6)], rp = parent.core ? R0 : R, b = [parent.cx - ux * (rp - 0.6), parent.cy - uy * (rp - 0.6)];
+    i.landings.push(a); parent.landings.push(b);
+    bridges.push({ a, b, app: i.app });
   }
-  const isles = [{ k: 0, core: true }, ...model.apps.map(a => ({ k: a.slot, a }))]
-    .sort((p, q) => { const [px, py] = at(p.k), [qx, qy] = at(q.k); return (px + py) - (qx + qy); });
-  for (const it of isles) {
-    const [cx, cy] = at(it.k), ig = el('g', it.a && it.a.crumbling ? { class: 'crumble' } : {}, g);
-    const rad = it.core ? R0 : R;
-    flat(ig, hexPoly(cx, cy, rad + 1.3), -0.7, { fill: T.reef, opacity: 0.8 });
-    const bare = it.a && it.a.envs.every(v => v.activity === 'unreleased');
-    if (bare) flat(ig, hexPoly(cx, cy, rad), -0.05, { fill: T.islet.top, opacity: 0.35, stroke: T.stake, 'stroke-dasharray': '5 4' });
-    else extrude(ig, hexPoly(cx, cy, rad), -0.7, 0.7, it.core ? T.core : T.islet);
-    if (it.core) drawPlatform(ig, cx - 3.6, cy - 3.4, T);
-    else drawDistrict(ig, it.a, cx - 3.5, cy - 3.1, T, [0.6, 6.6]);
+  // Reefs first so neighbouring shallows merge, then bridges tucked under the islet edges.
+  for (const it of [core, ...isles]) flat(g, hexPoly(it.cx, it.cy, (it.core ? R0 : R) + 1.4), -0.7, { fill: T.reef, opacity: 0.85 });
+  for (const br of bridges) {
+    const bg = el('g', br.app.sinkAt ? { class: 'sink', style: once(br.app.sinkAt) } : {}, g);
+    const planned = br.app.envs.every(v => v.activity === 'unreleased') || br.app.isNew;
+    const dx = br.b[0] - br.a[0], dy = br.b[1] - br.a[1], L = Math.hypot(dx, dy), nx = -dy / L * 0.45, ny = dx / L * 0.45;
+    road(bg, br.a, br.b, 0.9, T, -0.25, !planned);
+    for (const s of [1, -1]) el('polyline', { points: pts([[br.a[0] + nx * s, br.a[1] + ny * s, 0.05], [br.b[0] + nx * s, br.b[1] + ny * s, 0.05]]), stroke: T.rail, 'stroke-width': 1, fill: 'none', 'stroke-dasharray': planned ? '3 4' : undefined }, bg);
   }
+  const all = [core, ...isles].sort((p, q) => (p.cx + p.cy) - (q.cx + q.cy));
+  for (const it of all) it.core ? drawCore(g, it, T, R0) : drawIslet(g, it, T, R);
 }
 
 // ---------------------------------------------------------------- render loop
 const svg = document.getElementById('map'), world = document.getElementById('world'), overlay = document.getElementById('overlay');
-const VARIANTS = ['A', 'B', 'C'];
+const VARIANTS = Object.keys(THEMES);
 let variant = new URLSearchParams(location.search).get('variant');
-if (!VARIANTS.includes(variant)) variant = 'A';
+if (!VARIANTS.includes(variant)) variant = 'pale';
 let fitted = false;
 function render() {
-  const T = THEMES[variant];
+  const T = THEMES[variant], labels = document.getElementById('labels');
   document.getElementById('stage').style.background = T.bg;
-  svg.style.setProperty('--lbl', T.lbl); svg.style.setProperty('--sub', T.sub);
-  svg.style.setProperty('--halo', T.halo); svg.style.setProperty('--new', T.new);
-  const labels = document.getElementById('labels');
+  svg.style.setProperty('--sub', T.sub); svg.style.setProperty('--halo', T.halo); svg.style.setProperty('--new', T.new);
   world.replaceChildren(); labels.replaceChildren(); overlay.replaceChildren(); LAYER = labels;
-  ({ A: renderA, B: renderB, C: renderC })[variant](world, T);
+  renderArchipelago(world, T);
   world.setAttribute('class', model.clusterLost ? 'faded' : ''); labels.setAttribute('class', model.clusterLost ? 'faded' : '');
   document.getElementById('lost').style.display = model.clusterLost ? 'block' : 'none';
   declutter(labels);
   if (!fitted) { fit(); fitted = true; }
   if (model.clusterLost) {
-    const bb = world.getBBox(), f = el('g', { filter: 'url(#blurBig)', class: 'fogdrift' }, overlay);
-    for (let i = 0; i < 18; i++) {
-      el('ellipse', { cx: bb.x + ((i * 37) % 100) / 100 * bb.width, cy: bb.y + ((i * 61) % 100) / 100 * bb.height,
-        rx: bb.width * 0.18, ry: bb.height * 0.14, fill: T.fog, opacity: 0.55 }, f);
-    }
+    const bb = world.getBBox(), f = el('g', { filter: 'url(#blurBig)', class: 'fogdrift', style: loop(12) }, overlay);
+    for (let i = 0; i < 18; i++) el('ellipse', { cx: bb.x + ((i * 37) % 100) / 100 * bb.width, cy: bb.y + ((i * 61) % 100) / 100 * bb.height,
+      rx: bb.width * 0.18, ry: bb.height * 0.14, fill: T.fog, opacity: 0.55 }, f);
   }
-  document.getElementById('variantLabel').textContent = `${variant} · ${T.name}`;
+  document.getElementById('variantLabel').textContent = T.name;
   renderPanel();
 }
 function renderPanel() {
   const feed = document.getElementById('feed');
   feed.replaceChildren(...model.feed.slice(0, 14).map(f => { const li = document.createElement('li'); li.innerHTML = `<time>${f.t}</time>`; li.append(f.msg); return li; }));
   const st = document.getElementById('state'); st.replaceChildren();
-  for (const a of [...model.apps].sort((p, q) => p.slot - q.slot)) {
-    const h = document.createElement('div'); h.className = 'app'; h.innerHTML = `${a.name} <small>slot ${a.slot}</small>`; st.append(h);
+  for (const a of [...model.apps].sort((p, q) => p.name.localeCompare(q.name))) {
+    const h = document.createElement('div'); h.className = 'app'; h.textContent = a.name; st.append(h);
     for (const e of a.envs) {
       const r = document.createElement('div'); r.className = 'env';
       const cl = e.stuck ? 'stuckc' : e.cond !== 'healthy' ? 'c-' + e.cond : '';
@@ -646,18 +680,16 @@ function renderPanel() {
       st.append(r);
     }
   }
-  const h = document.createElement('div'); h.className = 'app'; h.innerHTML = 'Platform components <small>fixed</small>'; st.append(h);
+  const h = document.createElement('div'); h.className = 'app'; h.textContent = 'Platform components'; st.append(h);
   for (const c of model.comps) {
     const r = document.createElement('div'); r.className = 'env';
     r.innerHTML = `<span>${c.label}</span><span class="${c.stuck ? 'stuckc' : c.cond !== 'healthy' ? 'c-' + c.cond : ''}">${condLabel(c)} · ${actLabel(c)}</span>`;
     st.append(r);
   }
 }
-
 // Greedy label declutter: a label that overlaps one already placed moves down until it's free.
 function declutter(layer) {
-  const placed = [];
-  const hit = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+  const placed = [], hit = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
   for (const t of layer.querySelectorAll('text')) {
     for (let i = 0; i < 6; i++) {
       const bb = t.getBBox(), o = placed.find(p => hit(bb, p));
@@ -672,8 +704,7 @@ function declutter(layer) {
 let vb = null;
 const setVB = () => svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
 function fit() {
-  const a = world.getBBox(), l = document.getElementById('labels').getBBox();
-  const x0 = Math.min(a.x, l.x), y0 = Math.min(a.y, l.y), bb = { x: x0, y: y0, width: Math.max(a.x + a.width, l.x + l.width) - x0, height: Math.max(a.y + a.height, l.y + l.height) - y0 }, pad = 50;
+  const bb = world.getBBox(), pad = 40;
   vb = { x: bb.x - pad, y: bb.y - pad - 30, w: bb.width + 2 * pad, h: bb.height + 2 * pad + 30 }; setVB();
 }
 const toWorld = (cx, cy) => { const p = svg.createSVGPoint(); p.x = cx; p.y = cy; return p.matrixTransform(svg.getScreenCTM().inverse()); };
@@ -700,7 +731,7 @@ svg.addEventListener('pointerleave', () => { document.getElementById('tip').styl
 
 // ---------------------------------------------------------------- switcher
 function setVariant(v) {
-  variant = v; fitted = false;
+  variant = v;
   const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u);
   render();
 }
@@ -718,27 +749,34 @@ document.getElementById('togglePanel').onclick = e => {
 };
 
 // ---------------------------------------------------------------- events
-const now = () => new Date().toTimeString().slice(0, 8);
-const log = msg => model.feed.unshift({ t: now(), msg });
+const clock = () => new Date().toTimeString().slice(0, 8);
+const log = msg => model.feed.unshift({ t: clock(), msg });
 const later = (ms, fn) => setTimeout(() => { fn(); render(); }, ms);
 const pick = a => a[Math.floor(Math.random() * a.length)];
 const envs = () => model.apps.flatMap(a => a.envs);
 const idle = () => envs().filter(e => e.activity === null && e.cond !== 'unknown');
 const POOL = ['ledger', 'kantine', 'roomsy', 'fakturo', 'radar', 'intranet', 'onboard', 'crm', 'kudos', 'lunsj'];
+function removeApp(a) {
+  for (const e of a.envs) { if (e.activity === 'unreleased') e.wasUnreleased = true; e.activity = 'leaving'; e.stuck = false; }
+  log(`${a.name} leaving: final backups running`);
+  later(3500, () => { const t = performance.now(); a.envs.forEach((e, i) => { e.crumbleAt = t + i * 150; }); });
+  later(5000, () => { a.sinkAt = performance.now(); });
+  later(6700, () => { model.apps = model.apps.filter(x => x !== a); model.free.push(a.slot); log(`${a.name} left`); });
+}
+const deletable = () => model.apps.filter(x => !x.sinkAt && !x.envs.some(e => e.activity === 'leaving'));
 const ACTIONS = {
   arrive() {
-    const name = POOL.find(n => !model.apps.some(a => a.name === n)) || 'app' + seq;
-    const withStaging = Math.random() < 0.5;
-    const list = [mkEnv(name, 'prod', [cap('postgres')], { activity: 'arriving', seen: false, isNewApp: true })];
-    if (withStaging) list.push(mkEnv(name, 'staging', [cap('postgres')], { activity: 'arriving', seen: false }));
+    const name = POOL.find(n => !model.apps.some(a => a.name === n)) || 'app' + seq, t = performance.now();
+    const list = [mkEnv(name, 'prod', [cap('postgres')], { activity: 'arriving', bornAt: t, isNewApp: true })];
+    if (Math.random() < 0.5) list.push(mkEnv(name, 'staging', [cap('postgres')], { activity: 'arriving', bornAt: t + 200, quiet: true }));
     const a = addApp(name, list, { isNew: true });
-    log(`${name} arrived in slot ${a.slot}, setting up`);
-    later(6500, () => { for (const e of a.envs) if (e.activity === 'arriving') e.activity = null; a.isNew = false; log(`${name} is serving`); });
+    log(`${name} arrived, setting up`);
+    later(7000, () => { for (const e of a.envs) if (e.activity === 'arriving') e.activity = null; a.isNew = false; log(`${name} is serving`); });
   },
   firstDeploy() {
     const e = envs().find(v => v.activity === 'unreleased');
     if (!e) return log('no Unreleased Environment left');
-    e.activity = 'arriving'; e.seen = false; log(`${e.app} ${e.name} got its first image, arriving`);
+    e.activity = 'arriving'; e.bornAt = performance.now(); log(`${e.app} ${e.name} got its first image, arriving`);
     later(5000, () => { e.activity = null; log(`${e.app} ${e.name} is serving`); });
   },
   deploy() {
@@ -760,23 +798,21 @@ const ACTIONS = {
   unknown() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'unknown'; log(`${e.app} ${e.name} Unknown: pod status Unknown`); } },
   warn() { const c = pick(envs().flatMap(e => e.caps.filter(k => k.kind === 'postgres' && !k.warn).map(k => [e, k]))); if (c) { c[1].warn = true; log(`${c[0].app} ${c[0].name} database: backups failing`); } },
   preview() {
-    const a = pick(model.apps.filter(x => x.envs.some(e => e.name === 'staging'))); if (!a) return;
-    const n = 40 + Math.floor(Math.random() * 60), e = mkEnv(a.name, `pr-${n}`, [cap('login')], { activity: 'arriving', seen: false });
+    const a = pick(model.apps.filter(x => !x.sinkAt && x.envs.some(e => e.name === 'staging'))); if (!a) return;
+    const n = 40 + Math.floor(Math.random() * 60), e = mkEnv(a.name, `pr-${n}`, [cap('login')], { activity: 'arriving', bornAt: performance.now() });
     a.envs.push(e); log(`${a.name} pr-${n} preview arriving`);
     later(4500, () => { e.activity = null; log(`${a.name} pr-${n} preview is serving`); });
   },
   closePreview() {
     const e = pick(envs().filter(v => v.name.startsWith('pr-') && v.activity !== 'leaving')); if (!e) return log('no preview open');
     e.activity = 'leaving'; log(`${e.app} ${e.name} leaving`);
-    later(3000, () => { e.crumbling = true; });
-    later(4300, () => { const a = model.apps.find(x => x.name === e.app); a.envs = a.envs.filter(v => v !== e); log(`${e.app} ${e.name} left`); });
+    later(3000, () => { e.crumbleAt = performance.now(); });
+    later(4400, () => { const a = model.apps.find(x => x.name === e.app); if (a) a.envs = a.envs.filter(v => v !== e); log(`${e.app} ${e.name} left`); });
   },
-  deleteApp() {
-    const a = pick(model.apps.filter(x => !x.crumbling && !x.envs.some(e => e.activity === 'leaving'))); if (!a) return;
-    for (const e of a.envs) { if (e.activity === 'unreleased') e.wasUnreleased = true; e.activity = 'leaving'; e.stuck = false; }
-    log(`${a.name} leaving: final backups running`);
-    later(3500, () => { a.crumbling = true; for (const e of a.envs) e.crumbling = true; });
-    later(4800, () => { model.apps = model.apps.filter(x => x !== a); model.free.push(a.slot); log(`${a.name} left; slot ${a.slot} is free`); });
+  deleteApp() { const a = pick(deletable()); if (a) removeApp(a); },
+  deleteTwo() {
+    const a = pick(deletable()); if (!a) return; removeApp(a);
+    setTimeout(() => { const b = pick(deletable()); if (b) { removeApp(b); render(); } }, 1200);
   },
   bump() {
     const c = model.comps.find(k => k.kind === 'cert-manager'); c.activity = 'updating'; c.stuck = false; log('cert-manager updating (chart bump)');
@@ -796,7 +832,6 @@ document.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click',
 seed();
 log('Argus connected (fake data)');
 render();
-// ?do=arrive,preview runs events on load, for linking straight to a scenario.
 for (const a of (new URLSearchParams(location.search).get('do') || '').split(',').filter(Boolean)) { if (ACTIONS[a]) { ACTIONS[a](); render(); } }
 </script>
 </body>
