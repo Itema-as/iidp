@@ -10,7 +10,10 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-FROM nginx:1.27-alpine
+# nginx's stable branch. Even minor versions are stable, odd ones mainline,
+# and only the current stable and mainline branches are rebuilt with fixes,
+# so move this to the next even branch when nginx releases one.
+FROM nginx:1.30-alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80

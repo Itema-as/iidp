@@ -1,0 +1,32 @@
+# Keeps the base images of the Create templates and the kind e2e harness
+# current, so a new nginx stable branch or Alpine release arrives as a pull
+# request instead of a stale pin (#81). See
+# docs/implementation-notes/81-nginx-stable-template.md.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directories:
+      # Only FROM lines with a literal tag are tracked: vite-react's nginx.
+      # node:${NODE_VERSION} and the "other" stub's commented FROM are not.
+      - /internal/templates/*
+      - /test/e2e/gitserver
+      - /test/e2e/testdata/fakegithub
+    schedule:
+      interval: weekly
+    groups:
+      # gitserver and fakegithub share one Alpine base; bump it in one PR.
+      base-images:
+        group-by: dependency-name
+    ignore:
+      # nginx's odd minor versions are mainline and its even ones stable.
+      # Dependabot would propose the newest same-shaped tag, so from
+      # 1.30-alpine it would offer mainline 1.31-alpine. Only the next
+      # even branch (1.32-alpine) should become a pull request. Add the
+      # next odd branches here before these run out.
+      - dependency-name: nginx
+        versions:
+          - ">= 1.31, < 1.32"
+          - ">= 1.33, < 1.34"
+          - ">= 1.35, < 1.36"
+          - ">= 1.37, < 1.38"
+          - ">= 1.39, < 1.40"

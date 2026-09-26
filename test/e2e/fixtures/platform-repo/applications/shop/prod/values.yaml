@@ -17,7 +17,7 @@ image:
   # nginx: answers HTTP 200 on / out of the box and its Alpine base carries
   # the busybox nc the migration command uses to check Postgres is reachable.
   repository: docker.io/library/nginx
-  tag: "1.27-alpine"
+  tag: "1.30-alpine"
 size: small
 # nginx listens on 80; PORT is injected but unused.
 port: 80

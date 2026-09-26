@@ -257,7 +257,7 @@ func TestTheGateChecksAPublicImageAnonymously(t *testing.T) {
 		"applications/shop/prod/values.yaml": "image:\n  repository: docker.io/library/nginx\n  tag: \"\"\n",
 	})
 
-	status, body := e.deploy(e.issuer.claims(), "shop", "auto", "1.27-alpine")
+	status, body := e.deploy(e.issuer.claims(), "shop", "auto", "1.30-alpine")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %v", status, body)
 	}
@@ -272,7 +272,7 @@ func TestTheGateChecksAPublicImageAnonymously(t *testing.T) {
 			if req.Host != "auth.docker.io" {
 				t.Errorf("token request to %s, want the challenge's realm auth.docker.io", req.Host)
 			}
-		case req.Host != "registry-1.docker.io" || req.Path != "/v2/library/nginx/manifests/1.27-alpine":
+		case req.Host != "registry-1.docker.io" || req.Path != "/v2/library/nginx/manifests/1.30-alpine":
 			t.Errorf("manifest request %s%s, want Docker Hub's API host and library/nginx", req.Host, req.Path)
 		}
 	}
