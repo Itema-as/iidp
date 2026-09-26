@@ -86,6 +86,22 @@ spec:
               # TLS with no secret of its own: Traefik serves the default
               # store's wildcard certificate (see platform-tls).
               traefik.ingress.kubernetes.io/router.tls: "true"
+        # The ApplicationSet controller, which the chart runs by default,
+        # kept on explicitly: each Application's Preview Environments are an
+        # ApplicationSet with a Pull Request generator
+        # (docs/adr/0006-preview-environments-from-an-argocd-applicationset.md).
+        # A small request, since the node and the kind runner are near their
+        # CPU request ceiling; it polls GitHub every few minutes and renders
+        # a handful of Applications. The limit keeps a leak from starving the
+        # node.
+        applicationSet:
+          replicas: 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
         repoServer:
           # KSOPS: the init container copies ksops and its kustomize into an
           # emptyDir that shadows the repo server's kustomize; sops reads the

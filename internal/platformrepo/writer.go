@@ -140,6 +140,12 @@ type Application struct {
 	// has no Application repository and leaves it nil
 	// (docs/implementation-notes/58-repository-binding.md).
 	Repository *RepositoryBinding
+	// Previews gives the Application a Preview Environment for every open
+	// pull request labelled preview on its Application repository: the
+	// ApplicationSet PreviewsPath. It needs Staging, whose values and
+	// secrets previews use, and Repository, whose pull requests they follow
+	// (docs/adr/0006-preview-environments-from-an-argocd-applicationset.md).
+	Previews bool
 }
 
 // Result is what CreateApplication wrote and where it can be seen.
@@ -159,6 +165,10 @@ type Result struct {
 	// LoginGroups are the Application's sign-in groups once the run is
 	// done; none means any Itema user gets in.
 	LoginGroups []string
+	// PreviewAddress is the address of a Preview Environment, with
+	// <number> for the pull request's, or "" when the Application has no
+	// Preview Environments.
+	PreviewAddress string
 }
 
 // Writer commits Applications to the Platform repository.
@@ -364,6 +374,17 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 	if len(app.LoginGroups) > 0 && !app.Login {
 		return Result{}, fmt.Errorf("%w: give --login with --login-group", ErrLoginGroupsWithoutLogin)
 	}
+	if app.Previews {
+		if !app.Staging {
+			return Result{}, ErrPreviewsWithoutStaging
+		}
+		if app.Repository == nil {
+			return Result{}, fmt.Errorf("%w: give --path create or --path adopt", ErrPreviewsWithoutBinding)
+		}
+		if _, _, err := previewsRepository(app.Name, *app.Repository, true); err != nil {
+			return Result{}, err
+		}
+	}
 
 	environments := []string{"prod"}
 	if app.Staging {
@@ -382,6 +403,9 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 		}
 		if app.Repository != nil {
 			files = append(files, RepositoryBindingPath(app.Name))
+		}
+		if app.Previews {
+			files = append(files, PreviewsPath(app.Name))
 		}
 	} else {
 		appDir := path.Join(ApplicationsDir, app.Name)
@@ -422,6 +446,16 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 			}
 			files = append(files, bindingFile)
 		}
+		if app.Previews {
+			// After staging's files, since the ApplicationSet copies
+			// staging's application.yaml as the Postgres Capability left
+			// it (its sops/ source).
+			previewFiles, err := writePreviews(dir, app.Name, cfg, *app.Repository, true)
+			if err != nil {
+				return Result{}, err
+			}
+			files = append(files, previewFiles...)
+		}
 		if err := repo.Add(ctx, files...); err != nil {
 			return Result{}, err
 		}
@@ -453,6 +487,9 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 	}
 	if app.Staging {
 		res.StagingAddress = "https://" + stagingAddress
+	}
+	if app.Previews {
+		res.PreviewAddress = PreviewAddress(app.Name, cfg.BaseDomain)
 	}
 	return res, nil
 }

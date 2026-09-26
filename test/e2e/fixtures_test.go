@@ -4,12 +4,54 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/render"
 )
+
+// The fixture's previews ApplicationSet is exactly what the CLI writes for
+// notes from the fixture's own staging application.yaml, binding and
+// platform.yaml: the kind test proves the CLI's ApplicationSet, not a
+// hand-made one. Runs without the e2e tag, like the test below.
+func TestFixturePreviewsAreTheCLIsApplicationSet(t *testing.T) {
+	root := filepath.Join("fixtures", "platform-repo")
+	cfg, err := platformrepo.LoadConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, ok, err := platformrepo.ReadRepositoryBinding(root, "notes")
+	if err != nil || !ok {
+		t.Fatalf("notes's binding: ok = %v, err = %v", ok, err)
+	}
+	owner, name, _ := strings.Cut(binding.Repository, "/")
+	staging, err := os.ReadFile(filepath.Join(root, "applications", "notes", "staging", "application.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := render.PreviewApplicationSet(render.Previews{Application: "notes", Owner: owner, Repository: name, GitHubAPI: cfg.GitHubAPI, Staging: staging})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(platformrepo.PreviewsPath("notes"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotDoc, wantDoc any
+	if err := yaml.Unmarshal(got, &gotDoc); err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(want, &wantDoc); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotDoc, wantDoc) {
+		t.Errorf("%s is not what the CLI writes; the CLI writes:\n%s", platformrepo.PreviewsPath("notes"), want)
+	}
+}
 
 // The fixture Platform repository's Environments are hand-written in the
 // shape the CLI writes; their namespace labels, which the guardrails

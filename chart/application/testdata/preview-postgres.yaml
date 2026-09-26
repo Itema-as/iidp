@@ -1,0 +1,19 @@
+# A Preview Environment as its ApplicationSet leaves staging's values: its
+# own Environment pr-<number>, the pull request's image, and a database
+# without backups. No bucket or endpoint, which only backups need.
+application:
+  name: shop
+environment: pr-7
+platform:
+  baseDomain: app.itma.no
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 0123456789abcdef0123456789abcdef01234567
+size: small
+postgres:
+  enabled: true
+  migrationCommand: npx prisma migrate deploy
+  backups: false
+login:
+  enabled: true

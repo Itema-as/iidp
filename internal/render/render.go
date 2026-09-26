@@ -265,7 +265,8 @@ type syncPolicy struct {
 }
 
 type namespaceMetadata struct {
-	Labels map[string]string `yaml:"labels"`
+	Labels      map[string]string `yaml:"labels"`
+	Annotations map[string]string `yaml:"annotations,omitempty"`
 }
 
 type retry struct {

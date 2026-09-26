@@ -1,0 +1,11 @@
+# 55 characters, the longest name the chart takes: with -pr-12345 the
+# preview's objects would be named past the 63 characters a Service and a
+# DNS label allow. The CLI's 40-character names never get here.
+application:
+  name: abcdefghij-abcdefghij-abcdefghij-abcdefghij-abcdefghijk
+environment: pr-12345
+platform:
+  baseDomain: app.itma.no
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: "1.0.0"

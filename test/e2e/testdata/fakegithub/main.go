@@ -8,7 +8,15 @@
 //     with, so the gate verifies them exactly as it verifies GitHub's;
 //   - under /api, the three GitHub REST calls the gate makes: an
 //     installation token (checking the App JWT against the public key in
-//     APP_PUBLIC_KEY_FILE), the App's slug, and its bot account's id.
+//     APP_PUBLIC_KEY_FILE), the App's slug, and its bot account's id;
+//   - under /api/v3, where GitHub Enterprise has its API, the two calls
+//     ArgoCD's Pull Request generator makes for Preview Environments
+//     (#95) with the same App: an installation token, and a repository's
+//     open pull requests. The generator is pointed here by the fixture
+//     platform.yaml's githubAPI, as it would be at a GitHub Enterprise;
+//   - PUT /e2e/pulls/{owner}/{repo}, which only the test calls (through a
+//     port-forward): the repository's pull requests from then on, open
+//     and closed, which is how the test opens, labels and closes them.
 //
 // test/e2e/deploygate.go builds it, loads it into the cluster and runs it;
 // it is never published. It sits under testdata so that the pattern
@@ -29,6 +37,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
 
 // The values the fake answers with; test/e2e checks the gate's commit
@@ -74,10 +84,81 @@ func main() {
 		}
 		writeJSON(w, map[string]any{"id": BotUserID, "login": AppSlug + "[bot]"})
 	})
+	// ArgoCD's generator mints its installation token with
+	// ghinstallation, at <api>/app/installations/{id}/access_tokens.
+	mux.HandleFunc("POST /api/v3/app/installations/{id}/access_tokens", func(w http.ResponseWriter, r *http.Request) {
+		if err := verifyAppJWT(r, appKey); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, map[string]any{"token": InstallationToken, "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+	})
+	mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls", func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "token "+InstallationToken && auth != "Bearer "+InstallationToken {
+			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		state := r.URL.Query().Get("state")
+		if state == "" {
+			state = "open"
+		}
+		pulls.Lock()
+		defer pulls.Unlock()
+		list := []pullRequest{}
+		for _, pr := range pulls.byRepo[r.PathValue("owner")+"/"+r.PathValue("repo")] {
+			if state == "all" || pr.State == state {
+				list = append(list, pr)
+			}
+		}
+		writeJSON(w, list)
+	})
+	mux.HandleFunc("PUT /e2e/pulls/{owner}/{repo}", func(w http.ResponseWriter, r *http.Request) {
+		var list []pullRequest
+		if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		pulls.Lock()
+		pulls.byRepo[r.PathValue("owner")+"/"+r.PathValue("repo")] = list
+		pulls.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	log.Print("fakegithub listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", logRequests(mux)))
 }
+
+// pullRequest is a pull request in the shape GitHub's REST API lists it,
+// with every field ArgoCD's generator reads (it dereferences each one).
+type pullRequest struct {
+	Number int     `json:"number"`
+	Title  string  `json:"title"`
+	State  string  `json:"state"`
+	Labels []label `json:"labels"`
+	Head   ref     `json:"head"`
+	Base   ref     `json:"base"`
+	User   user    `json:"user"`
+}
+
+type label struct {
+	Name string `json:"name"`
+}
+
+type ref struct {
+	Ref string `json:"ref"`
+	SHA string `json:"sha"`
+}
+
+type user struct {
+	Login string `json:"login"`
+}
+
+// pulls holds every repository's pull requests, as the test last set them.
+var pulls = struct {
+	sync.Mutex
+	byRepo map[string][]pullRequest
+}{byRepo: map[string][]pullRequest{}}
 
 func logRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

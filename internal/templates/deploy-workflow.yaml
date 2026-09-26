@@ -1,8 +1,10 @@
 # Deploy workflow for __IIDP_APP_NAME__, added by `iidp app create`.
 #
 # A push to main builds the image and deploys it; a v* tag promotes that
-# image to prod. How is defined once, in the iidp repository's reusable
-# workflow, which this file calls at its major tag:
+# image to prod. A pull request labelled preview gets its image built for
+# its Preview Environment, if the Application has them; without the label
+# the run skips every job. How is defined once, in the iidp repository's
+# reusable workflow, which this file calls at its major tag:
 #
 #   __IIDP_DEPLOY_WORKFLOW__
 #
@@ -22,6 +24,8 @@ on:
       - main
     tags:
       - "v*"
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
 
 jobs:
   deploy:

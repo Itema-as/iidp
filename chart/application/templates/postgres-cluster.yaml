@@ -46,12 +46,15 @@ spec:
     limits:
       cpu: "250m"
       memory: "256Mi"
+  {{- if include "application.postgres.backups" . }}
   # Continuous backup: every WAL segment is archived to the ObjectStore of
   # the same name as soon as Postgres closes it, and the ScheduledBackup
-  # takes the daily base backup through the same plugin.
+  # takes the daily base backup through the same plugin. Without backups
+  # (a Preview Environment) there is no plugin, and so no sidecar.
   plugins:
     - name: {{ include "application.postgres.backupPlugin" . }}
       isWALArchiver: true
       parameters:
         barmanObjectName: {{ include "application.postgres.cluster" . }}
+  {{- end }}
 {{- end }}

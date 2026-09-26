@@ -283,10 +283,10 @@ func TestAppCreateWizardDecliningTheSummaryHasNoSideEffects(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
 
-	// Only the migration command, domain, login, size and confirmation are
-	// asked (name, path, framework, postgres and staging were given as
-	// flags).
-	stdin := "\n\n\n\nn\n"
+	// Only the migration command, previews, domain, login, size and
+	// confirmation are asked (name, path, framework, postgres and staging
+	// were given as flags).
+	stdin := "\n\n\n\n\nn\n"
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
 		"--name", "shop", "--path", "create", "--framework", "nextjs",

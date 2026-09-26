@@ -1,0 +1,12 @@
+# The Application repository notes is bound to. The Deploy gate lets only the
+# repository with these GitHub ids (an Actions OIDC token's repository_id and
+# repository_owner_id) deploy it; repository is the name when it was bound,
+# for people to read, and goes stale on a rename.
+# Written by iidp (iidp app create, iidp app bind); do not edit by hand.
+#
+# In the kind fixture, repository is also the one whose pull requests the
+# harness's fake GitHub serves to the Preview Environments' generator
+# (previews/applicationset.yaml).
+repository: Itema-as/notes
+repositoryId: 700000003
+repositoryOwnerId: 1230559

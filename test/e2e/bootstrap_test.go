@@ -45,6 +45,10 @@ import (
 // shop carrying the migration command and a Scheduled task from its
 // Application repository's iidp.yaml sets them with the tag, the migration
 // Job runs the command, and the task's CronJob runs a Job that succeeds.
+// Then (testPreviewEnvironments) it proves #95: a pull request labelled
+// preview on notes's repository, served by the harness's fake GitHub to
+// ArgoCD's Pull Request generator, gets a Preview Environment behind
+// Itema login, and closing it removes the preview with its namespace.
 // Last (testGuardrails) it proves #90: nothing the fixture Applications did,
 // the Scheduled task's Jobs included, failed a guardrail, a NodePort Service
 // is warned about and audited but not denied, and Pod Security refuses a
@@ -182,6 +186,9 @@ func TestBootstrap(t *testing.T) {
 	// first image adds a workload to the node.
 	testDeployGate(ctx, t, cluster, issuer)
 	testMigrationCommandFromIidpYAML(ctx, t, cluster, issuer)
+	// Once shop-staging's requests are gone too: a preview runs a small
+	// Application and a database while it is open.
+	testPreviewEnvironments(ctx, t, cluster)
 	// Last, once every fixture Environment has been created, deployed,
 	// migrated and (shop-staging) deleted: nothing any of that did may
 	// have tripped a guardrail.

@@ -1,0 +1,38 @@
+# Values for notes's staging Environment, never released in the test: the
+# base its Preview Environments render from. Each Capability here is one a
+# preview must keep (the database, its migration command, sign-in groups)
+# or override (the size, the Scheduled task, which previews must not run;
+# the Environment and image tag, which are the pull request's). backups
+# are on, as for every staging, and previews turn them off. The migration
+# command and the task are what a deploy of staging would have written.
+application:
+  name: notes
+environment: staging
+platform:
+  baseDomain: app.example.test
+  loginCookieDomain: example.test
+  backupsBucket: iidp-backups
+  objectStorageEndpoint: https://objectstorage.invalid
+kind: web-service
+image:
+  repository: docker.io/library/nginx
+  tag: ""
+size: medium
+port: 80
+probe:
+  path: /
+env: {}
+domains: []
+postgres:
+  enabled: true
+  migrationCommand: >-
+    test -n "$DATABASE_URL" && echo "migrated: DATABASE_URL set"
+  backupRetention: 30d
+tasks:
+  - name: heartbeat
+    schedule: "* * * * *"
+    command: echo tick
+login:
+  enabled: true
+  groups:
+    - 6e1d2c3b-4a5f-4b6c-8d7e-9f0a1b2c3d4e

@@ -116,9 +116,10 @@ func TestAppCreateWizardRefusesALoginWithoutTheWorkflowScopeBeforeTheSummary(t *
 	gh := newFakeGitHub(t)
 	gh.setScopes(scopesWithoutWorkflow)
 
-	// Only the migration command, domain, login, size and confirmation
-	// would be asked; the refusal comes before the summary asks anything.
-	stdin := "\n\n\n\ny\n"
+	// Only the migration command, previews, domain, login, size and
+	// confirmation would be asked; the refusal comes before the summary
+	// asks anything.
+	stdin := "\n\n\n\n\ny\n"
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
 		"--name", "shop", "--path", "create", "--framework", "nextjs", "--postgres", "--staging")

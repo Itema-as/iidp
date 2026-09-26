@@ -1,5 +1,5 @@
 {{- include "application.validate" . -}}
-{{- if and (include "application.released" .) (include "application.postgres.enabled" .) }}
+{{- if and (include "application.released" .) (include "application.postgres.backups" .) }}
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup
 metadata:
