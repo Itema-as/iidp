@@ -30,3 +30,9 @@ The original component list, recommended by colleagues with IDP experience, was 
 - Observability data leaves Hetzner and depends on a free tier that Grafana Labs can change. Entra SSO for Grafana is not on the free tier; developers use Grafana accounts there.
 - The Platform's on-node footprint is roughly 1.5-2 GB, leaving about half of a CPX22 for Applications.
 - Every rejected component has a named trigger for reconsideration above, so the list is not reopened without a new fact.
+
+## Note (Phase 2 design, 2026-09-26)
+
+- **Kyverno is replaced by admission control built into Kubernetes.** k3s v1.36 ships Pod Security Admission and ValidatingAdmissionPolicy (CEL), and neither runs a pod. Application namespaces enforce Pod Security `baseline` and warn on `restricted`. A few ValidatingAdmissionPolicies add what Pod Security doesn't cover: images only from `ghcr.io/itema-as/` plus the CloudNativePG images the chart uses, limits on every container, no NodePort or LoadBalancer Services, and Ingress hosts only under `baseDomain` or the Application's own domains. Platform namespaces are exempt. The trigger that deferred Kyverno (people other than the admin provisioning Applications) has arrived, but its cost (about 0.3–0.5 GB and four controllers to keep upgraded) buys mutation and PolicyReports, which nothing needs. **Trigger to revisit Kyverno:** a policy that needs mutation, or a request for violation reports beyond audit annotations.
+- **OpenTelemetry stays deferred.** Nothing sends traces today: Alloy has no OTLP receiver and the Grafana Cloud Secret has no Tempo endpoint. The trigger is unchanged, an Application asking for traces, and the options are recorded in the `phase-3` traces issue.
+- **The node stays CPX22.** The Platform admin watches memory by hand. The resize is still the one OpenTofu change and reboot of ADR-0001, done when an Application no longer fits.

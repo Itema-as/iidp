@@ -17,5 +17,5 @@ date: 2026-09-20
 - Authentication to the Platform is `gh auth`. Write access to the Platform repository is the authorisation model. Commits go straight to `main` while the team is small; branch protection with required review is the upgrade path.
 - The git log of the Platform repository is the audit trail for every Application change.
 - A deploy is a commit: CI writes the new image tag into the Environment's values file. Promotion to `prod` is the same commit with a version tag instead of a SHA. No image is ever rebuilt for promotion.
-- The CLI cannot show live status or logs in Phase 1. Developers use ArgoCD (Entra SSO) and Grafana Cloud for that. An `iidp app status` reading the ArgoCD API is a later addition.
+- The CLI cannot show live status or logs in Phase 1. Developers use ArgoCD (Entra SSO) and Grafana Cloud for that. An `iidp app status` reading the ArgoCD API is a later addition. (Superseded in part by ADR-0007: status reads through the Deploy gate's service instead, with the developer's `gh auth` token.)
 - The Platform repository is machine-written. Hand edits are allowed but unsupported, and the CLI must tolerate them.

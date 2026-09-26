@@ -13,8 +13,12 @@ A deployable unit that an Itema developer owns, with its own git repository, its
 _Avoid_: app (in docs), service, project
 
 **Environment**:
-One running instance of an Application with its own data and its own address. Every Application has a `prod` Environment. An Application may also have a `staging` Environment.
+One running instance of an Application with its own data and its own address. Every Application has a `prod` Environment. An Application may also have a `staging` Environment, and Preview Environments.
 _Avoid_: stage, deployment target, tier
+
+**Preview Environment**:
+An Environment for one open pull request labelled `preview` on the Application repository, with its own address and its own empty database. It is removed when the pull request closes or loses the label.
+_Avoid_: review app, ephemeral environment, PR environment
 
 **Application repository**:
 The git repository holding an Application's source code. Owned by the Application's developers.
@@ -29,8 +33,12 @@ The `iidp` command developers run to create and change Applications. It is the o
 _Avoid_: tool, wizard (the wizard is one flow inside the CLI)
 
 **Capability**:
-Something an Application can request from the Platform and have provisioned for it, such as a Postgres database, a custom domain, or a `staging` Environment. Capabilities are chosen in the wizard and can be added later.
+Something an Application can request from the Platform and have provisioned for it, such as a Postgres database, a custom domain, or a `staging` Environment. Most Capabilities are chosen in the wizard and can be added later; a Scheduled task is declared in the Application repository instead.
 _Avoid_: feature, add-on, resource, service
+
+**Scheduled task**:
+A Capability of a Web service: a command that runs on a schedule in a one-off container from the Application's own image, with the same database and secrets as the Environment it belongs to.
+_Avoid_: cron job (as a Kind), batch job, worker
 
 **Kind**:
 What an Application fundamentally is, chosen once at creation. The Kinds are Static site (built files served as-is) and Web service (a container listening on a port).

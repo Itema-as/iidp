@@ -10,7 +10,7 @@ The shared understanding reached in the design session on 2026-09-20. Vocabulary
 | Cost | ~€29 node + ~€7 Object Storage, no load balancer |
 | On-node Platform | ArgoCD, Traefik, cert-manager, external-dns, CloudNativePG, Grafana Alloy, SOPS via KSOPS, oauth2-proxy |
 | Off-node | Grafana Cloud free tier for logs and metrics, GHCR for images, Cloudflare DNS for `itma.no` |
-| Rejected | Istio, Kafka, Keycloak, Harbor, Nexus, OpenSearch, Vault, Supabase in Phase 1; Crossplane and Kyverno deferred (see ADR-0004) |
+| Rejected | Istio, Kafka, Keycloak, Harbor, Nexus, OpenSearch, Vault, Supabase in Phase 1; Crossplane deferred, Kyverno replaced by built-in admission in Phase 2 (see ADR-0004) |
 | Repositories | `iidp` holds CLI, chart, infra, bootstrap, docs. `iidp-platform` holds one ArgoCD Application and values file per Environment, plus `platform.yaml`. Org `Itema-as` |
 | Application model | Kind: Static site or Web service. Capabilities: Postgres, staging, custom domain, Itema login. Sizes small/medium/large |
 | Addresses | `<app>.app.itma.no`, `<app>-staging.app.itma.no`, one wildcard cert, custom domains in the Platform's Cloudflare zone (`cloudflareZone`, `itma.no`) automatic, anything else by CNAME, other Cloudflare zones included |
@@ -22,7 +22,7 @@ The shared understanding reached in the design session on 2026-09-20. Vocabulary
 | Testing | Unit tests, `helm template` and kubeconform on every PR, kind end-to-end on chart or bootstrap changes and on tags |
 | Done means | A fresh Next.js app with Postgres created end-to-end by the wizard, then an Adopt of a real Itema repository |
 | Build order | Infra and bootstrap, chart, CLI Create path, Adopt path, then Itema login |
-| Phase 2 | Cron job Kind, Kyverno, OpenTelemetry traces, `iidp app status`, per-app Entra registrations, preview Environments, node resize to CPX32 |
+| Phase 2 | Designed 2026-09-26 (spec issue, ADR-0006, ADR-0007): Scheduled tasks (a Capability declared in `iidp.yaml`, replacing the Cron job Kind), guardrails with Pod Security and ValidatingAdmissionPolicy (replacing Kyverno), `iidp app status` through the Deploy gate's service, sign-in groups for Itema login (replacing per-app Entra registrations), Preview Environments from an ArgoCD ApplicationSet. Deferred: OpenTelemetry traces (`phase-3`), the CPX32 resize (manual, when memory runs out) |
 
 ## The wizard
 
