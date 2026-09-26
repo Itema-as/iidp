@@ -900,18 +900,20 @@ func TestAppCreatePathAddsTheDeployWorkflow(t *testing.T) {
 	}
 	content := string(data)
 	// A short caller of the reusable deploy workflow at the major tag (v0
-	// for this dev build), with the Application's name and the Deploy
-	// gate's URL, rendered in from platform.yaml's baseDomain since CI
-	// can't read the private Platform repository
+	// for this dev build), with the Application's name
 	// (docs/implementation-notes/74-reusable-deploy-workflow.md).
 	for _, want := range []string{
 		"uses: " + platform.DeployWorkflow + "@v0\n",
 		"application: shop\n",
-		"deploy-gate-url: https://deploy.app.itma.no\n",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("deploy.yaml lacks %q:\n%s", want, content)
 		}
+	}
+	// app.itma.no's gate is the reusable workflow's default, so the
+	// caller leaves the input out.
+	if strings.Contains(content, "deploy-gate-url") {
+		t.Errorf("deploy.yaml names the default Deploy gate; want it left to the reusable workflow:\n%s", content)
 	}
 	if !strings.Contains(stdout, "calls "+platform.DeployWorkflow+"@v0") {
 		t.Errorf("stdout doesn't say which reusable workflow deploy.yaml calls:\n%s", stdout)

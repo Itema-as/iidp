@@ -1,7 +1,7 @@
 # The deploy workflow every Application repository calls. Its own
 # .github/workflows/deploy.yaml is a short caller that `iidp app create`
 # writes (internal/templates/deploy-workflow.yaml), holding only the
-# triggers, the permissions and the two inputs below; everything else
+# triggers, the permissions and the inputs below; everything else
 # lives here, once (docs/implementation-notes/74-reusable-deploy-workflow.md).
 #
 # On push to main: builds the image with buildx and pushes it to GHCR
@@ -42,10 +42,16 @@ on:
         description: The Application's name on the Platform, as `iidp app create` named it.
         type: string
         required: true
+      # The default is Itema's Platform: a second copy of baseDomain in the
+      # Platform repository's platform.yaml, which this repository can't
+      # read. Change both together, and platform.DefaultDeployGateURL,
+      # which a test keeps equal to it. `iidp app create` only writes the
+      # input into a caller when the Platform's gate is somewhere else.
       deploy-gate-url:
         description: The Platform's Deploy gate, https://deploy.<baseDomain>. Also the audience of the OIDC token.
         type: string
-        required: true
+        required: false
+        default: https://deploy.app.itma.no
 
 env:
   IIDP_DEPLOY_GATE_URL: ${{ inputs.deploy-gate-url }}

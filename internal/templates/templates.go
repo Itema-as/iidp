@@ -79,8 +79,10 @@ type Data struct {
 	// DeployGateURL is the Platform's Deploy gate,
 	// https://deploy.<baseDomain> (platformrepo.Config.DeployGateURL): the
 	// deploy workflow calls it, and asks for OIDC tokens with it as the
-	// audience. Rendered in because CI cannot read the private Platform
-	// repository to find it (docs/implementation-notes/60-deploy-gate.md).
+	// audience. CI can't read the private Platform repository to find it
+	// (docs/implementation-notes/60-deploy-gate.md), so it's rendered into
+	// the caller, but only when it isn't the reusable workflow's default,
+	// platform.DefaultDeployGateURL.
 	DeployGateURL string
 	// MigrationCommand is written into iidp.yaml (AppConfigPath): the
 	// detected or given --migration-command, or "" for none.
@@ -225,7 +227,25 @@ func renderWorkflow(content []byte, data Data) []byte {
 		"__IIDP_APP_NAME__", data.Name,
 		"__IIDP_DEPLOY_WORKFLOW_REF__", data.DeployWorkflowRef,
 		"__IIDP_DEPLOY_WORKFLOW__", platform.DeployWorkflow,
-		"__IIDP_DEPLOY_GATE_URL__", data.DeployGateURL,
+		"__IIDP_DEPLOY_GATE_URL_INPUT__\n", deployGateURLInput(data.DeployGateURL),
 	)
 	return []byte(r.Replace(string(content)))
+}
+
+// deployGateURLInput is the caller's deploy-gate-url line, with its
+// comment, or nothing when gateURL is the reusable workflow's default
+// (platform.DefaultDeployGateURL): every Application on Itema's Platform
+// then has one line less that would all be the same. An empty gateURL
+// also writes nothing. Only renders with no Platform behind them pass one
+// (cmd/renderfixture, the copy the CLI renders to detect a migration
+// command); Create and Adopt always pass platform.yaml's, and LoadConfig
+// refuses an empty baseDomain.
+func deployGateURLInput(gateURL string) string {
+	if gateURL == "" || gateURL == platform.DefaultDeployGateURL {
+		return ""
+	}
+	return "      # The Platform's Deploy gate, https://deploy.<baseDomain>, written\n" +
+		"      # here by iidp app create because it isn't the reusable workflow's\n" +
+		"      # default (" + platform.DefaultDeployGateURL + ").\n" +
+		"      deploy-gate-url: " + gateURL + "\n"
 }

@@ -34,6 +34,13 @@ const (
 	// (docs/implementation-notes/12-deploy-workflow.md).
 	CLIRepository = Org + "/iidp"
 
+	// DefaultDeployGateURL is the default of the reusable deploy workflow's
+	// deploy-gate-url input: Itema's Platform, https://deploy.<baseDomain>
+	// for the baseDomain in its platform.yaml. A caller for a Platform
+	// whose gate is elsewhere passes the input; for this one it's left
+	// out. A test keeps it equal to the workflow's default.
+	DefaultDeployGateURL = "https://deploy.app.itma.no"
+
 	// DeployWorkflow is the reusable workflow every Application
 	// repository's .github/workflows/deploy.yaml calls, without a ref
 	// (docs/implementation-notes/74-reusable-deploy-workflow.md).

@@ -112,12 +112,11 @@ func TestAppAdoptWithoutDockerfileDetectsNextJSAndGeneratesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A short caller of the reusable deploy workflow, with the
-	// Application's name and the Platform's Deploy gate
+	// Application's name; app.itma.no's gate is the workflow's default
 	// (docs/implementation-notes/74-reusable-deploy-workflow.md).
 	for _, want := range []string{
 		"uses: " + platform.DeployWorkflow + "@v0\n",
 		"application: shop\n",
-		"deploy-gate-url: https://deploy.app.itma.no\n",
 	} {
 		if !strings.Contains(string(workflow), want) {
 			t.Errorf("deploy.yaml lacks %q:\n%s", want, workflow)
