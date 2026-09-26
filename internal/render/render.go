@@ -22,6 +22,12 @@ type Environment struct {
 	Size            string
 	Port            int
 	ProbePath       string
+	// RunAsNonRoot says the image runs as a non-root user with a numeric
+	// UID, as the built-in templates' images do: the chart then requires
+	// it (runAsNonRoot), drops every capability, and serves a Static site
+	// on 8080. Left false for an image iidp did not generate, which may
+	// run as root (docs/implementation-notes/90-guardrails.md).
+	RunAsNonRoot bool
 	// Domains are the custom domains served beside the Platform address.
 	// Only prod carries any: staging keeps its Platform address (see
 	// docs/implementation-notes/13-cli-capabilities.md).
@@ -57,6 +63,30 @@ type Environment struct {
 // ArgoCD Application's name and the Environment's namespace.
 func (e Environment) Name() string {
 	return e.Application + "-" + e.Environment
+}
+
+// ApplicationNamespaceLabel is the Namespace label that marks an
+// Application namespace. Every Environment's namespace carries it, with
+// the Environment's Application as its value, and the bootstrap's
+// guardrails bind their admission policies to namespaces that have it
+// (bootstrap/components/guardrails). Platform namespaces never carry it.
+const ApplicationNamespaceLabel = "iidp.itema.no/application"
+
+// NamespaceLabels are the labels ArgoCD sets on an Environment's namespace
+// (syncPolicy.managedNamespaceMetadata): the Environment's identity, the
+// same two labels its ArgoCD Application and every chart object carry,
+// and Pod Security Admission's levels. baseline is enforced, so no Pod
+// runs privileged, shares the host's namespaces or mounts its paths;
+// restricted is warned about and audited, and an image built from a
+// template meets it (docs/implementation-notes/90-guardrails.md).
+func NamespaceLabels(application, environment string) map[string]string {
+	return map[string]string{
+		ApplicationNamespaceLabel:            application,
+		"iidp.itema.no/environment":          environment,
+		"pod-security.kubernetes.io/enforce": "baseline",
+		"pod-security.kubernetes.io/warn":    "restricted",
+		"pod-security.kubernetes.io/audit":   "restricted",
+	}
 }
 
 // Chart names the generic chart an ArgoCD Application installs: its OCI
@@ -107,6 +137,12 @@ func ArgoCDApplication(env Environment, chart Chart, platformRepoURL, valuesPath
 			SyncPolicy: syncPolicy{
 				Automated:   automated{Prune: true, SelfHeal: true},
 				SyncOptions: []string{"CreateNamespace=true"},
+				// ArgoCD applies these to the namespace CreateNamespace
+				// creates, and to the existing one on every sync. They are
+				// what the guardrails select Application namespaces by.
+				ManagedNamespaceMetadata: &namespaceMetadata{
+					Labels: NamespaceLabels(env.Application, env.Environment),
+				},
 				// The same policy as the Platform's own Applications
 				// (bootstrap/templates/_helpers.tpl): retry until it works,
 				// each time against the newest commit. Without refresh, a
@@ -149,13 +185,17 @@ func Values(env Environment) ([]byte, error) {
 			BackupsBucket:         env.BackupsBucket,
 			ObjectStorageEndpoint: env.ObjectStorageEndpoint,
 		},
-		Kind:    env.Kind,
-		Image:   imageValues{Repository: env.ImageRepository, Tag: env.ImageTag},
-		Size:    env.Size,
-		Port:    env.Port,
-		Probe:   probeValues{Path: env.ProbePath},
-		Env:     map[string]string{},
-		Domains: domains,
+		Kind:  env.Kind,
+		Image: imageValues{Repository: env.ImageRepository, Tag: env.ImageTag},
+		Size:  env.Size,
+		Port:  env.Port,
+		Probe: probeValues{Path: env.ProbePath},
+		// Written only when true: an Environment written before #90, or
+		// for an image iidp did not generate, reads the same as the
+		// chart's default, and a staging copied from prod keeps it.
+		RunAsNonRoot: env.RunAsNonRoot,
+		Env:          map[string]string{},
+		Domains:      domains,
 		Postgres: postgresValues{
 			Enabled:          env.PostgresEnabled,
 			MigrationCommand: env.MigrationCommand,
@@ -218,9 +258,14 @@ type destination struct {
 }
 
 type syncPolicy struct {
-	Automated   automated `yaml:"automated"`
-	SyncOptions []string  `yaml:"syncOptions"`
-	Retry       retry     `yaml:"retry"`
+	Automated                automated          `yaml:"automated"`
+	SyncOptions              []string           `yaml:"syncOptions"`
+	ManagedNamespaceMetadata *namespaceMetadata `yaml:"managedNamespaceMetadata,omitempty"`
+	Retry                    retry              `yaml:"retry"`
+}
+
+type namespaceMetadata struct {
+	Labels map[string]string `yaml:"labels"`
 }
 
 type retry struct {
@@ -249,10 +294,12 @@ type values struct {
 	Size        string            `yaml:"size"`
 	Port        int               `yaml:"port"`
 	Probe       probeValues       `yaml:"probe"`
-	Env         map[string]string `yaml:"env"`
-	Domains     []string          `yaml:"domains"`
-	Postgres    postgresValues    `yaml:"postgres"`
-	Login       loginValues       `yaml:"login"`
+	// RunAsNonRoot is omitted when false (see Values).
+	RunAsNonRoot bool              `yaml:"runAsNonRoot,omitempty"`
+	Env          map[string]string `yaml:"env"`
+	Domains      []string          `yaml:"domains"`
+	Postgres     postgresValues    `yaml:"postgres"`
+	Login        loginValues       `yaml:"login"`
 }
 
 type applicationValues struct {

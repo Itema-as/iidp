@@ -53,6 +53,16 @@ func (f Framework) Kind() string {
 	}
 }
 
+// RunsAsNonRoot reports whether the image f's Dockerfile builds runs as a
+// non-root user with a numeric UID: Next.js as 1001, Vite React on the
+// unprivileged nginx as 101 on port 8080. The CLI then writes
+// runAsNonRoot: true into the Environment's values, and the chart holds
+// the image to it (docs/implementation-notes/90-guardrails.md). Other's
+// stub is whatever the developer writes, so it makes no such promise.
+func (f Framework) RunsAsNonRoot() bool {
+	return f == NextJS || f == ViteReact
+}
+
 //go:embed all:nextjs all:vite-react all:other
 var files embed.FS
 

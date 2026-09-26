@@ -1,0 +1,35 @@
+# The guardrails on Application namespaces: four ValidatingAdmissionPolicies
+# and their bindings (image origin, container limits, Service types,
+# Ingress hosts), evaluated by the API server itself, so nothing runs on the
+# node for them. Rendered from bootstrap/components/guardrails in this
+# repository at the same revision as this chart. The objects are
+# cluster-scoped; the destination namespace only satisfies ArgoCD. The
+# other half of the guardrails, Pod Security, is the namespace labels every
+# Environment's ArgoCD Application carries (docs/platform-repository.md).
+# See README.md, "Guardrails".
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: guardrails
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.bootstrap.repoURL }}
+    targetRevision: {{ .Values.bootstrap.targetRevision | quote }}
+    path: bootstrap/components/guardrails
+    helm:
+      releaseName: guardrails
+      valuesObject:
+        baseDomain: {{ .Values.baseDomain }}
+        validationActions:
+          {{- toYaml .Values.guardrails.validationActions | nindent 10 }}
+        {{- with .Values.guardrails.extraAllowedImages }}
+        extraAllowedImages:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: kube-system
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list) | nindent 4 }}

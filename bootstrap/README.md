@@ -12,6 +12,7 @@ The ArgoCD app-of-apps that installs every Phase 1 Platform component. It is a H
 | `cnpg-barman-cloud` | The CloudNativePG Barman Cloud plugin, which the application chart's Postgres Capability uses for continuous backups to Object Storage | `cnpg-system` |
 | `monitoring` | Grafana's `k8s-monitoring` chart: Alloy shipping pod logs, node and kube-state metrics to Grafana Cloud | `monitoring` |
 | `oauth2-proxy` | The Itema login Capability's one shared oauth2-proxy (Entra ID, `entra-id` provider), served at `auth.<baseDomain>` through an Ingress covered by the wildcard, plus the Traefik ForwardAuth `Middleware` `itema-login-auth` the application chart's `login.enabled` Ingress annotation points at. An unauthenticated browser is redirected straight to Entra ID and back (`docs/implementation-notes/77-login-redirect.md`). Its cookie covers `cloudflareZone` ([Itema login](#itema-login)) | `oauth2-proxy` |
+| `guardrails` | [`components/guardrails`](components/guardrails): four ValidatingAdmissionPolicies and their bindings on Application namespaces (image origin, container limits, Service types, Ingress hosts). See [Guardrails](#guardrails) | cluster-scoped |
 | `deploy-gate` | [`components/deploy-gate`](components/deploy-gate): the Deploy gate (`cmd/iidp-deploy-gate`), the one way an Application repository's CI deploys and promotes, served at `deploy.<baseDomain>` through an Ingress covered by the wildcard (below) | `argocd` |
 
 Every version is pinned in [`versions.yaml`](versions.yaml). The Applications share one sync policy (`templates/_helpers.tpl`): automated with prune and self-heal, server-side apply, and unlimited retries, so a component that needs another one's CRDs or namespace converges on its own. Each retry syncs the newest commit (`retry.refresh: true`), so a fix pushed while a sync keeps failing applies on the next retry instead of waiting for someone to terminate the operation. No Application carries the resources finalizer: removing a component from the bootstrap leaves what it installed in the cluster, to be deleted by hand, rather than cascading into the deletion of CRDs and everything defined with them.
@@ -95,6 +96,8 @@ To add or change it by hand: write the Secret in the clear at `bootstrap/templat
 | `argocdAdminGroup` | bootstrap | Object id of the Entra ID group whose members are ArgoCD admins; everyone else who can log in is read-only |
 | `clusterName` | bootstrap | The `cluster` label on everything shipped to Grafana Cloud |
 | `dnsOwnerId` | bootstrap | The TXT owner id external-dns stamps on its records (default `iidp`) |
+| `guardrails.validationActions` | bootstrap | What the guardrails' bindings do with a failed check (default `[Warn, Audit]`); `[Deny, Audit]` switches them on. See [Guardrails](#guardrails) |
+| `guardrails.extraAllowedImages` | bootstrap | Images allowed in Application namespaces besides the Platform's own list; a test Platform only (default empty) |
 | `oauth2Proxy.skipOIDCDiscovery` | bootstrap | Cloud-less test clusters only (default `false`): skips oauth2-proxy's OIDC discovery call at startup, so it starts with a dummy tenant and client id where there is no route to `login.microsoftonline.com` |
 
 [`values.yaml`](values.yaml) carries the defaults for the bootstrap fields.
@@ -122,6 +125,37 @@ The `oauth2-proxy` Application is the one sign-in for every Application with `lo
 
 Membership is read only at sign-in (`cookie-refresh` is off, and there is no refresh token without `offline_access`), so a group change reaches a user already signed in at their next sign-in, within `cookie-expire` (7 days). See [`docs/implementation-notes/92-sign-in-groups.md`](../docs/implementation-notes/92-sign-in-groups.md).
 
+## Guardrails
+
+Application namespaces get guardrails from Kubernetes' own admission control, which runs inside the API server, so nothing runs on the node for them (ADR-0004's Phase 2 note). Platform namespaces (`argocd`, `kube-system`, `cert-manager`, `cnpg-system`, ...) are exempt: they keep the labels they had and no binding selects them.
+
+**Which namespaces.** An Application namespace is one with the label `iidp.itema.no/application`. The CLI writes it, with `iidp.itema.no/environment` and the Pod Security labels, into every Environment's ArgoCD Application as `syncPolicy.managedNamespaceMetadata`, and ArgoCD sets them on the namespace it creates (`CreateNamespace=true`) and on every sync after that ([`docs/platform-repository.md`](../docs/platform-repository.md#applicationsnameenvironmentapplicationyaml)). An Environment created before #90 has none of them until its `application.yaml` gets the same block by hand, which the rollout does.
+
+**Pod Security.** `pod-security.kubernetes.io/enforce: baseline`: no Pod runs privileged, shares the host's network, PID or IPC namespace, mounts a host path or adds a capability outside baseline's list; one that tries is refused. `warn: restricted` and `audit: restricted`: what `restricted` would refuse (a container not required to run as non-root, capabilities not dropped) is reported to the client and recorded in the audit log, and still runs. The application chart sets what `restricted` asks wherever the image allows it, and an image built from iidp's templates passes it in full ([`chart/application/README.md`](../chart/application/README.md), "Security context"). No `*-version` label is set, so each mode follows the API server's version (`latest`).
+
+**Admission policies.** [`components/guardrails`](components/guardrails) renders one ValidatingAdmissionPolicy per rule, each with one binding on Application namespaces, `failurePolicy: Fail`:
+
+| Policy | Checks | Allows |
+|---|---|---|
+| `iidp-images` | every container and init container of every Pod | an image under `ghcr.io/itema-as/`, or one of the repositories the Platform itself runs there: CloudNativePG's `cloudnative-pg` (the operator's bootstrap init container), `postgresql` (the operator's default Postgres image) and `plugin-barman-cloud-sidecar`, `docker.io/bitnami/kubectl` (the chart's final Backup hook) and `quay.io/jetstack/cert-manager-acmesolver` (cert-manager's HTTP-01 solver). A repository matches with any tag or digest, and nothing else: `ghcr.io/cloudnative-pg/postgresql-evil` does not match |
+| `iidp-limits` | every container and init container of every Pod | CPU and memory limits on each |
+| `iidp-service-types` | every Service | anything but `NodePort` and `LoadBalancer` |
+| `iidp-ingress-hosts` | every Ingress | every rule has a host, under `baseDomain` (any depth, not `baseDomain` itself) or among the Environment's declared domains; no `defaultBackend` |
+
+The two container policies match Pods only. Every container of every workload runs in one, whoever creates it (a Deployment's ReplicaSet, a Job, CloudNativePG, cert-manager), and one kind keeps the CEL type-checked against one schema. The price: a violation shows up when the Pod is created, as a warning to the controller that creates it and in the audit log, not when ArgoCD applies the Deployment (Pod Security's `warn` does report on the Deployment). Once they deny, such a Deployment shows as progressing with `FailedCreate` events on its ReplicaSet. All four skip an object that is being deleted, so removing a finalizer is never refused.
+
+The CloudNativePG images are listed by repository, not tag, so the tags follow the operator and plugin versions `versions.yaml` pins with no edit here. The kind end-to-end test runs a real Cluster on those versions and fails on any image the list misses, so an operator bump that renames one fails on its own pull request.
+
+**How the Ingress policy knows the declared domains.** The application chart renders a ConfigMap `iidp-domains` into the Environment's namespace, whose keys are the Environment's custom domains (the `domains` of its values file). The binding's `paramRef` names it without a namespace, which makes the API server look in the namespace of the Ingress being checked. The domains therefore stay in one place, the values file, and reach the policy with the chart version that renders them; nothing else writes them. An Ingress in an Application namespace without that ConfigMap is not checked at all (`parameterNotFoundAction: Allow`): with `Deny` the API server refuses such a request outright, even while the binding only warns, and every Environment on a chart from before #90 would have its Ingress updates refused. Every Environment with an image on a chart from #90 on has the ConfigMap. The alternatives considered, a namespace annotation the CLI writes and a policy parameter per Application, are in [`docs/implementation-notes/90-guardrails.md`](../docs/implementation-notes/90-guardrails.md).
+
+**Warn, then Deny.** Every binding ships with `validationActions: [Warn, Audit]`: a failed check is returned to the client as a warning (`kubectl` prints it) and recorded as the `validation.policy.admission.k8s.io/validation_failure` annotation on the request's audit event, and the request goes through. Switching them on is one line: `guardrails.validationActions` becomes `[Deny, Audit]`, in [`values.yaml`](values.yaml) for every Platform (a bootstrap release) or in `platform.yaml` for one. `Deny` with `Warn` is refused, by the API server and by the component's own template. Pod Security's `enforce: baseline` denies from the start.
+
+**Where to look.** The warnings go to whoever made the request: `kubectl apply` prints them, and a controller creating Pods discards them. The audit log is the complete record. cloud-init turns it on with [`infra/platform/cloud-init/audit-policy.yaml`](../infra/platform/cloud-init/audit-policy.yaml), which logs writes to Pods, Services, Ingresses and the workload kinds at Metadata level (the admission annotations, never an object's body), to `/var/lib/rancher/k3s/server/logs/audit.log` on the node, rotated at 50 MB. [`infra/README.md`](../infra/README.md#turning-on-the-audit-log) turns it on for a node that predates it and shows how to list the failures.
+
+**cert-manager's HTTP-01 solver.** When cert-manager issues a certificate for a custom domain the wildcard does not cover, it runs a solver Pod, a Service and an Ingress in the Application's namespace. The Pod's image is allowed and has limits (cert-manager's defaults, 100m and 64Mi), the Ingress's host is the declared domain being validated, and the `letsencrypt-http01` ClusterIssuer (`components/tls`) sets `serviceType: ClusterIP`, since cert-manager's default is a NodePort.
+
+Traefik's own resources are not checked. The chart renders one kind of them in an Application namespace, the Environment's own ForwardAuth `Middleware` for sign-in groups (#92), which no policy matches, so it is untouched. Not covered either: an `IngressRoute`, which could route any host from an Application namespace, ephemeral debug containers (`kubectl debug`), and Pod-level `resources`. Nothing the Platform writes uses them.
+
 ## The Deploy gate
 
 The `deploy-gate` Application renders [`components/deploy-gate`](components/deploy-gate) at the same pin as this chart: a Deployment, a Service and an Ingress at `deploy.<baseDomain>` (TLS with no secret of its own, so Traefik serves the wildcard). It runs the image `ghcr.io/itema-as/iidp-deploy-gate:<version>`, which the release workflow publishes for every `v*` tag, where `<version>` is the pinned bootstrap revision without its `v`: bumping the bootstrap bumps the gate. A pin that is not a release tag names no image; the Application then fails to render with a message saying so, and nothing else in the bootstrap is affected. The node pulls the image with the same read-only GHCR credential it pulls Application images with.
@@ -138,7 +172,8 @@ Its requests are 5m of CPU and 32Mi of memory, with a 128Mi memory limit: the no
 helm lint --strict bootstrap --values test/e2e/fixtures/platform-repo/platform.yaml
 helm lint --strict bootstrap/components/tls
 helm lint --strict bootstrap/components/deploy-gate --set bootstrapRevision=v0.0.0
-go test ./bootstrap/...          # renders with helm template and checks the Applications
+helm lint --strict bootstrap/components/guardrails
+go test ./bootstrap/...          # renders with helm template and checks the Applications and the guardrails
 ```
 
 The kind end-to-end test in [`test/e2e`](../test/e2e) bootstraps all of this on a kind cluster from the fixture Platform repository; `.github/workflows/e2e.yaml` runs it when `bootstrap/`, `chart/` or `test/e2e/` change and on every release tag.

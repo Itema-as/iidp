@@ -1,0 +1,186 @@
+# The four guardrails on Application namespaces, one
+# ValidatingAdmissionPolicy per rule, each with one binding. Kubernetes
+# evaluates them in the API server (CEL), so nothing runs on the node for
+# them (ADR-0004's Phase 2 note). Pod Security, the other half of the
+# guardrails, is not here: it is the namespace labels the CLI writes
+# (docs/platform-repository.md). See bootstrap/README.md, "Guardrails".
+#
+# Every policy fails closed (failurePolicy: Fail): an expression that
+# cannot be evaluated counts as a failed check, which the bindings' actions
+# then report or deny like any other.
+#
+# 1. Images only from the allowed list (values.yaml, allowedImages).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: iidp-images
+  labels:
+    app.kubernetes.io/part-of: iidp
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    {{- include "guardrails.podRules" . | nindent 4 }}
+  matchConditions:
+    # A Pod being deleted is updated once more when its finalizers are
+    # removed; refusing that update would leave it stuck.
+    - name: not-being-deleted
+      expression: "!has(object.metadata.deletionTimestamp)"
+  variables:
+    - name: containers
+      expression: >-
+        object.spec.containers +
+        (has(object.spec.initContainers) ? object.spec.initContainers : [])
+    - name: allowed
+      expression: {{ include "guardrails.allowedImagesCEL" . | quote }}
+    - name: refused
+      expression: >-
+        variables.containers.filter(c, !has(c.image) || !variables.allowed.exists(p,
+        p.endsWith('/') ? c.image.startsWith(p) : (c.image.startsWith(p + ':') || c.image.startsWith(p + '@'))))
+  validations:
+    - expression: size(variables.refused) == 0
+      reason: Forbidden
+      messageExpression: >-
+        'iidp-images: container images in an Application namespace must come from ghcr.io/itema-as/ (or be one of the Platform images the chart runs); refused: ' +
+        variables.refused.map(c, c.name + '=' + (has(c.image) ? c.image : '(no image)')).join(', ')
+---
+{{ include "guardrails.binding" (list . "iidp-images") }}
+---
+# 2. CPU and memory limits on every container, init containers included.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: iidp-limits
+  labels:
+    app.kubernetes.io/part-of: iidp
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    {{- include "guardrails.podRules" . | nindent 4 }}
+  matchConditions:
+    - name: not-being-deleted
+      expression: "!has(object.metadata.deletionTimestamp)"
+  variables:
+    - name: containers
+      expression: >-
+        object.spec.containers +
+        (has(object.spec.initContainers) ? object.spec.initContainers : [])
+    - name: unlimited
+      expression: >-
+        variables.containers.filter(c, !has(c.resources) || !has(c.resources.limits) ||
+        !('cpu' in c.resources.limits) || !('memory' in c.resources.limits))
+  validations:
+    - expression: size(variables.unlimited) == 0
+      reason: Forbidden
+      messageExpression: >-
+        'iidp-limits: every container in an Application namespace needs CPU and memory limits; missing on: ' +
+        variables.unlimited.map(c, c.name).join(', ')
+---
+{{ include "guardrails.binding" (list . "iidp-limits") }}
+---
+# 3. No Service of type NodePort or LoadBalancer: Applications are reached
+# through Traefik only. cert-manager's HTTP-01 solver Service would be a
+# NodePort by default; the bootstrap's letsencrypt-http01 ClusterIssuer
+# makes it a ClusterIP (bootstrap/components/tls).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: iidp-service-types
+  labels:
+    app.kubernetes.io/part-of: iidp
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["services"]
+  matchConditions:
+    - name: not-being-deleted
+      expression: "!has(object.metadata.deletionTimestamp)"
+  validations:
+    - expression: "!has(object.spec.type) || !(object.spec.type in ['NodePort', 'LoadBalancer'])"
+      reason: Forbidden
+      messageExpression: >-
+        'iidp-service-types: Service ' + object.metadata.name + ' is of type ' + object.spec.type +
+        '; an Application namespace only has ClusterIP Services, reached through Traefik'
+---
+{{ include "guardrails.binding" (list . "iidp-service-types") }}
+---
+# 4. Ingress hosts only under baseDomain or among the Environment's own
+# declared domains. The declared domains are the keys of the ConfigMap the
+# application chart renders into the namespace (declaredDomainsConfigMap),
+# found through the binding's paramRef, which, with no namespace of its
+# own, looks in the namespace of the Ingress being checked. A namespace
+# without that ConfigMap is not checked: see the binding below.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: iidp-ingress-hosts
+  labels:
+    app.kubernetes.io/part-of: iidp
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+  matchConditions:
+    - name: not-being-deleted
+      expression: "!has(object.metadata.deletionTimestamp)"
+  variables:
+    - name: suffix
+      expression: {{ printf "'.%s'" (required "baseDomain is required" .Values.baseDomain | toString) | quote }}
+    - name: refused
+      expression: >-
+        has(object.spec.rules) ? object.spec.rules.filter(r, !has(r.host) ||
+        !(r.host.endsWith(variables.suffix) || (has(params.data) && r.host in params.data)))
+        .map(r, has(r.host) ? r.host : '(no host: every host)') : []
+  validations:
+    - expression: "!has(object.spec.defaultBackend)"
+      reason: Forbidden
+      messageExpression: >-
+        'iidp-ingress-hosts: Ingress ' + object.metadata.name + ' has a defaultBackend, which answers for every host'
+    - expression: size(variables.refused) == 0
+      reason: Forbidden
+      messageExpression: >-
+        'iidp-ingress-hosts: Ingress ' + object.metadata.name + ' may only serve hosts under ' + variables.suffix.substring(1) +
+        ' or among the declared domains of the Environment; refused: ' + variables.refused.join(', ')
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: iidp-ingress-hosts
+  labels:
+    app.kubernetes.io/part-of: iidp
+spec:
+  policyName: iidp-ingress-hosts
+  validationActions: {{ include "guardrails.validationActions" . }}
+  # The Environment's declared domains, from the ConfigMap in the
+  # Ingress's own namespace (no namespace here means that one).
+  #
+  # Allow when it is missing, which skips the policy for that Ingress. Deny
+  # would refuse the request outright, whatever validationActions say (the
+  # API server treats a missing param as a binding it cannot configure,
+  # not as a failed check; seen on k3s v1.36.4, see
+  # docs/implementation-notes/90-guardrails.md), and every Environment
+  # still on a chart from before #90 has no such ConfigMap: its next
+  # Ingress update would be refused while the guardrails only warn. The
+  # cost is that an Application namespace without the ConfigMap has its
+  # Ingress hosts unchecked. The chart renders it for every Environment
+  # with an image, so once each Environment runs a chart from #90 on, the
+  # only Ingresses left unchecked are those in a namespace someone emptied
+  # of it by hand.
+  paramRef:
+    name: {{ .Values.declaredDomainsConfigMap }}
+    parameterNotFoundAction: Allow
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: {{ .Values.applicationNamespaceLabel }}
+          operator: Exists

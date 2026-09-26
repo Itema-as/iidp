@@ -28,6 +28,11 @@ locals {
     # cloud-init writes to a file and iidp-bootstrap applies. base64 for
     # the same reason.
     ghcr_pull_secret_yaml_b64 = base64encode(local.ghcr_pull_secret_yaml)
+    # The API server's audit policy, which cloud-init writes before k3s
+    # starts (the guardrails record what they report in the audit log).
+    # A file of its own because the kind harness (test/e2e) configures its
+    # API server with the same one; base64 for the same reason as above.
+    audit_policy_yaml_b64 = filebase64("${path.module}/cloud-init/audit-policy.yaml")
   })
 
   # /etc/rancher/k3s/registries.yaml: the credential for ghcr.io, so the

@@ -140,6 +140,20 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    managedNamespaceMetadata:
+      labels:
+        iidp.itema.no/application: shop
+        iidp.itema.no/environment: prod
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/warn: restricted
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
 ```
 
 - The Application is named `<name>-<environment>` and installs into a namespace of the same name, created by ArgoCD on the first sync. Every Environment therefore has its own namespace.
@@ -148,6 +162,7 @@ spec:
 - Sync is automated with prune and self-heal, so a commit is a deploy and a hand change in the cluster is reverted.
 - The resources finalizer makes deleting the ArgoCD Application delete the Environment's resources, which is what `iidp app delete` will rely on.
 - The labels carry the same Application and Environment identity the chart puts on every object.
+- `managedNamespaceMetadata` is what ArgoCD sets on the Environment's namespace, when `CreateNamespace` creates it and on every sync after that (#90). `iidp.itema.no/application` marks it an Application namespace: the bootstrap's admission policies are bound to namespaces with that label, and Platform namespaces never carry it. The Pod Security labels enforce `baseline` and warn about and audit `restricted` (`bootstrap/README.md`, "Guardrails"). `iidp app create` and `add-capability --staging` write the block; an Environment written before #90 has none, and its namespace is not guarded until the same block, with its own Application and Environment, is added to its `application.yaml` by hand. ArgoCD then labels the existing namespace on the next sync. Such a namespace carries only the `kubernetes.io/metadata.name` label the API server sets itself, which ArgoCD leaves alone. Keep the chart version of such an Environment at a release from #90 on, too: the Ingress-host policy reads the declared domains from a ConfigMap only the newer chart renders.
 - Once the Environment has at least one secret, `iidp secret set` adds a third source, the same repository at `main` with `path: applications/<name>/<environment>/sops` and no `ref` and no `chart`: ArgoCD detects the `kustomization.yaml` there and renders it with KSOPS, the same way `bootstrap/platform-secrets.yaml` renders `bootstrap/sops/` (`bootstrap/README.md`). It is added once, after the first secret, and left alone after that.
 
 What the bootstrap must provide for this to reconcile: the `default` ArgoCD project (or a stricter one, if the bootstrap changes `project` here and in the CLI together) allowed to use both source repositories and to deploy to any namespace on the in-cluster server; and ArgoCD credentials for the Platform repository and, if the chart package on GHCR is private, for the OCI registry. Nothing has to be replicated into Environment namespaces: the Platform's wildcard certificate is Traefik's default certificate (a `TLSStore` named `default`, see the chart README), so a new namespace needs no secret of its own.
@@ -201,6 +216,8 @@ tasks:
 When the first write comes depends on the Application: prod without staging gets it on the next push to `main`; with `--staging`, staging gets it on the next push to `main` and prod only on the first `v*` tag, when the deploy workflow promotes staging's image, which can be weeks later; an Adopt Environment waits for its pull request to be merged; and a staging Environment added later with `add-capability --staging` starts empty again. `iidp ci set-image` refuses an empty tag, so nothing in the Platform's own flow ever turns a released Environment back into an unreleased one. Doing so by hand would make ArgoCD prune everything the Environment runs except its database. The chart marks the Postgres `Cluster`, `ObjectStore` and `ScheduledBackup` `Prune=false`, so they stay running and the Environment shows OutOfSync until the edit is undone. The same applies to a hand-set `postgres.enabled: false`. `iidp app delete` is a cascade deletion, not a prune, and still removes the database after its final backup. See [`docs/implementation-notes/47-unreleased-environment.md`](implementation-notes/47-unreleased-environment.md).
 
 `secrets` (a list of Secret names, empty until `iidp secret set` adds to it) is documented below.
+
+`runAsNonRoot: true` appears only when the CLI generated the Application's Dockerfile from the Next.js or Vite React template: on `--path create`, and on `--path adopt` when the repository had no Dockerfile of its own. Those images run as a non-root user with a numeric UID, so the chart requires it and drops every capability, and a Static site listens on 8080 (the Vite React template's unprivileged nginx). Without it, as for every Environment written before #90 and every image iidp did not generate, the chart keeps what an image running as root needs and a Static site listens on 80 (`chart/application/README.md`, "Port and probes" and "Security context"). `add-capability --staging` copies it from prod.
 
 ### What the Capabilities write
 

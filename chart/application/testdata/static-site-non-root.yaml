@@ -1,0 +1,16 @@
+# A Static site built from iidp's Vite React template: the unprivileged
+# nginx, which runs as uid 101 and listens on 8080. The CLI writes
+# runAsNonRoot: true for it.
+application:
+  name: brochure
+environment: prod
+platform:
+  baseDomain: app.itma.no
+kind: static-site
+image:
+  repository: ghcr.io/itema-as/brochure
+  tag: 2.0.0
+size: small
+# What the CLI writes for every Application; a Static site ignores it.
+port: 3000
+runAsNonRoot: true

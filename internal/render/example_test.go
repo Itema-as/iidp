@@ -58,6 +58,13 @@ func ExampleArgoCDApplication() {
 	//             selfHeal: true
 	//         syncOptions:
 	//             - CreateNamespace=true
+	//         managedNamespaceMetadata:
+	//             labels:
+	//                 iidp.itema.no/application: shop
+	//                 iidp.itema.no/environment: prod
+	//                 pod-security.kubernetes.io/audit: restricted
+	//                 pod-security.kubernetes.io/enforce: baseline
+	//                 pod-security.kubernetes.io/warn: restricted
 	//         retry:
 	//             limit: -1
 	//             refresh: true

@@ -83,6 +83,12 @@ const (
 	// with a Host header.
 	traefikWebNodePort       = 30080
 	traefikWebsecureNodePort = 30443
+
+	// auditPolicyPath is where the kind node, and its API server, see the
+	// Platform's audit policy; AuditLogPath is where the API server writes
+	// the audit log, on the node.
+	auditPolicyPath = "/etc/kubernetes/iidp-audit-policy.yaml"
+	AuditLogPath    = "/var/log/kubernetes/audit/audit.log"
 )
 
 // Versions is the part of bootstrap/versions.yaml the harness needs to
@@ -235,6 +241,11 @@ func (c *Cluster) Create(ctx context.Context) error {
 			}
 		}
 	}
+	// The API server writes an audit log with the Platform node's own
+	// audit policy (infra/platform/cloud-init/audit-policy.yaml, which
+	// cloud-init gives k3s), so the guardrails' Audit action has somewhere
+	// to go and AuditLog can read it. kubeadm v1beta4 (Kubernetes 1.31 and
+	// later) takes extraArgs as a list of name/value pairs.
 	config := fmt.Sprintf(`kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -244,7 +255,35 @@ nodes:
         hostPort: %d
       - containerPort: %d
         hostPort: %d
-`, traefikWebNodePort, c.HTTPPort, traefikWebsecureNodePort, c.HTTPSPort)
+    extraMounts:
+      - hostPath: %s
+        containerPath: %s
+        readOnly: true
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            - name: audit-policy-file
+              value: %s
+            - name: audit-log-path
+              value: %s
+          extraVolumes:
+            - name: audit-policy
+              hostPath: %s
+              mountPath: %s
+              readOnly: true
+              pathType: File
+            - name: audit-log
+              hostPath: %s
+              mountPath: %s
+              readOnly: false
+              pathType: DirectoryOrCreate
+`, traefikWebNodePort, c.HTTPPort, traefikWebsecureNodePort, c.HTTPSPort,
+		filepath.Join(c.RepoRoot, "infra", "platform", "cloud-init", "audit-policy.yaml"), auditPolicyPath,
+		auditPolicyPath, AuditLogPath,
+		auditPolicyPath, auditPolicyPath,
+		filepath.Dir(AuditLogPath), filepath.Dir(AuditLogPath))
 	configFile, err := writeTemp("iidp-e2e-kind-*.yaml", []byte(config))
 	if err != nil {
 		return err
@@ -311,6 +350,50 @@ func (c *Cluster) Apply(ctx context.Context, manifest string, extraArgs ...strin
 		return fmt.Errorf("kubectl apply: %w\n%s", err, out)
 	}
 	return nil
+}
+
+// ApplyOutput feeds a manifest to kubectl apply and returns its combined
+// output, admission warnings ("Warning: ...") included.
+func (c *Cluster) ApplyOutput(ctx context.Context, manifest string, extraArgs ...string) (string, error) {
+	args := append([]string{"apply", "-f", "-"}, extraArgs...)
+	return c.runWithStdin(ctx, strings.NewReader(manifest), "kubectl", args...)
+}
+
+// AuditEvent is the part of an audit.k8s.io/v1 Event the tests read.
+type AuditEvent struct {
+	Verb      string `json:"verb"`
+	Stage     string `json:"stage"`
+	ObjectRef struct {
+		Resource  string `json:"resource"`
+		Namespace string `json:"namespace"`
+		Name      string `json:"name"`
+	} `json:"objectRef"`
+	ResponseStatus struct {
+		Code int `json:"code"`
+	} `json:"responseStatus"`
+	Annotations map[string]string `json:"annotations"`
+}
+
+// AuditLog reads the API server's audit log off the kind node (Create
+// turns it on with the Platform's audit policy) and returns its events.
+func (c *Cluster) AuditLog(ctx context.Context) ([]AuditEvent, error) {
+	cmd := exec.CommandContext(ctx, c.Provider, "exec", c.Name+"-control-plane", "cat", AuditLogPath)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("read the audit log: %w\n%s", err, stderr.String())
+	}
+	var events []AuditEvent
+	dec := json.NewDecoder(&stdout)
+	for dec.More() {
+		var e AuditEvent
+		if err := dec.Decode(&e); err != nil {
+			return nil, fmt.Errorf("parse the audit log: %w", err)
+		}
+		events = append(events, e)
+	}
+	return events, nil
 }
 
 // Helm runs helm against the cluster and returns its combined output.

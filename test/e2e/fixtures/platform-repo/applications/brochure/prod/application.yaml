@@ -33,3 +33,10 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    managedNamespaceMetadata:
+      labels:
+        iidp.itema.no/application: brochure
+        iidp.itema.no/environment: prod
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/warn: restricted

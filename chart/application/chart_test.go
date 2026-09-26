@@ -371,7 +371,7 @@ func TestEveryObjectIsLabelledWithApplicationAndEnvironment(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
 			objects := render(t, tc.fixture)
-			if want := []string{"Deployment/" + tc.instance, "Ingress/" + tc.instance, "Service/" + tc.instance}; !slices.Equal(keys(objects), want) {
+			if want := []string{"ConfigMap/iidp-domains", "Deployment/" + tc.instance, "Ingress/" + tc.instance, "Service/" + tc.instance}; !slices.Equal(keys(objects), want) {
 				t.Fatalf("rendered %v, want exactly %v", keys(objects), want)
 			}
 
@@ -408,6 +408,7 @@ func TestRenderingRefusesInvalidValues(t *testing.T) {
 		{"refuse-missing-repository.yaml", `image.repository is required`},
 		{"refuse-bad-name.yaml", `application.name must be lowercase letters, digits and dashes, start with a letter and be at most 55 characters, got "1shop"`},
 		{"refuse-env-sets-port.yaml", `env must not set PORT; it is injected from port`},
+		{"refuse-run-as-non-root-not-bool.yaml", `runAsNonRoot must be true or false, got yes`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {

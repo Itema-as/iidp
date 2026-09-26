@@ -63,3 +63,12 @@ deployGate:
     issuer: http://fake-github.iidp-e2e.svc.cluster.local
   githubAPI: http://fake-github.iidp-e2e.svc.cluster.local/api
   platformRepository: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+
+# kind has no GHCR: the fixture Applications run nginx from Docker Hub
+# (applications/*/*/values.yaml), which the guardrails' image policy would
+# otherwise report on every Pod. The Platform itself allows only
+# ghcr.io/itema-as/ and the images the chart and CloudNativePG run
+# (bootstrap/README.md, "Guardrails").
+guardrails:
+  extraAllowedImages:
+    - docker.io/library/nginx

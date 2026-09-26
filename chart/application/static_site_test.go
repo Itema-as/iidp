@@ -7,9 +7,11 @@ import (
 )
 
 // A Static site is built into an nginx image by CI and deployed through the
-// same chart as a Web service. nginx listens on 80 and takes no PORT, so the
-// chart fixes the port and skips the injected variable; everything else
-// renders exactly as for a Web service.
+// same chart as a Web service. nginx takes no PORT, so the chart fixes the
+// port and skips the injected variable; everything else renders exactly as
+// for a Web service. An nginx running as root, which is what these fixtures
+// describe (no runAsNonRoot), listens on 80; iidp's template since #90 runs
+// an unprivileged nginx on 8080 (guardrails_test.go).
 
 func TestStaticSiteServesOnPort80WithoutPORT(t *testing.T) {
 	objects := render(t, "static-site.yaml")
@@ -67,7 +69,7 @@ func TestStaticSiteProbesRequestTheProbePath(t *testing.T) {
 
 func TestStaticSiteRendersTheSameObjectsAsAWebService(t *testing.T) {
 	objects := render(t, "static-site.yaml")
-	if want := []string{"Deployment/brochure", "Ingress/brochure", "Service/brochure"}; !slices.Equal(keys(objects), want) {
+	if want := []string{"ConfigMap/iidp-domains", "Deployment/brochure", "Ingress/brochure", "Service/brochure"}; !slices.Equal(keys(objects), want) {
 		t.Fatalf("rendered %v, want exactly %v", keys(objects), want)
 	}
 

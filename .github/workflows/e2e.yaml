@@ -65,6 +65,7 @@ jobs:
           helm lint --strict bootstrap --values test/e2e/fixtures/platform-repo/platform.yaml
           helm lint --strict bootstrap/components/tls
           helm lint --strict bootstrap/components/deploy-gate --set bootstrapRevision=v0.0.0
+          helm lint --strict bootstrap/components/guardrails
       # The render tests skip without helm (the Go job of ci.yaml has none);
       # here a missing helm must fail.
       - name: go test ./bootstrap

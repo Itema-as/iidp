@@ -33,7 +33,7 @@ func TestRendersOneApplicationPerComponent(t *testing.T) {
 		got = append(got, name)
 	}
 	sort.Strings(got)
-	want := []string{"argocd", "cert-manager", "cloudnative-pg", "cnpg-barman-cloud", "deploy-gate", "external-dns", "monitoring", "oauth2-proxy", "platform-tls"}
+	want := []string{"argocd", "cert-manager", "cloudnative-pg", "cnpg-barman-cloud", "deploy-gate", "external-dns", "guardrails", "monitoring", "oauth2-proxy", "platform-tls"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("rendered Applications = %v, want %v", got, want)
 	}
@@ -501,8 +501,14 @@ func TestTLSComponentRendersTheWildcardIntoTraefiksNamespace(t *testing.T) {
 	if !ok {
 		t.Fatalf("no ClusterIssuer/letsencrypt-http01 in %v", keys(objects))
 	}
-	if got := fmt.Sprint(get[[]any](t, http01, "spec", "acme", "solvers")); !strings.Contains(got, "traefik") {
-		t.Errorf("letsencrypt-http01 solver does not use ingressClassName traefik: %s", got)
+	solver := get[object](t, get[[]any](t, http01, "spec", "acme", "solvers")[0].(object), "http01", "ingress")
+	if got := get[string](t, solver, "ingressClassName"); got != "traefik" {
+		t.Errorf("letsencrypt-http01 solver ingressClassName = %q, want traefik", got)
+	}
+	// The solver's Service is created in the Application's namespace, where
+	// the guardrails refuse NodePort, cert-manager's default.
+	if got := get[string](t, solver, "serviceType"); got != "ClusterIP" {
+		t.Errorf("letsencrypt-http01 solver serviceType = %q, want ClusterIP", got)
 	}
 	redirect, ok := objects["HelmChartConfig/traefik"]
 	if !ok {

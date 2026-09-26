@@ -147,6 +147,10 @@ func TestAppAdoptWithoutDockerfileDetectsNextJSAndGeneratesIt(t *testing.T) {
 	if got := lookup(t, values, "kind"); got != "web-service" {
 		t.Errorf("values.yaml kind = %v, want web-service (derived from Next.js)", got)
 	}
+	// Adopt generated the Dockerfile from the Next.js template.
+	if got := lookup(t, values, "runAsNonRoot"); got != true {
+		t.Errorf("values.yaml runAsNonRoot = %v, want true for a Dockerfile generated from the Next.js template", got)
+	}
 	if got := lookup(t, values, "image", "repository"); got != "ghcr.io/"+strings.ToLower(platform.Org)+"/shop" {
 		t.Errorf("values.yaml image.repository = %v", got)
 	}
@@ -265,6 +269,11 @@ func TestAppAdoptWithExistingDockerfileIsNeverModifiedAndRequiresKind(t *testing
 		values := readYAML(t, filepath.Join(cloneMain(t, platformURL), "applications/shop/prod/values.yaml"))
 		if got := lookup(t, values, "kind"); got != "web-service" {
 			t.Errorf("values.yaml kind = %v, want web-service (from --kind)", got)
+		}
+		// The repository's own Dockerfile may run as root (iprofil's
+		// does), so nothing promises the chart otherwise.
+		if got, has := values["runAsNonRoot"]; has {
+			t.Errorf("values.yaml runAsNonRoot = %v, want it absent for an Adopted Dockerfile", got)
 		}
 	})
 }
