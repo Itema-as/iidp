@@ -58,6 +58,13 @@ func ExampleArgoCDApplication() {
 	//             selfHeal: true
 	//         syncOptions:
 	//             - CreateNamespace=true
+	//         retry:
+	//             limit: -1
+	//             refresh: true
+	//             backoff:
+	//                 duration: 10s
+	//                 factor: 2
+	//                 maxDuration: 3m
 }
 
 func ExampleValues() {

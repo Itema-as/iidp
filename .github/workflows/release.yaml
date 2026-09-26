@@ -71,7 +71,11 @@ jobs:
           owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           printf '%s' "${GITHUB_TOKEN}" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
           helm package chart/application --version "${version}" --destination dist
-          helm push "dist/application-${version}.tgz" "oci://ghcr.io/${owner}/charts"
+          # GHCR sometimes answers the tag step right after a successful
+          # upload with "failed to perform \"Tag\" ... not found" (seen on
+          # v0.2.0); a re-run of the job went through, so push once more.
+          helm push "dist/application-${version}.tgz" "oci://ghcr.io/${owner}/charts" \
+            || { echo "helm push failed; retrying once in 15s"; sleep 15; helm push "dist/application-${version}.tgz" "oci://ghcr.io/${owner}/charts"; }
 
   # Moves the major tag (v0 for v0.x.y) to this release, so every
   # Application repository calling the reusable deploy workflow at @v0

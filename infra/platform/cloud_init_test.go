@@ -17,6 +17,7 @@ package platform_test
 
 import (
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -204,4 +205,59 @@ func indent(s string, n int) string {
 		lines[i] = prefix + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+// bootstrapScript returns the iidp-bootstrap script as cloud-init writes it
+// to disk: the write_files block dedented, OpenTofu's ${name} variables
+// replaced with a placeholder and its $${ escapes turned back into ${.
+func bootstrapScript(t *testing.T) string {
+	t.Helper()
+	content := readCloudInitTemplate(t)
+	start := strings.Index(content, "      #!/usr/bin/env bash\n")
+	if start < 0 {
+		t.Fatal("could not find the iidp-bootstrap script in the template")
+	}
+	var lines []string
+	for _, line := range strings.Split(content[start:], "\n") {
+		if line != "" && !strings.HasPrefix(line, "      ") {
+			break
+		}
+		lines = append(lines, line)
+	}
+	script := dedent(t, strings.Join(lines, "\n"), 6)
+	script = regexp.MustCompile(`(^|[^$])\$\{[a-z0-9_]+\}`).ReplaceAllString(script, "${1}placeholder")
+	return strings.ReplaceAll(script, "$${", "${")
+}
+
+func TestBootstrapScriptIsValidBash(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
+	}
+	cmd := exec.Command("bash", "-n")
+	cmd.Stdin = strings.NewReader(bootstrapScript(t))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bash -n: %v\n%s", err, out)
+	}
+}
+
+// Once the argocd bootstrap Application exists, ArgoCD manages itself, and
+// re-applying the stock argo-cd chart would reset its customisations
+// until it self-heals (#75). The chart is only applied when the
+// Application is absent: at first boot, or after a failed one.
+func TestBootstrapScriptInstallsArgoCDOnlyBeforeItManagesItself(t *testing.T) {
+	script := bootstrapScript(t)
+	guard := strings.Index(script, "if kubectl -n argocd get applications.argoproj.io argocd >/dev/null 2>&1; then")
+	install := strings.Index(script, "helm template argocd argo-cd")
+	if guard < 0 || install < 0 {
+		t.Fatalf("guard at %d, install at %d; want both present", guard, install)
+	}
+	block := script[guard:]
+	elseAt := strings.Index(block, "\nelse\n")
+	fiAt := strings.Index(block, "\nfi\n")
+	if elseAt < 0 || fiAt < elseAt || install < guard+elseAt || install > guard+fiAt {
+		t.Errorf("helm template is not in the else branch of the argocd Application check")
+	}
+	if strings.Count(script, "helm template argocd argo-cd") != 1 {
+		t.Error("the argo-cd chart is rendered more than once")
+	}
 }

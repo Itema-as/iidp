@@ -38,7 +38,7 @@ The sections below are the same steps done by hand, for when the wizard cannot r
 - Hetzner Object Storage credentials for the same project (Cloud Console: Security > S3 credentials). These are S3 access and secret keys, distinct from the API token.
 - An SSH key pair. The public key goes into the node; the private key is the only way onto it.
 - The Platform repository (`Itema-as/iidp-platform` by default) with a `bootstrap/` directory. It is private (established in `docs/implementation-notes/12-deploy-workflow.md`, from `docs/design.md`'s access model: `gh auth` and direct commits to `main` as the authorisation presuppose the repository is not otherwise open), so cloud-init needs a credential for it: the org GitHub App the bootstrap wizard's "GitHub App for the Deploy gate and ArgoCD" stage creates (`contents: write`, which already implies the read ArgoCD needs). The Deploy gate mounts the same Secret to commit deploys as that App (`bootstrap/README.md`, "The Deploy gate"), so its name, `argocd/platform-repo-github-app`, and its keys are a contract. Its id, installation id and private key PEM are `platform_repo_github_app_id`, `platform_repo_github_app_installation_id` and `platform_repo_github_app_private_key` in `infra/platform/terraform.tfvars` (`terraform.tfvars.example` documents them); cloud-init writes them into an ArgoCD repository Secret before it applies the root Application (`docs/implementation-notes/41-argocd-platform-repo-credential.md`). ArgoCD will report the root Application as missing until `bootstrap/` exists in the Platform repository; nothing else fails.
-- A GitHub classic personal access token with only the `read:packages` scope, for the node to pull Applications' private images from GHCR (ADR-0005). ghcr.io refuses GitHub App and fine-grained tokens for pulls from outside Actions, so it has to be a classic one. It starts out as the Platform admin's own; #56 moves it to a machine user. Create it at [github.com/settings/tokens/new?scopes=read:packages](https://github.com/settings/tokens/new?scopes=read:packages) (Settings > Developer settings > Personal access tokens > Tokens (classic)), with Expiration "No expiration". It goes in `ghcr_pull_token` in `infra/platform/terraform.tfvars`, and the GitHub login that owns it in `ghcr_pull_username`. cloud-init writes both into k3s's `/etc/rancher/k3s/registries.yaml` (mode 600) before k3s first starts (`docs/implementation-notes/59-ghcr-pull-token.md`), and into the Secret `argocd/ghcr-pull-token`, the Deploy gate's copy, which it checks that an image tag exists with (`docs/implementation-notes/61-image-check.md`).
+- A GitHub classic personal access token with only the `read:packages` scope, for the node to pull Applications' private images from GHCR (ADR-0005). ghcr.io refuses GitHub App and fine-grained tokens for pulls from outside Actions, so it has to be a classic one, and the organisation must allow classic tokens (organisation Settings > Personal access tokens: "Restrict access via personal access tokens (classic)" off). Turning that restriction on later breaks every private pull on the Platform at once; zot is the planned way out then (ADR-0005, note #75). It starts out as the Platform admin's own; #56 moves it to a machine user. Create it at [github.com/settings/tokens/new?scopes=read:packages](https://github.com/settings/tokens/new?scopes=read:packages) (Settings > Developer settings > Personal access tokens > Tokens (classic)), with Expiration "No expiration". It goes in `ghcr_pull_token` in `infra/platform/terraform.tfvars`, and the GitHub login that owns it in `ghcr_pull_username`. cloud-init writes both into k3s's `/etc/rancher/k3s/registries.yaml` (mode 600) before k3s first starts (`docs/implementation-notes/59-ghcr-pull-token.md`), and into the Secret `argocd/ghcr-pull-token`, the Deploy gate's copy, which it checks that an image tag exists with (`docs/implementation-notes/61-image-check.md`).
 
 ## First apply
 
@@ -163,26 +163,41 @@ Upgrades are deliberate, manual steps (ADR-0001) and they happen **in place**. T
      iidp-bootstrap
    ```
 
-   Any variable can be left out to keep that component as it is (`HELM_SHA256_LINUX_AMD64` only matters together with a `HELM_VERSION` bump). The k3s installer upgrades the existing installation when the requested version differs from the installed one (the control plane restarts, about a minute; workloads keep running) and is skipped when it does not; helm is replaced in place the same way when its version differs; ArgoCD is installed by rendering the argo-cd chart at the requested version with `helm template` and applying the output server-side (`bootstrap/README.md`, "ArgoCD"), so the argocd bootstrap Application's next sync only ever patches; the age key is left alone because its Secret exists; the root Application is re-applied unchanged. Databases and volumes are untouched.
+   Any variable can be left out to keep that component as it is (`HELM_SHA256_LINUX_AMD64` only matters together with a `HELM_VERSION` bump). `ARGOCD_CHART_VERSION` only matters before ArgoCD manages itself. Once the bootstrap's `argocd` Application exists, the script leaves ArgoCD alone, and ArgoCD is upgraded by bumping `argocd.chart` in [`bootstrap/versions.yaml`](../bootstrap/versions.yaml) through an iidp release; keep `argocd_chart_version` equal to it, so a rebuilt node starts on the same version. A node whose script predates #75 still re-applies the stock chart on every run, which resets ArgoCD's Dex login and KSOPS repo server until it heals itself, so leave `ARGOCD_CHART_VERSION` out there too, and expect a minute of that. The k3s installer upgrades the existing installation when the requested version differs from the installed one (the control plane restarts, about a minute; workloads keep running) and is skipped when it does not; helm is replaced in place the same way when its version differs; ArgoCD is installed by rendering the argo-cd chart at the requested version with `helm template` and applying the output server-side (`bootstrap/README.md`, "ArgoCD"), so the argocd bootstrap Application's next sync only ever patches; the age key is left alone because its Secret exists; the root Application is re-applied unchanged. Databases and volumes are untouched.
 
 A first boot uses the versions rendered into the user data at that time. A node that was rebuilt later therefore comes up on whatever the variables said when `tofu apply -replace` ran, which is why step 1 comes first.
 
 ## Rotating the Platform repository credential
 
-The same in-place pattern as version bumps, for the same reason: the credential is baked into the user data cloud-init ran once, and `tofu apply` never re-runs it (`ignore_changes = [user_data]`), so a new PEM in `terraform.tfvars` alone changes nothing on the node.
+The credential is baked into the user data cloud-init ran once, and `tofu apply` never re-runs it (`ignore_changes = [user_data]`), so a new PEM in `terraform.tfvars` alone changes nothing on the node. The running cluster gets it by patching the one Secret key directly; the Deploy gate and ArgoCD both read it from there.
 
-1. Get a new private key for the App (GitHub App settings > "Generate a private key"; the old key keeps working until it is explicitly deleted, so there is no window with no working key) and put its PEM in `platform_repo_github_app_private_key` in `terraform.tfvars` (`platform_repo_github_app_id`/`platform_repo_github_app_installation_id` only change if the App itself was recreated). Commit if `terraform.tfvars` is tracked anywhere outside this machine; `tofu plan` shows no change, by design.
-2. Apply it on the node by re-running the bootstrap with the new key, base64-encoded, in the environment:
+1. Get a new private key for the App (GitHub App settings > "Generate a private key"; the old key keeps working until it is explicitly deleted, so there is no window with no working key) and put its PEM in `platform_repo_github_app_private_key` in `terraform.tfvars`, so a rebuilt node gets it (`platform_repo_github_app_id`/`platform_repo_github_app_installation_id` only change if the App itself was recreated). Commit if `terraform.tfvars` is tracked anywhere outside this machine; `tofu plan` shows no change, by design.
+2. **Patch the key into the cluster.** Only the one key of the Secret `argocd/platform-repo-github-app` changes. The merge patch is built on your machine and piped over ssh, so the key is never written to the node's disk or to a command line there:
 
    ```sh
    cd infra/platform
    source ../tofu-env.sh
-   ssh root@$(tofu output -raw node_public_ipv4) \
-     PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64=$(base64 < /path/to/new-key.pem | tr -d '\n') \
-     iidp-bootstrap
+   printf '{"data":{"githubAppPrivateKey":"%s"}}' "$(base64 < /path/to/new-key.pem | tr -d '\n')" \
+     | ssh root@$(tofu output -raw node_public_ipv4) \
+       'kubectl -n argocd patch secret platform-repo-github-app --type merge --patch-file /dev/stdin'
    ```
 
-   This re-applies the ArgoCD repository Secret (`argocd/platform-repo-github-app`) with the new key; everything else the script does is a no-op re-check. Delete `new-key.pem` from the admin's machine afterward; it is never written to the node's disk (see `docs/implementation-notes/41-argocd-platform-repo-credential.md` for why cloud-init decodes it only in memory). Once ArgoCD has synced with the new key, delete the old key from the App's settings page.
+   It prints `secret/platform-repo-github-app patched`. Don't re-run `iidp-bootstrap` for this. On a node whose script predates #75, it also re-applies the stock argo-cd chart over the ArgoCD that the bootstrap Application manages, which resets the Dex login and the KSOPS repo server until ArgoCD heals itself ([Re-running the bootstrap](#re-running-the-bootstrap)). Delete `new-key.pem` from your machine once step 4 passes.
+3. **Prove the new key works for the Deploy gate.** The gate mounts the same Secret and reads it on every call, so it uses the new key once the kubelet refreshes the volume, within about a minute and with no restart. Re-run an Application's latest deploy (`gh run rerun <run-id> -R Itema-as/<application>`, or push a commit). The run's `iidp ci set-image` step succeeds, and the Platform repository gets a `Deploy <application> …` commit, committed by `iidp-deploy[bot]`. A gate still holding the old key would fail only after the old key is deleted, so do this before step 4 and again after it.
+4. **Delete the old key, then prove ArgoCD uses the new one.** Delete the old key on the App's settings page. ArgoCD's repo server can keep working from a token it fetched earlier, so it could look healthy on the old key for a while. Restart it and hard-refresh the Platform's own Applications so it authenticates again:
+
+   ```sh
+   ssh root@$(tofu output -raw node_public_ipv4) '
+     kubectl -n argocd rollout restart deployment argocd-repo-server &&
+     kubectl -n argocd rollout status deployment argocd-repo-server --timeout=180s &&
+     for app in platform platform-secrets; do
+       kubectl -n argocd annotate application "$app" argocd.argoproj.io/refresh=hard --overwrite
+     done
+     sleep 30
+     kubectl -n argocd get application platform platform-secrets'
+   ```
+
+   Both show `Synced` and `Healthy`. A `ComparisonError` naming authentication means the Secret still holds the deleted key. Then repeat step 3's deploy.
 
 ## Adding or rotating the GHCR pull token
 
@@ -230,13 +245,25 @@ Use the same steps to add the token to a running node for the first time, to rep
    ```
 
    It prints `secret/ghcr-pull-token serverside-applied`. The gate reads the token on every check, so a running gate uses the new one once the kubelet refreshes its volume (within about a minute), with no restart. A gate that was waiting for the Secret (its pod stuck in `ContainerCreating`, with a `FailedMount` event naming `ghcr-pull-token`) starts on its own.
-6. **Check it** by pulling a private image on the node, for example an Application's image (`ghcr.io/itema-as/<application>:<tag>`):
+6. **Check it.** Use a **private** image: a public one pulls with no credential at all, so its pull proves nothing (during #62 the check passed on a public image while the token was unusable). First check the token itself from your machine, without the node, by asking ghcr.io for a private image's manifest with it:
 
    ```sh
-   ssh root@$(tofu output -raw node_public_ipv4) crictl pull ghcr.io/itema-as/<application>:<tag>
+   read -rs GHCR_TOKEN   # paste the token, then Enter
+   IMAGE=itema-as/<application>; TAG=<tag>   # a private image
+   BEARER=$(curl -sS -u "<username>:$GHCR_TOKEN" "https://ghcr.io/token?scope=repository:$IMAGE:pull" | sed -E 's/.*"token":"([^"]+)".*/\1/')
+   curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $BEARER" \
+     -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+     "https://ghcr.io/v2/$IMAGE/manifests/$TAG"
+   unset GHCR_TOKEN BEARER
    ```
 
-   It prints `Image is up to date for sha256:...`. Without a working credential the same command fails with `403 Forbidden` or `401 Unauthorized`; running it once before step 4 shows the difference. If it still fails after step 4: `ssh root@<ip> cat /etc/rancher/k3s/registries.yaml` shows the username and token the node uses, `journalctl -u k3s` shows whether k3s read the file, and a token that passed the scope check but is refused by ghcr.io points at the organisation's setting for classic tokens (organisation Settings > Personal access tokens), or at an account with no read access to that package.
+   It prints `200`. A `401` or `403` means ghcr.io refuses the token: the organisation restricts classic tokens (organisation Settings > Personal access tokens), or the account can't read that package. To confirm the image really is private, run the same two requests without `-u`: the token request is then refused. Then pull the same private image on the node:
+
+   ```sh
+   ssh root@$(tofu output -raw node_public_ipv4) crictl pull ghcr.io/$IMAGE:$TAG
+   ```
+
+   It prints `Image is up to date for sha256:...`. Without a working credential the same command fails with `403 Forbidden` or `401 Unauthorized`; running it once before step 4 shows the difference. If the token works from your machine but the pull on the node fails: `ssh root@<ip> cat /etc/rancher/k3s/registries.yaml` shows the username and token the node uses, and `journalctl -u k3s` shows whether k3s read the file.
 
    The gate's copy is the same token, so the pull above proves it too once `ssh root@<ip> kubectl -n argocd get secret ghcr-pull-token` lists the Secret. The gate itself shows it on the next deploy of a private image: a tag that exists is committed, and a refusal saying "couldn't check ... the Platform's GHCR pull token cannot read it" means the Secret holds a token ghcr.io refuses. Its `username` is readable with `kubectl -n argocd get secret ghcr-pull-token -o jsonpath='{.data.username}' | base64 -d` on the node.
 7. **When replacing a token,** delete the old one on the owning account's Tokens (classic) page once step 6 passes. Until then both work, so there is no moment with no working credential.
@@ -283,7 +310,7 @@ If the key is gone, every SOPS-encrypted secret in the Platform repository has t
 
 ## Re-running the bootstrap
 
-`/usr/local/sbin/iidp-bootstrap` on the node is the script cloud-init ran; its log is `/var/log/iidp-bootstrap.log`. It can be run again by hand after a transient failure (a download that timed out, say), with or without `K3S_VERSION`, `ARGOCD_CHART_VERSION`, `HELM_VERSION` and `HELM_SHA256_LINUX_AMD64` in the environment. Every step converges: the k3s and helm installers are skipped when the requested version is already installed, the argo-cd chart is re-rendered and applied server-side, the age key is only generated when the Secret is absent, the Deploy gate's `ghcr-pull-token` Secret is re-applied from `/etc/iidp/ghcr-pull-token.yaml`, and the root Application is re-applied unchanged. It never touches `/etc/rancher/k3s/registries.yaml` or `/etc/iidp/ghcr-pull-token.yaml` (see [Adding or rotating the GHCR pull token](#adding-or-rotating-the-ghcr-pull-token), which keeps both current). A node whose script predates #61 does not apply the Secret at all; the recipe does. If the node does not become Ready within ten minutes the script exits non-zero and points at `journalctl -u k3s`.
+`/usr/local/sbin/iidp-bootstrap` on the node is the script cloud-init ran; its log is `/var/log/iidp-bootstrap.log`. It can be run again by hand after a transient failure (a download that timed out, say), with or without `K3S_VERSION`, `ARGOCD_CHART_VERSION`, `HELM_VERSION` and `HELM_SHA256_LINUX_AMD64` in the environment. Every step converges: the k3s and helm installers are skipped when the requested version is already installed, the argo-cd chart is only applied while the bootstrap's `argocd` Application doesn't exist yet (after that, ArgoCD manages itself, and re-applying the stock chart would reset its customisations; a script from before #75 still re-applies it), the age key is only generated when the Secret is absent, the Deploy gate's `ghcr-pull-token` Secret is re-applied from `/etc/iidp/ghcr-pull-token.yaml`, and the root Application is re-applied unchanged. It never touches `/etc/rancher/k3s/registries.yaml` or `/etc/iidp/ghcr-pull-token.yaml` (see [Adding or rotating the GHCR pull token](#adding-or-rotating-the-ghcr-pull-token), which keeps both current). A node whose script predates #61 does not apply the Secret at all; the recipe does. If the node does not become Ready within ten minutes the script exits non-zero and points at `journalctl -u k3s`.
 
 ## Verification without a Hetzner account
 

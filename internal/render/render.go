@@ -97,6 +97,17 @@ func ArgoCDApplication(env Environment, chart Chart, platformRepoURL, valuesPath
 			SyncPolicy: syncPolicy{
 				Automated:   automated{Prune: true, SelfHeal: true},
 				SyncOptions: []string{"CreateNamespace=true"},
+				// The same policy as the Platform's own Applications
+				// (bootstrap/templates/_helpers.tpl): retry until it works,
+				// each time against the newest commit. Without refresh, a
+				// failing sync (a migration, say) keeps retrying the commit
+				// it started on while the fix already sits in the Platform
+				// repository (#75).
+				Retry: retry{
+					Limit:   -1,
+					Refresh: true,
+					Backoff: backoff{Duration: "10s", Factor: 2, MaxDuration: "3m"},
+				},
 			},
 		},
 	}
@@ -194,6 +205,19 @@ type destination struct {
 type syncPolicy struct {
 	Automated   automated `yaml:"automated"`
 	SyncOptions []string  `yaml:"syncOptions"`
+	Retry       retry     `yaml:"retry"`
+}
+
+type retry struct {
+	Limit   int     `yaml:"limit"`
+	Refresh bool    `yaml:"refresh"`
+	Backoff backoff `yaml:"backoff"`
+}
+
+type backoff struct {
+	Duration    string `yaml:"duration"`
+	Factor      int    `yaml:"factor"`
+	MaxDuration string `yaml:"maxDuration"`
 }
 
 type automated struct {
