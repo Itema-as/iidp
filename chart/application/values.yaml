@@ -72,8 +72,9 @@ secrets: []
 # address. A host directly under platform.baseDomain is covered by the
 # Platform's wildcard certificate; any other host gets its own certificate
 # from platform.httpIssuer. DNS is not the chart's business: external-dns
-# creates records for zones on Cloudflare, anything else needs a CNAME to
-# the Platform address.
+# creates records in the one zone it manages (platform.yaml's
+# cloudflareZone), and anything else, another Cloudflare zone included,
+# needs a CNAME to the Platform address.
 domains: []
 
 postgres:

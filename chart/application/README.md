@@ -51,7 +51,7 @@ Today the chart renders both Kinds, Web service and Static site, as a Deployment
 - A host directly under the base domain (`<label>.<baseDomain>`, for example `butikk.app.itma.no`) is covered by `*.<baseDomain>`. It joins the Platform address on the Environment's Ingress and names no secret.
 - Any other host is foreign to the wildcard (`shop.example.com`, `shop.itma.no`, or a deeper `test.shop.app.itma.no`, since a wildcard covers one label) and goes on a second Ingress named `<name>-http01`, annotated `cert-manager.io/cluster-issuer: <platform.httpIssuer>`, with one TLS entry per host and its own secret `<name>-<host with dots as dashes>-tls`. cert-manager's ingress-shim issues one Certificate per entry, solved over HTTP-01. The hosts sit on a second object because ingress-shim acts on every host of the Ingress it finds the annotation on; kept apart, it never tries to issue for the wildcard hosts.
 
-DNS is not the chart's business. external-dns creates the records for hosts in zones on Cloudflare; a host elsewhere needs a CNAME to the Platform address, which the CLI prints.
+DNS is not the chart's business. external-dns creates the records for hosts in the one zone it manages, `platform.yaml`'s `cloudflareZone`; a host anywhere else, another Cloudflare zone included, needs a CNAME to the Platform address, which the CLI prints.
 
 **Secrets.** Each name in `secrets` becomes an `envFrom.secretRef` on the container, so every key of the Secret is an environment variable. The chart never renders a Secret and never sees a value: the CLI writes them SOPS-encrypted next to the values file, and KSOPS decrypts them on the Platform.
 

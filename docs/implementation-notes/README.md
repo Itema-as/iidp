@@ -24,6 +24,7 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #39 | [39-final-backup-predelete-hook.md](39-final-backup-predelete-hook.md) |
 | #41 | [41-argocd-platform-repo-credential.md](41-argocd-platform-repo-credential.md) |
 | #42 | [42-backups-credentials.md](42-backups-credentials.md) |
+| #72 | [72-custom-domain-docs.md](72-custom-domain-docs.md) |
 | #74 | [74-reusable-deploy-workflow.md](74-reusable-deploy-workflow.md) |
 | #75 | [75-cutover-friction.md](75-cutover-friction.md) |
 | #77, #78 | [77-login-redirect.md](77-login-redirect.md) |
