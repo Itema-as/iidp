@@ -8,7 +8,8 @@
   Islets connect only to the Platform, by aerial cableways from its spire; islets
   sit on fixed orbits and never move. ?layout=bridges shows the alternative: one
   orbit, a straight bridge each, widening as it fills. ?variant=day|dusk|night.
-  The automatic camera hovers while nobody touches the map, flies to changes, then drifts back out. Loads three.js from a CDN, so it needs internet.
+  The automatic camera hovers while nobody touches the map, visits changes loudest first (a wide shot when
+  several land at once), and holds still with edge markers while someone is looking around. ?idle=ms sets the pause. Loads three.js from a CDN, so it needs internet.
   Left-drag pans, right-drag rotates, scroll zooms. ?do=arrive,deleteApp runs events on load.
 -->
 <html lang="en">
@@ -52,6 +53,23 @@
     color:#e6edf3; border:1px solid #57606a; border-radius:4px; padding:7px 12px; font-size:13px; display:none; z-index:10; }
   #title { position:fixed; top:14px; left:16px; font-size:13px; font-weight:600; z-index:10;
     background:#0d1117cc; color:#e6edf3; padding:5px 9px; border-radius:4px; }
+  #camChip { position:fixed; top:50px; left:16px; z-index:12; font-size:12.5px; background:#0d1117e6; color:#e6edf3;
+    border:1px solid #3d444d; border-radius:4px; padding:5px 9px; cursor:pointer; user-select:none; }
+  #camChip .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; background:#58d68d; vertical-align:0; }
+  #camChip.paused .dot { background:#ffc233; } #camChip.off .dot { background:#6e7781; }
+  #edges { position:fixed; inset:0 330px 0 0; pointer-events:none; z-index:11; }
+  body.nopanel #edges { right:0; }
+  .edge { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; cursor:pointer; display:flex; align-items:center; gap:6px;
+    background:#0d1117e6; color:#e6edf3; border:1px solid #3d444d; border-radius:4px; padding:3px 8px 3px 5px; font-size:12px; white-space:nowrap; }
+  .edge .arrow { width:0; height:0; border-left:7px solid currentColor; border-top:5px solid transparent; border-bottom:5px solid transparent; }
+  #sceneFeed { position:fixed; left:16px; bottom:18px; width:300px; z-index:11; list-style:none; margin:0; padding:0; font-size:12.5px; }
+  #sceneFeed li { display:flex; gap:8px; align-items:baseline; background:#0d1117d9; color:#e6edf3; border:1px solid #2b333c; border-radius:4px;
+    padding:4px 8px; margin-top:4px; cursor:pointer; }
+  #sceneFeed li:hover { border-color:#5fd3ff; }
+  #sceneFeed li.nowhere { cursor:default; }
+  #sceneFeed .sev { width:8px; height:8px; border-radius:50%; flex:none; transform:translateY(1px); }
+  #sceneFeed .msg { flex:1; }
+  #sceneFeed .age { color:#8b98a5; font-variant-numeric:tabular-nums; }
   #err { position:fixed; top:45%; left:20%; right:350px; color:#ffb4ab; display:none; }
 </style>
 <script type="importmap">
@@ -73,10 +91,13 @@
   <button id="next" aria-label="Next palette">›</button>
 </div>
 <div id="tip"></div>
+<div id="camChip"><span class="dot"></span><span id="camText"></span></div>
+<div id="edges"></div>
+<ul id="sceneFeed"></ul>
 <aside id="panel">
   <h1>Push the Platform around</h1>
   <p class="note">Fake data. Left-drag pans, right-drag rotates, scroll zooms. Hover anything.</p>
-  <label class="opt"><input type="checkbox" id="autoCam" checked> Automatic camera: hovers when idle, visits changes</label>
+  <p class="note" style="margin-top:6px">The chip at the top left turns the automatic camera on and off. The feed in the corner of the map is the product; this panel is test controls.</p>
   <h2>Events</h2>
   <div class="actions">
     <button data-act="arrive">An Application arrives</button>
@@ -91,6 +112,7 @@
     <button data-act="closePreview">Close a preview</button>
     <button data-act="deleteApp">Delete an Application</button>
     <button data-act="deleteTwo">Delete two at once</button>
+    <button data-act="burst">Three things at once</button>
     <button data-act="bump">Bump cert-manager</button>
     <button data-act="traefik">Traefik degrades / recovers</button>
     <button data-act="lose">Lose / regain the cluster</button>
@@ -785,22 +807,96 @@ function fit() {
 }
 let fly = null, fitZoom = 1;
 
-// The automatic camera: while nobody is using the map it hovers over the whole Platform,
-// flies to wherever something happens, lingers, and drifts back out. Only input on the map counts.
-let lastInput = performance.now() - 4000, cam = 'none', pending = null, focusUntil = 0;
-for (const ev of ['pointerdown', 'wheel']) renderer.domElement.addEventListener(ev, () => {
-  lastInput = performance.now(); if (cam !== 'none') { cam = 'none'; controls.autoRotate = false; fly = null; }
-}, { passive: true });
-function attention(x, z) { pending = { x, z, at: performance.now() }; }
-const attend = a => { if (a && a.cur) attention(a.cur.x, a.cur.z); else if (a) { const p = target(a, ringLayout()); attention(p.x, p.z); } };
-const appOf = e => model.apps.find(a => a.name === e.app);
-function camera_(t) {
-  if (!document.getElementById('autoCam').checked || t - lastInput < 5000) return;
-  if (pending && t - pending.at > 15000) pending = null;
-  if (pending) { flyTo(pending.x, pending.z, 1.9); pending = null; cam = 'focus'; focusUntil = t + 8000; controls.autoRotate = true; controls.autoRotateSpeed = 0.5; return; }
-  if (cam === 'focus' && t > focusUntil && !fly) { flyTo(0, 0, fitZoom); cam = 'hover'; controls.autoRotateSpeed = 0.22; }
-  if (cam === 'none') { cam = 'hover'; controls.autoRotate = true; controls.autoRotateSpeed = 0.22; }
+// ---- attention: what the automatic camera wants to show
+// Priority 3 is loud (Degraded, stuck, a Platform component Degraded), 2 normal (Arriving, Leaving, Unknown),
+// 1 quiet (Deploying, Updating, previews, backup warnings). One entry per Application; a newer or louder one replaces it.
+const LINGER = { 3: 9000, 2: 7000, 1: 4000 }, EXPIRE = { 3: Infinity, 2: 60000, 1: 20000 };
+const SEV = { 3: '#ff6b5e', 2: '#5fd3ff', 1: '#ffc233', 0: '#6e7781' };
+const queue = new Map(), recent = [];
+let lastAttention = -1e9;
+function attention(key, name, prio, where) {
+  const old = queue.get(key), t = performance.now();
+  lastAttention = t; recent.push({ key, at: t, where }); while (recent.length > 20) recent.shift();
+  if (!old || prio >= old.prio) queue.set(key, { key, name, prio, at: t, where }); else old.at = t;
 }
+const whereOf = a => () => (a && a.cur ? { x: a.cur.x, z: a.cur.z } : null);
+const appOf = e => model.apps.find(a => a.name === e.app);
+
+// ---- the automatic camera
+// Nobody touching the map: hover over the whole Platform, visit what the queue holds (loud first, then oldest),
+// linger, drift back out. Three or more changes within 3 s: one wide shot of all of them, then only the loud ones.
+// Someone dragging or scrolling: never move; loud changes off screen get markers at the edge. Cluster lost: pull back, visit nothing.
+const IDLE_MS = Number(qs.get('idle') || 12000);
+let camOn = true, lastInput = -1e9, mode = 'hover', home = false, current = null, focusUntil = 0, lastWide = -1e9;
+function takeControl() { lastInput = performance.now(); controls.autoRotate = false; fly = null; mode = 'driving'; }
+for (const ev of ['pointerdown', 'wheel']) renderer.domElement.addEventListener(ev, takeControl, { passive: true });
+function hover(speed = 0.22) { controls.autoRotate = true; controls.autoRotateSpeed = speed; }
+function goHome() { flyTo(0, 0, fitZoom); home = true; }
+function camera_(t) {
+  for (const [k, q] of queue) if (t - q.at > EXPIRE[q.prio]) queue.delete(k);
+  if (!camOn) { mode = 'off'; controls.autoRotate = false; return; }
+  if (t - lastInput < IDLE_MS) { mode = 'driving'; return; }
+  if (model.clusterLost) { if (mode !== 'lost') { goHome(); hover(0.1); mode = 'lost'; } return; }
+  if (mode === 'driving' || mode === 'off' || mode === 'lost') { mode = 'hover'; hover(); if (!queue.size) goHome(); }
+  if (fly) return;
+  // Let a burst finish landing before choosing what to show.
+  if (t - lastAttention < 700) return;
+  const items = [...queue.values()].sort((a, b) => b.prio - a.prio || a.at - b.at);
+  // A burst interrupts whatever the camera is showing, once per 8 s.
+  const burst = [...new Map(recent.filter(r => t - r.at < 3700).map(r => [r.key, r])).values()];
+  if (burst.length >= 3 && t - lastWide > 8000 && mode !== 'wide') {
+    const pts = burst.map(i => i.where()).filter(Boolean);
+    const xs = pts.map(p => p.x), zs = pts.map(p => p.z), span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs));
+    flyTo((Math.max(...xs) + Math.min(...xs)) / 2, (Math.max(...zs) + Math.min(...zs)) / 2, Math.min(1.6, FRUST / ((span + 18) * 0.55)));
+    for (const i of burst) { const q = queue.get(i.key); if (q && q.prio < 3) queue.delete(i.key); }
+    mode = 'wide'; home = false; lastWide = t; focusUntil = t + 7500; hover(0.3); current = { prio: 2 };
+    return;
+  }
+  if (mode === 'focus' && items.length && items[0].prio > current.prio) focusUntil = 0;
+  if ((mode === 'focus' || mode === 'wide') && t < focusUntil) return;
+  if (items.length) {
+    const i = items[0], w = i.where(); queue.delete(i.key);
+    if (!w) return;
+    flyTo(w.x, w.z, 1.9); mode = 'focus'; home = false; current = i; focusUntil = t + 1500 + LINGER[i.prio]; hover(0.45);
+    return;
+  }
+  if (!home) { goHome(); hover(); }
+  mode = 'hover';
+}
+// Markers at the screen edge for loud changes the camera isn't allowed to show while someone is driving.
+const edgesEl = document.getElementById('edges'), vE = new THREE.Vector3();
+let lastEdges = 0;
+function edges(t) {
+  if (t - lastEdges < 100) return; lastEdges = t;
+  const show = camOn && mode === 'driving' ? [...queue.values()].filter(i => i.prio >= 2) : [];
+  const w = edgesEl.clientWidth, h = edgesEl.clientHeight, out = [];
+  for (const i of show) {
+    const p = i.where(); if (!p) continue;
+    vE.set(p.x, 1, p.z).project(camera);
+    if (Math.abs(vE.x) < 0.95 && Math.abs(vE.y) < 0.95) continue;
+    const k = 1 / Math.max(Math.abs(vE.x) / 0.86, Math.abs(vE.y) / 0.82), x = vE.x * k, y = Math.max(vE.y * k, -0.55);
+    out.push({ i, left: (x + 1) / 2 * w, top: (1 - y) / 2 * h, rot: Math.atan2(-vE.y, vE.x) });
+  }
+  edgesEl.replaceChildren(...out.map(o => {
+    const d = document.createElement('div'); d.className = 'edge'; d.style.left = o.left + 'px'; d.style.top = o.top + 'px'; d.style.color = SEV[o.i.prio];
+    d.innerHTML = `<span class="arrow" style="transform:rotate(${o.rot}rad)"></span><span style="color:#e6edf3">${o.i.name}</span>`;
+    d.onclick = () => { const p = o.i.where(); if (p) { takeControl(); flyTo(p.x, p.z, 1.9); queue.delete(o.i.key); } };
+    return d;
+  }));
+}
+// The status chip is also the switch.
+const chip = document.getElementById('camChip'), chipText = document.getElementById('camText');
+chip.onclick = () => { camOn = !camOn; if (camOn) lastInput = -1e9; else { controls.autoRotate = false; fly = null; } };
+function chipTick(t) {
+  const left = Math.max(0, Math.ceil((IDLE_MS - (t - lastInput)) / 1000));
+  chip.className = !camOn ? 'off' : mode === 'driving' ? 'paused' : '';
+  chipText.textContent = !camOn ? 'Automatic camera off' : mode === 'driving' ? `Automatic camera paused while you look around · back in ${left} s`
+    : mode === 'lost' ? 'Automatic camera · holding back, cluster lost' : mode === 'focus' ? `Automatic camera · showing ${current.name}`
+    : mode === 'wide' ? 'Automatic camera · several changes at once' : 'Automatic camera · watching';
+}
+// Hovering a feed entry marks its place with a pulsing ring.
+const marker = new THREE.Mesh(new THREE.RingGeometry(RI + 0.6, RI + 1.1, 64), new THREE.MeshBasicMaterial({ color: '#5fd3ff', transparent: true, opacity: 0.8, depthTest: false }));
+marker.rotation.x = -Math.PI / 2; marker.position.y = 0.2; marker.renderOrder = 30; marker.visible = false; scene.add(marker);
 // Labels fade when a structure stands between them and the camera; ground, water and cables don't count.
 let lastOcc = 0;
 const vA = new THREE.Vector3(), nA = new THREE.Vector2(), occRay = new THREE.Raycaster();
@@ -827,7 +923,10 @@ renderer.setAnimationLoop(() => {
   const t = performance.now();
   for (const f of anims) f(t);
   camera_(t);
+  edges(t);
+  chipTick(t);
   occlude(t);
+  if (marker.visible) marker.material.opacity = 0.45 + 0.4 * Math.sin(t / 180);
   if (water) { const m = water.userData.rip.material.map; if (m) { m.offset.x = t / 90000; m.offset.y = t / 140000; } }
   if (fly) {
     const q = clamp01((t - fly.t0) / 1500), e = ease(q);
@@ -855,7 +954,25 @@ renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
 // ================================================================ panel and events
 function renderPanel() {
   document.getElementById('feed').replaceChildren(...model.feed.slice(0, 14).map(f => { const li = document.createElement('li'); li.innerHTML = `<time>${f.t}</time>`; li.append(f.msg); return li; }));
+  renderSceneFeed();
 }
+// The feed on the map: the latest changes, coloured by how loud they are. Click flies there; hover marks the place.
+function renderSceneFeed() {
+  const now = performance.now();
+  document.getElementById('sceneFeed').replaceChildren(...model.feed.slice(0, 6).reverse().map(f => {
+    const li = document.createElement('li'), w = f.where && f.where();
+    li.className = w ? '' : 'nowhere';
+    li.innerHTML = `<span class="sev" style="background:${SEV[f.prio]}"></span><span class="msg"></span><span class="age">${Math.round((now - f.at) / 1000)} s</span>`;
+    li.querySelector('.msg').textContent = f.msg;
+    if (w) {
+      li.onclick = () => { const p = f.where(); if (p) { takeControl(); flyTo(p.x, p.z, 1.9); if (f.key) queue.delete(f.key); } };
+      li.onmouseenter = () => { const p = f.where(); if (p) { marker.position.set(p.x, 0.2, p.z); marker.scale.setScalar(f.key === 'platform' ? RC / RI : 1); marker.visible = true; } };
+      li.onmouseleave = () => { marker.visible = false; };
+    }
+    return li;
+  }));
+}
+setInterval(renderSceneFeed, 1000);
 const KEYS = Object.keys(PALETTES);
 function setVariant(v) { palette = v; const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u); rebuild(); }
 const step = d => setVariant(KEYS[(KEYS.indexOf(palette) + d + KEYS.length) % KEYS.length]);
@@ -865,7 +982,14 @@ document.addEventListener('keydown', e => { if (e.target.closest('input')) retur
 document.getElementById('togglePanel').onclick = e => { document.body.classList.toggle('nopanel'); resize(); e.target.textContent = document.body.classList.contains('nopanel') ? 'Show panel' : 'Hide panel'; };
 
 const clock = () => new Date().toTimeString().slice(0, 8);
-const log = msg => model.feed.unshift({ t: clock(), msg });
+// Every change is a note: it goes in the feed with its place and how loud it is, and asks for the camera if it's loud enough.
+function note(msg, subject = null, prio = 0) {
+  const key = subject === 'platform' ? 'platform' : subject ? subject.name : null;
+  const where = subject === 'platform' ? () => ({ x: 0, z: 0 }) : subject ? whereOf(subject) : null;
+  model.feed.unshift({ t: clock(), at: performance.now(), msg, prio, where, key });
+  if (prio > 0 && where) attention(key, subject === 'platform' ? 'the Platform' : subject.name, prio, where);
+}
+const log = msg => note(msg);
 const later = (ms, fn) => setTimeout(() => { fn(); rebuild(); }, ms);
 const pick = a => a[Math.floor(Math.random() * a.length)];
 const envs = () => model.apps.flatMap(a => a.envs);
@@ -874,10 +998,10 @@ const POOL = ['ledger', 'kantine', 'roomsy', 'fakturo', 'radar', 'intranet', 'on
 function removeApp(a) {
   const t0 = performance.now();
   for (const e of a.envs) { if (e.activity === 'unreleased') e.wasUnreleased = true; e.activity = 'leaving'; e.leaveAt = t0; e.stuck = false; }
-  attend(a); log(`${a.name} leaving: final backups running`);
+  note(`${a.name} leaving: final backups running`, a, 2);
   later(3500, () => { const t = performance.now(); a.envs.forEach((e, i) => { e.crumbleAt = t + i * 150; }); });
   later(5000, () => { a.sinkAt = performance.now(); });
-  later(6700, () => { model.apps = model.apps.filter(x => x !== a); model.free.push(a.slot); log(`${a.name} left`); });
+  later(6700, () => { model.apps = model.apps.filter(x => x !== a); model.free.push(a.slot); note(`${a.name} left`); });
 }
 const deletable = () => model.apps.filter(x => !x.sinkAt && !x.envs.some(e => e.activity === 'leaving'));
 const ACTIONS = {
@@ -886,41 +1010,48 @@ const ACTIONS = {
     const list = [mkEnv(name, 'prod', [cap('postgres')], { activity: 'arriving', bornAt: t, isNewApp: true })];
     if (Math.random() < 0.5) list.push(mkEnv(name, 'staging', [cap('postgres')], { activity: 'arriving', bornAt: t + 300, quiet: true }));
     const a = addApp(name, list, { isNew: true });
-    log(`${name} arrived, setting up`);
-    attend(a);
-    later(7000, () => { for (const e of a.envs) if (e.activity === 'arriving') e.activity = null; a.isNew = false; log(`${name} is serving`); });
+    note(`${name} arrived, setting up`, a, 2);
+    later(7000, () => { for (const e of a.envs) if (e.activity === 'arriving') e.activity = null; a.isNew = false; note(`${name} is serving`, a); });
   },
   firstDeploy() {
     const e = envs().find(v => v.activity === 'unreleased'); if (!e) return log('no Unreleased Environment left');
-    e.activity = 'arriving'; e.bornAt = performance.now(); attend(appOf(e)); log(`${e.app} ${e.name} got its first image, arriving`);
-    later(6500, () => { e.activity = null; log(`${e.app} ${e.name} is serving`); });
+    e.activity = 'arriving'; e.bornAt = performance.now(); note(`${e.app} ${e.name} got its first image, arriving`, appOf(e), 2);
+    later(6500, () => { e.activity = null; note(`${e.app} ${e.name} is serving`, appOf(e)); });
   },
-  deploy() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; attend(appOf(e)); log(`Deploy to ${e.app} ${e.name}`); later(4500, () => { if (e.activity === 'deploying' && !e.stuck) { e.activity = null; log(`${e.app} ${e.name} deployed`); } }); },
-  stuck() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; log(`Deploy to ${e.app} ${e.name}`); later(2500, () => { e.stuck = true; e.why = 'migration Job failed'; attend(appOf(e)); log(`${e.app} ${e.name} Deploy stuck: migration Job failed`); }); },
-  update() { const e = pick(idle()); if (!e) return; e.activity = 'updating'; attend(appOf(e)); log(`${e.app} ${e.name} updating (secret set)`); later(4000, () => { if (!e.stuck) { e.activity = null; log(`${e.app} ${e.name} updated`); } }); },
-  degrade() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'degraded'; attend(appOf(e)); log(`${e.app} ${e.name} Degraded: CrashLoopBackOff`); } },
-  unknown() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'unknown'; attend(appOf(e)); log(`${e.app} ${e.name} Unknown: pod status Unknown`); } },
-  warn() { const c = pick(envs().flatMap(e => e.caps.filter(k => k.kind === 'postgres' && !k.warn).map(k => [e, k]))); if (c) { c[1].warn = true; attend(appOf(c[0])); log(`${c[0].app} ${c[0].name} database: backups failing`); } },
+  deploy() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; note(`Deploy to ${e.app} ${e.name}`, appOf(e), 1); later(4500, () => { if (e.activity === 'deploying' && !e.stuck) { e.activity = null; note(`${e.app} ${e.name} deployed`, appOf(e)); } }); },
+  stuck() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; note(`Deploy to ${e.app} ${e.name}`, appOf(e), 1); later(2500, () => { e.stuck = true; e.why = 'migration Job failed'; note(`${e.app} ${e.name} Deploy stuck: migration Job failed`, appOf(e), 3); }); },
+  update() { const e = pick(idle()); if (!e) return; e.activity = 'updating'; note(`${e.app} ${e.name} updating (secret set)`, appOf(e), 1); later(4000, () => { if (!e.stuck) { e.activity = null; note(`${e.app} ${e.name} updated`, appOf(e)); } }); },
+  degrade() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'degraded'; note(`${e.app} ${e.name} Degraded: CrashLoopBackOff`, appOf(e), 3); } },
+  unknown() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'unknown'; note(`${e.app} ${e.name} Unknown: pod status Unknown`, appOf(e), 2); } },
+  warn() { const c = pick(envs().flatMap(e => e.caps.filter(k => k.kind === 'postgres' && !k.warn).map(k => [e, k]))); if (c) { c[1].warn = true; note(`${c[0].app} ${c[0].name} database: backups failing`, appOf(c[0]), 1); } },
   preview() {
     const a = pick(model.apps.filter(x => !x.sinkAt && x.envs.some(e => e.name === 'staging'))); if (!a) return;
     const n = 40 + Math.floor(Math.random() * 60), e = mkEnv(a.name, `pr-${n}`, [cap('login')], { activity: 'arriving', bornAt: performance.now() });
-    a.envs.push(e); attend(a); log(`${a.name} pr-${n} preview arriving`); later(6500, () => { e.activity = null; log(`${a.name} pr-${n} preview is serving`); });
+    a.envs.push(e); note(`${a.name} pr-${n} preview arriving`, a, 1); later(6500, () => { e.activity = null; note(`${a.name} pr-${n} preview is serving`, a); });
   },
   closePreview() {
     const e = pick(envs().filter(v => v.name.startsWith('pr-') && v.activity !== 'leaving')); if (!e) return log('no preview open');
-    e.activity = 'leaving'; e.leaveAt = performance.now(); attend(appOf(e)); log(`${e.app} ${e.name} leaving`);
+    e.activity = 'leaving'; e.leaveAt = performance.now(); note(`${e.app} ${e.name} leaving`, appOf(e), 1);
     later(3000, () => { e.crumbleAt = performance.now(); });
-    later(4400, () => { const a = model.apps.find(x => x.name === e.app); if (a) a.envs = a.envs.filter(v => v !== e); log(`${e.app} ${e.name} left`); });
+    later(4400, () => { const a = model.apps.find(x => x.name === e.app); if (a) a.envs = a.envs.filter(v => v !== e); note(`${e.app} ${e.name} left`, a); });
   },
   deleteApp() { const a = pick(deletable()); if (a) removeApp(a); },
   deleteTwo() { const a = pick(deletable()); if (!a) return; removeApp(a); setTimeout(() => { const b = pick(deletable()); if (b) { removeApp(b); rebuild(); } }, 1200); },
-  bump() { const c = model.comps.find(k => k.kind === 'cert-manager'); c.activity = 'updating'; c.stuck = false; attention(0, 0); log('cert-manager updating (chart bump)'); later(4000, () => { c.activity = null; log('cert-manager updated'); }); },
-  traefik() { const c = model.comps.find(k => k.kind === 'traefik'); c.cond = c.cond === 'healthy' ? 'degraded' : 'healthy'; attention(0, 0); log(`Traefik ${c.cond === 'healthy' ? 'recovered' : 'Degraded'}`); },
+  bump() { const c = model.comps.find(k => k.kind === 'cert-manager'); c.activity = 'updating'; c.stuck = false; note('cert-manager updating (chart bump)', 'platform', 1); later(4000, () => { c.activity = null; note('cert-manager updated', 'platform'); }); },
+  traefik() { const c = model.comps.find(k => k.kind === 'traefik'); c.cond = c.cond === 'healthy' ? 'degraded' : 'healthy'; note(`Traefik ${c.cond === 'healthy' ? 'recovered' : 'Degraded'}`, 'platform', c.cond === 'healthy' ? 0 : 3); },
   lose() { model.clusterLost = !model.clusterLost; log(model.clusterLost ? 'Argus lost the cluster' : 'Argus reconnected'); },
   settle() {
     for (const e of envs()) { if (e.activity !== 'unreleased' && e.activity !== 'leaving') e.activity = null; e.stuck = false; e.cond = 'healthy'; for (const c of e.caps) { c.warn = false; c.cond = 'healthy'; } }
     for (const c of model.comps) { c.activity = null; c.stuck = false; c.cond = 'healthy'; }
     model.clusterLost = false; log('everything settled');
+  },
+  burst() {
+    // Three changes inside a second: a Degraded, a new Application, a stuck Deploy.
+    const d = pick(envs().filter(v => v.cond === 'healthy' && v.activity === null)); if (!d) return;
+    d.cond = 'degraded'; note(`${d.app} ${d.name} Degraded: CrashLoopBackOff`, appOf(d), 3); rebuild();
+    ACTIONS.arrive();
+    const e = pick(idle().filter(v => v.app !== d.app)); if (!e) return;
+    e.activity = 'deploying'; e.stuck = true; e.why = 'image pull failing'; note(`${e.app} ${e.name} Deploy stuck: image pull failing`, appOf(e), 3);
   },
   fit() { fit(); },
 };
@@ -931,10 +1062,12 @@ log('Argus connected (fake data)');
 rebuild();
 const params = new URLSearchParams(location.search);
 for (const a of (params.get('do') || '').split(',').filter(Boolean)) { if (ACTIONS[a]) { ACTIONS[a](); rebuild(); } }
+// ?drive=1 starts as if someone were looking around, to see the edge markers.
+if (params.get('drive') === '1') { lastInput = performance.now() + 60000; mode = 'driving'; }
 // ?at=x,z,zoom&cam=dx,dy,dz frames a spot for screenshots.
 if (params.get('at')) { const [x, z, zm] = params.get('at').split(',').map(Number), o = (params.get('cam') || '70,62,70').split(',').map(Number);
-  controls.target.set(x, 0, z); camera.position.set(x + o[0], o[1], z + o[2]); camera.zoom = zm; camera.updateProjectionMatrix(); document.getElementById('autoCam').checked = false; }
-if (params.get('focus') === 'platform') { controls.target.set(0, 0, 0); camera.position.copy(OFFSET); camera.zoom = 2.6; camera.updateProjectionMatrix(); document.getElementById('autoCam').checked = false; }
+  controls.target.set(x, 0, z); camera.position.set(x + o[0], o[1], z + o[2]); camera.zoom = zm; camera.updateProjectionMatrix(); if (params.get('drive') !== '1') camOn = false; }
+if (params.get('focus') === 'platform') { controls.target.set(0, 0, 0); camera.position.copy(OFFSET); camera.zoom = 2.6; camera.updateProjectionMatrix(); camOn = false; }
 </script>
 </body>
 </html>
