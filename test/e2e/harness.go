@@ -1096,7 +1096,11 @@ func (c *Cluster) ServeGitRepositories(ctx context.Context, repos ...Repository)
 	if err != nil {
 		return fmt.Errorf("render git-repositories ConfigMap: %w\n%s", err, configMap)
 	}
-	if err := c.Apply(ctx, configMap); err != nil {
+	// Server-side: a client-side apply copies the whole object into the
+	// last-applied-configuration annotation, which may not exceed 256 KiB,
+	// and the packed repositories outgrew that. A ConfigMap itself may
+	// hold 1 MiB.
+	if err := c.Apply(ctx, configMap, "--server-side", "--force-conflicts"); err != nil {
 		return err
 	}
 	if err := c.Apply(ctx, gitServerManifest(checksum)); err != nil {
