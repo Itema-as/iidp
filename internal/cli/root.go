@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,6 +30,10 @@ type Dependencies struct {
 	// unavailable Deploy gate again; zero means ten seconds. Tests shorten
 	// it.
 	CIRetryDelay time.Duration
+	// HTTPClient is what app status calls the Deploy gate's service with;
+	// nil means a client with a one-minute timeout. Tests route it to a
+	// fake gate.
+	HTTPClient *http.Client
 }
 
 // Run executes the CLI with the given arguments (excluding the program name)

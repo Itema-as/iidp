@@ -307,6 +307,16 @@ func (c *Cluster) CallDeployGateWithIidpYAML(ctx context.Context, token, applica
 	return status, decoded, nil
 }
 
+// DeveloperToken is the gh auth token fakegithub lets read shop's
+// repository and nothing else (test/e2e/testdata/fakegithub).
+const DeveloperToken = "e2e-developer-token"
+
+// CallStatus makes the call iidp app status makes, through Traefik, and
+// returns the status and the body.
+func (c *Cluster) CallStatus(ctx context.Context, token, application string) (int, []byte, error) {
+	return c.requestDeployGate(ctx, http.MethodGet, "/v1/status/"+application, token, nil)
+}
+
 func (c *Cluster) requestDeployGate(ctx context.Context, method, path, token string, body []byte) (int, []byte, error) {
 	client := &http.Client{
 		Timeout:   2 * time.Minute,

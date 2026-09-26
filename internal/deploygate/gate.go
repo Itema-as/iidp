@@ -27,6 +27,12 @@
 // It answers 200 with what it wrote, or an error status with
 // {"error": "<what was refused and why>"}, which iidp ci set-image prints
 // for the developer.
+//
+// The same service also answers one read, GET /v1/status/<app>, for iidp
+// app status (status.go). That call is a developer's, authorised by their
+// own GitHub token and their read access to the Application's repository;
+// it writes nothing and does not use the App key
+// (docs/adr/0007-app-status-reads-through-the-deploy-gate.md).
 package deploygate
 
 import (
@@ -52,6 +58,7 @@ import (
 	"github.com/Itema-as/iidp/internal/oidc"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
+	"github.com/Itema-as/iidp/internal/platformstate"
 	"github.com/Itema-as/iidp/internal/registry"
 )
 
@@ -171,6 +178,10 @@ type Gate struct {
 	// repository before it is committed. Nil refuses every deploy: the
 	// gate never commits a tag unchecked.
 	Images *registry.Checker
+	// Cluster reads Environments' live state for GET /v1/status/<app>
+	// (status.go). Nil answers every status call with 503; deploys do not
+	// need it.
+	Cluster platformstate.Lister
 	// Log receives one line per call; nil discards.
 	Log *slog.Logger
 	// BeforePush, when set, runs between the commit and each push. Tests
@@ -193,6 +204,7 @@ func (g *Gate) Handler() http.Handler {
 		_, _ = io.WriteString(w, "ok\n")
 	})
 	mux.HandleFunc("POST "+DeployPath, g.serveDeploy)
+	mux.HandleFunc("GET "+StatusPath+"{application}", g.serveStatus)
 	return mux
 }
 

@@ -47,6 +47,7 @@ func newAppCommand(deps Dependencies) *cobra.Command {
 	app.AddCommand(newAppAddCapabilityCommand(deps))
 	app.AddCommand(newAppDeleteCommand(deps))
 	app.AddCommand(newAppBindCommand(deps))
+	app.AddCommand(newAppStatusCommand(deps))
 	return app
 }
 

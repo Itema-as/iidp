@@ -1,6 +1,8 @@
 // Command iidp-deploy-gate is the Deploy gate: the service on the Platform
 // through which an Application repository's CI deploys and promotes
-// (internal/deploygate). The bootstrap chart runs it
+// (internal/deploygate), and whose service also answers iidp app status,
+// reading the cluster as the pod's service account
+// (internal/platformstate). The bootstrap chart runs it
 // (bootstrap/components/deploy-gate); it is configured entirely from the
 // environment:
 //
@@ -39,6 +41,7 @@ import (
 	"github.com/Itema-as/iidp/internal/deploygate"
 	"github.com/Itema-as/iidp/internal/oidc"
 	"github.com/Itema-as/iidp/internal/platform"
+	"github.com/Itema-as/iidp/internal/platformstate"
 	"github.com/Itema-as/iidp/internal/registry"
 	"github.com/Itema-as/iidp/internal/version"
 )
@@ -98,6 +101,14 @@ func run(log *slog.Logger) error {
 	}
 	if _, err := gate.Images.Credential(); err != nil {
 		return err
+	}
+	// The read endpoint for iidp app status reads the cluster as the pod's
+	// service account. Without one, deploys still work and status calls
+	// are answered 503.
+	if cluster, err := platformstate.InCluster(); err != nil {
+		log.Warn("iidp app status is unavailable: the gate cannot read the cluster", "error", err.Error())
+	} else {
+		gate.Cluster = cluster
 	}
 
 	server := &http.Server{

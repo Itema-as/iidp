@@ -46,7 +46,7 @@ func (e *statusError) Error() string {
 }
 
 // IsNotFound reports whether err is the "404 Not Found" GitHub returns for
-// a repository that does not exist.
+// a repository that does not exist, or that the token cannot see.
 func IsNotFound(err error) bool {
 	var se *statusError
 	return errors.As(err, &se) && se.status == http.StatusNotFound
@@ -180,6 +180,37 @@ func (c *Client) GetRepository(ctx context.Context, owner, name string) (Reposit
 		ID:            repo.ID,
 		Owner:         repo.Owner,
 	}, nil
+}
+
+// ReadableRepository is what RepositoryByID reads: the repository's
+// current name and whether the token may read it.
+type ReadableRepository struct {
+	FullName string
+	CanPull  bool
+}
+
+// RepositoryByID reads a repository by its numeric id
+// (GET /repositories/{id}), which survives renames and transfers, as the
+// authenticated user sees it. For a private repository the user cannot
+// see, GitHub answers 404 rather than 403, and IsNotFound matches it.
+func (c *Client) RepositoryByID(ctx context.Context, id int64) (ReadableRepository, error) {
+	var repo struct {
+		FullName    string `json:"full_name"`
+		Permissions struct {
+			Pull bool `json:"pull"`
+		} `json:"permissions"`
+	}
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repositories/%d", id), nil, &repo); err != nil {
+		return ReadableRepository{}, fmt.Errorf("reading repository id %d: %w", id, err)
+	}
+	return ReadableRepository{FullName: repo.FullName, CanPull: repo.Permissions.Pull}, nil
+}
+
+// IsUnauthorized reports whether err is GitHub's 401: a token it does not
+// accept (expired, revoked or malformed).
+func IsUnauthorized(err error) bool {
+	var se *statusError
+	return errors.As(err, &se) && se.status == http.StatusUnauthorized
 }
 
 // BranchExists reports whether branch already exists on owner/name

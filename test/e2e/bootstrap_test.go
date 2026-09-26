@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Itema-as/iidp/internal/appconfig"
+	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
 // TestBootstrap proves that, given a Platform repository, ArgoCD installs
@@ -45,6 +47,9 @@ import (
 // shop carrying the migration command and a Scheduled task from its
 // Application repository's iidp.yaml sets them with the tag, the migration
 // Job runs the command, and the task's CronJob runs a Job that succeeds.
+// Then (testAppStatus) it proves #94: the gate's status endpoint shows
+// shop-prod, Synced and Healthy, to a developer token fakegithub says can
+// read shop's repository, and refuses brochure to it.
 // Last (testGuardrails) it proves #90: nothing the fixture Applications did,
 // the Scheduled task's Jobs included, failed a guardrail, a NodePort Service
 // is warned about and audited but not denied, and Pod Security refuses a
@@ -182,6 +187,8 @@ func TestBootstrap(t *testing.T) {
 	// first image adds a workload to the node.
 	testDeployGate(ctx, t, cluster, issuer)
 	testMigrationCommandFromIidpYAML(ctx, t, cluster, issuer)
+	// Once shop-prod has a migration and a Scheduled task run to show.
+	testAppStatus(ctx, t, cluster)
 	// Last, once every fixture Environment has been created, deployed,
 	// migrated and (shop-staging) deleted: nothing any of that did may
 	// have tripped a guardrail.
@@ -302,6 +309,73 @@ func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster
 	}
 	if !strings.Contains(logs, "scheduled task ran with DATABASE_URL") {
 		t.Errorf("the task's log is %q, want the marker its command echoes", logs)
+	}
+}
+
+// testAppStatus proves #94 end to end: the gate's service, called the way
+// iidp app status calls it with a developer's token, clones the Platform
+// repository with that token, asks fakegithub whether the token can read
+// shop's bound repository, and reads shop-prod from the cluster through its
+// read-only service account: Synced and Healthy, the image deployed by
+// testMigrationCommandFromIidpYAML and when, a ready pod, the migration
+// and the Scheduled task's run. brochure's repository is one the token
+// cannot read, which fakegithub answers with 404 as GitHub does for a
+// private repository, and the gate refuses it.
+func testAppStatus(ctx context.Context, t *testing.T, cluster *Cluster) {
+	t.Helper()
+	var status platformstate.Status
+	var last string
+	err := pollUntil(ctx, 3*time.Minute, 5*time.Second,
+		func() (bool, error) {
+			code, body, err := cluster.CallStatus(ctx, DeveloperToken, "shop")
+			if err != nil {
+				return false, err
+			}
+			last = fmt.Sprintf("HTTP %d: %s", code, body)
+			if code >= 500 {
+				return false, nil
+			}
+			if code != http.StatusOK {
+				return false, fmt.Errorf("the status of shop: %s", last)
+			}
+			if err := json.Unmarshal(body, &status); err != nil {
+				return false, err
+			}
+			for _, env := range status.Environments {
+				if env.Name == "prod" && env.ArgoCD != nil && env.ArgoCD.Sync == "Synced" && env.ArgoCD.Health == "Healthy" && env.Pods.Ready > 0 {
+					return true, nil
+				}
+			}
+			return false, nil
+		},
+		func() error { return fmt.Errorf("shop-prod never showed Synced, Healthy and a ready pod: %s", last) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("iidp app status shop: %s", last)
+	if len(status.Environments) != 1 {
+		t.Errorf("Environments = %+v, want prod only: staging was deleted", status.Environments)
+	}
+	prod := status.Environments[0]
+	if prod.Namespace != "shop-prod" || prod.Image == nil || prod.Image.Tag != shopDeployTag || prod.Image.DeployedAt == nil {
+		t.Errorf("prod = %+v, image %+v: want %s with the time of the gate's commit", prod, prod.Image, shopDeployTag)
+	}
+	if prod.Migration == nil || prod.Migration.Result != platformstate.RunSucceeded {
+		t.Errorf("migration = %+v, want the migration Job's success", prod.Migration)
+	}
+	if len(prod.Tasks) != 1 || prod.Tasks[0].LastRun == nil {
+		t.Errorf("tasks = %+v, want the fixture's task with its run", prod.Tasks)
+	}
+	if len(prod.Addresses) == 0 {
+		t.Errorf("addresses = %v, want shop's", prod.Addresses)
+	}
+
+	code, body, err := cluster.CallStatus(ctx, DeveloperToken, "brochure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != http.StatusForbidden || !strings.Contains(string(body), "you cannot read brochure's Application repository") {
+		t.Errorf("the status of brochure: HTTP %d %s, want 403: the token cannot read its repository", code, body)
 	}
 }
 

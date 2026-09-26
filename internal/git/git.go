@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // ErrPushRejected is returned by Push when the remote branch has moved
@@ -55,6 +57,55 @@ func Clone(ctx context.Context, url, branch, dir string, auth Auth) (*Repository
 		return nil, fmt.Errorf("clone %s: %w", url, err)
 	}
 	return r, nil
+}
+
+// CloneWithHistory is Clone with the branch's whole history, for reading
+// when a file last changed (FileHistory). The Deploy gate's status read
+// uses it on the Platform repository, which is small.
+func CloneWithHistory(ctx context.Context, url, branch, dir string, auth Auth) (*Repository, error) {
+	r := &Repository{Dir: dir, auth: auth}
+	if _, err := r.run(ctx, "", "clone", "--quiet", "--single-branch", "--branch", branch, url, dir); err != nil {
+		return nil, fmt.Errorf("clone %s: %w", url, err)
+	}
+	return r, nil
+}
+
+// Commit is one commit that changed a file.
+type Commit struct {
+	SHA string
+	// Time is the committer date.
+	Time time.Time
+}
+
+// FileHistory is the commits on HEAD that changed path, newest first, at
+// most limit of them.
+func (r *Repository) FileHistory(ctx context.Context, path string, limit int) ([]Commit, error) {
+	out, err := r.run(ctx, r.Dir, "log", "--format=%H %cI", "-n", strconv.Itoa(limit), "HEAD", "--", path)
+	if err != nil {
+		return nil, fmt.Errorf("log %s: %w", path, err)
+	}
+	var commits []Commit
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		sha, date, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, date)
+		if err != nil {
+			return nil, fmt.Errorf("log %s: commit %s has date %q: %w", path, sha, date, err)
+		}
+		commits = append(commits, Commit{SHA: sha, Time: t})
+	}
+	return commits, nil
+}
+
+// Show is path's content at commit.
+func (r *Repository) Show(ctx context.Context, commit, path string) ([]byte, error) {
+	out, err := r.run(ctx, r.Dir, "show", commit+":"+path)
+	if err != nil {
+		return nil, fmt.Errorf("show %s:%s: %w", commit, path, err)
+	}
+	return []byte(out), nil
 }
 
 // Init creates a new repository at dir (which must already exist and hold
