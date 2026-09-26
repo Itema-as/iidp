@@ -47,3 +47,11 @@ A deploy may now carry the migration command from the Application repository's `
 ## Note (#75): private GHCR depends on the organisation allowing classic tokens
 
 ghcr.io takes only a classic personal access token for pulls from outside Actions. Both the node's `registries.yaml` token and the Deploy gate's copy (`argocd/ghcr-pull-token`) are classic tokens. `Itema-as` had "Restrict access via personal access tokens (classic)" turned on, so during the cutover (#62) both got 403 on the first private image. The admin allowed classic tokens in the organisation's settings (Settings > Personal access tokens). Every private image pull on the Platform now depends on that setting. Tightening it again breaks every pull at once: no new Pod can start, and the gate refuses every deploy with "couldn't check". If the organisation wants classic tokens restricted, move to zot on Object Storage first. zot takes the Actions OIDC token for pushes, and the node can pull from it without any personal token, which also makes the machine user of #56 unnecessary.
+
+## Note (Phase 2 design, 2026-09-26): what the gate's service and the App gain
+
+The Deploy gate itself doesn't change: CI still deploys and promotes only its own Environments, and the checks above still apply. Three Phase 2 decisions touch what surrounds it:
+
+- **The gate's service gains a read endpoint** for `iidp app status`, authorized by a developer's `gh auth` token and their read access to the bound repository (ADR-0007). It is read-only and doesn't use the App key.
+- **The `iidp-deploy` App gains Pull requests: read**, so ArgoCD's Pull Request generator can find labelled pull requests for Preview Environments (ADR-0006). Previews don't go through the gate. The gate's own rule stays that only `refs/heads/main` and `refs/tags/v*` deploy.
+- **A deploy may also carry the Application's Scheduled tasks** from `iidp.yaml`, written in the same commit as the tag, on the same reasoning as the migration command (#66). Each task is a command run from the image CI already controls, with the environment the Application's containers already get, so CI gains no power it didn't already have.
