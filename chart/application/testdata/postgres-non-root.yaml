@@ -1,0 +1,19 @@
+# A Web service built from iidp's Next.js template (uid 1001), with
+# Postgres and a migration command: every workload the chart renders for it
+# should pass Pod Security's restricted level.
+application:
+  name: shop
+environment: prod
+platform:
+  baseDomain: app.itma.no
+  backupsBucket: itema-iidp-db-backups
+  objectStorageEndpoint: https://hel1.your-objectstorage.com
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 1.4.2
+size: small
+runAsNonRoot: true
+postgres:
+  enabled: true
+  migrationCommand: npx prisma migrate deploy

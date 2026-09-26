@@ -20,3 +20,8 @@ spec:
       - http01:
           ingress:
             ingressClassName: traefik
+            # The solver's Service lives in the Application's namespace,
+            # where the guardrails refuse NodePort Services
+            # (bootstrap/components/guardrails). cert-manager's default is
+            # NodePort; Traefik reaches a ClusterIP Service just the same.
+            serviceType: ClusterIP

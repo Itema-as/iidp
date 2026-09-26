@@ -270,6 +270,36 @@ Use the same steps to add the token to a running node for the first time, to rep
 
 A node rebuilt with `tofu apply -replace` gets both files from whatever `terraform.tfvars` holds at that time, which is why step 2 comes first.
 
+## Turning on the audit log
+
+The guardrails on Application namespaces (`bootstrap/README.md`, "Guardrails") record every failed check as an annotation on the request's audit event, which only exists when the API server writes an audit log. cloud-init turns it on at first boot: it writes the audit policy (`cloud-init/audit-policy.yaml`) to `/etc/rancher/k3s/audit-policy.yaml` and a k3s config drop-in, `/etc/rancher/k3s/config.yaml.d/50-iidp-audit.yaml`, that points kube-apiserver at it and at `/var/lib/rancher/k3s/server/logs/audit.log`, rotated at 50 MB with four old files kept. A node created before #90 has neither. From the repository root, with `infra/tofu-env.sh` sourced as above (only `node_public_ipv4` is read):
+
+```sh
+NODE=root@$(tofu -chdir=infra/platform output -raw node_public_ipv4)
+ssh $NODE 'umask 077 && mkdir -p /etc/rancher/k3s/config.yaml.d && cat > /etc/rancher/k3s/audit-policy.yaml' < infra/platform/cloud-init/audit-policy.yaml
+ssh $NODE 'umask 077 && cat > /etc/rancher/k3s/config.yaml.d/50-iidp-audit.yaml' <<'EOF'
+kube-apiserver-arg+:
+  - audit-policy-file=/etc/rancher/k3s/audit-policy.yaml
+  - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log
+  - audit-log-maxsize=50
+  - audit-log-maxbackup=4
+  - audit-log-maxage=30
+EOF
+ssh $NODE 'systemctl restart k3s && until kubectl wait --for=condition=Ready node --all --timeout=10s >/dev/null 2>&1; do sleep 5; done; ls -l /var/lib/rancher/k3s/server/logs/'
+```
+
+The drop-in is the same text cloud-init writes. `kube-apiserver-arg+` appends to arguments set anywhere else instead of replacing them. Restarting k3s restarts the control plane only, as in the GHCR token steps above. The last command lists `audit.log` once the API server has written its first event.
+
+To see what the guardrails reported, every audit event with a failed admission policy (the image, limits, Service type and Ingress host policies) or a Pod Security `restricted` violation, as one line each:
+
+```sh
+ssh $NODE "grep -h -e validation_failure -e audit-violations /var/lib/rancher/k3s/server/logs/audit*.log" \
+  | jq -r '[.requestReceivedTimestamp, .verb, .objectRef.namespace, .objectRef.resource, .objectRef.name,
+            (.annotations["validation.policy.admission.k8s.io/validation_failure"] // .annotations["pod-security.kubernetes.io/audit-violations"])] | @tsv'
+```
+
+`jq` runs on your machine. An empty result for the Application namespaces is what the rollout wants before the guardrails are switched to Deny.
+
 ## Rebuilding the node
 
 Only for disaster recovery, after confirming the database backups in the backup bucket are current. A rebuild **destroys every local volume, so every Application database on the node, and the age key**.

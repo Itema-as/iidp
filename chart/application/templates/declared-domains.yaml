@@ -1,0 +1,31 @@
+{{- include "application.validate" . -}}
+{{- if include "application.released" . }}
+{{- $domains := include "application.domains" . | fromJson }}
+# The Environment's declared custom domains, one key each, for the
+# bootstrap's guardrails: the Ingress-host admission policy
+# (bootstrap/components/guardrails) looks this ConfigMap up by name in the
+# namespace of the Ingress it checks, and allows a host outside the
+# Platform's base domain only when it is a key here. Rendered for every
+# released Environment, with no keys when it has no custom domains, since
+# the policy does not check an Ingress in a namespace without it at all
+# (bootstrap/components/guardrails/templates/policies.yaml). The name is the
+# policy's, not the Environment's, so one Environment per namespace, as the
+# CLI writes them (docs/platform-repository.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iidp-domains
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    # Before the Ingresses of wave 0, so the policy already finds a newly
+    # declared domain when its Ingress is applied.
+    argocd.argoproj.io/sync-wave: "-1"
+{{- $all := concat $domains.wildcard $domains.foreign | sortAlpha }}
+{{- if $all }}
+data:
+  {{- range $all }}
+  {{ . | quote }}: ""
+  {{- end }}
+{{- end }}
+{{- end }}

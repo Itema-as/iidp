@@ -83,5 +83,8 @@ spec:
               {{- end }}
               resources:
                 {{- include "application.tasks.resources" $ | nindent 16 }}
+              # The Application's own image, so the Application's own answer.
+              securityContext:
+                {{- include "application.securityContext" (list $ $.Values.runAsNonRoot) | nindent 16 }}
 {{- end }}
 {{- end }}

@@ -35,6 +35,30 @@ write_files:
     owner: root:root
     encoding: b64
     content: ${registries_yaml_b64}
+  # The API server's audit log, where the guardrails' admission policies
+  # and Pod Security record what they report (bootstrap/README.md,
+  # "Guardrails"): the audit policy (infra/platform/cloud-init/
+  # audit-policy.yaml, carried as base64 like registries.yaml) and a k3s
+  # config drop-in pointing kube-apiserver at it. k3s reads both only when
+  # it starts, and write_files runs before runcmd installs it. The log is
+  # rotated at 50 MB, four old files kept for at most 30 days. On a node
+  # that predates them, infra/README.md, "Turning on the audit log",
+  # writes the same two files and restarts k3s.
+  - path: /etc/rancher/k3s/audit-policy.yaml
+    permissions: "0600"
+    owner: root:root
+    encoding: b64
+    content: ${audit_policy_yaml_b64}
+  - path: /etc/rancher/k3s/config.yaml.d/50-iidp-audit.yaml
+    permissions: "0600"
+    owner: root:root
+    content: |
+      kube-apiserver-arg+:
+        - audit-policy-file=/etc/rancher/k3s/audit-policy.yaml
+        - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log
+        - audit-log-maxsize=50
+        - audit-log-maxbackup=4
+        - audit-log-maxage=30
   # The Deploy gate's copy of the same token: the manifest of Secret
   # argocd/ghcr-pull-token (local.ghcr_pull_secret_yaml in bootstrap.tf),
   # which iidp-bootstrap applies once the cluster is up. The gate is a pod

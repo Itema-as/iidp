@@ -221,9 +221,11 @@ func TestCloudInitWritesRegistriesYAMLBeforeK3sStarts(t *testing.T) {
 		"platform_repo_github_app_private_key_b64": base64.StdEncoding.EncodeToString([]byte("-----BEGIN RSA PRIVATE KEY-----\nx\n-----END RSA PRIVATE KEY-----\n")),
 		"registries_yaml_b64":                      base64.StdEncoding.EncodeToString([]byte(registries)),
 		"ghcr_pull_secret_yaml_b64":                base64.StdEncoding.EncodeToString([]byte(gateSecret)),
+		"audit_policy_yaml_b64":                    base64.StdEncoding.EncodeToString(readAuditPolicy(t)),
 	})
 	assertRegistriesYAML(t, rendered, user, token)
 	assertGatePullSecret(t, rendered, user, token)
+	assertAuditLog(t, rendered)
 }
 
 // TestOpenTofuRendersRegistriesYAML renders the real user data: bootstrap.tf,
@@ -243,7 +245,7 @@ func TestOpenTofuRendersRegistriesYAML(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	for _, f := range []string{"bootstrap.tf", "variables.tf", cloudInitTemplate} {
+	for _, f := range []string{"bootstrap.tf", "variables.tf", cloudInitTemplate, auditPolicyFile} {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
@@ -297,6 +299,7 @@ ghcr_pull_token    = "`+token+`"
 	}
 	assertRegistriesYAML(t, string(rendered), user, token)
 	assertGatePullSecret(t, string(rendered), user, token)
+	assertAuditLog(t, string(rendered))
 }
 
 func writeFile(t *testing.T, path, content string) {

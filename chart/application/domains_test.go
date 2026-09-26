@@ -73,7 +73,7 @@ func assertEveryRuleRoutesTo(t *testing.T, ing object, service string, port int)
 
 func TestDomainUnderTheBaseDomainJoinsThePlatformIngressWithoutASecret(t *testing.T) {
 	objects := render(t, "custom-domain-wildcard.yaml")
-	if want := []string{"Deployment/shop", "Ingress/shop", "Service/shop"}; !slices.Equal(keys(objects), want) {
+	if want := []string{"ConfigMap/iidp-domains", "Deployment/shop", "Ingress/shop", "Service/shop"}; !slices.Equal(keys(objects), want) {
 		t.Fatalf("rendered %v, want exactly %v (no second Ingress for a wildcard host)", keys(objects), want)
 	}
 	ing := mustObject(t, objects, "Ingress/shop")
@@ -127,7 +127,7 @@ func TestForeignDomainsGetTheirOwnCertificatesOnASecondIngress(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
 			objects := render(t, tc.fixture)
-			if want := []string{"Deployment/" + tc.name, "Ingress/" + tc.name, "Ingress/" + tc.name + "-http01", "Service/" + tc.name}; !slices.Equal(keys(objects), want) {
+			if want := []string{"ConfigMap/iidp-domains", "Deployment/" + tc.name, "Ingress/" + tc.name, "Ingress/" + tc.name + "-http01", "Service/" + tc.name}; !slices.Equal(keys(objects), want) {
 				t.Fatalf("rendered %v, want exactly %v", keys(objects), want)
 			}
 
@@ -203,7 +203,7 @@ func TestSecretsAreMountedAsEnvFromByName(t *testing.T) {
 	if vars := envVars(t, c); vars["NODE_ENV"] != "production" || vars["PORT"] != "3000" {
 		t.Errorf("env = %v, want NODE_ENV and PORT beside the secrets", vars)
 	}
-	if want := []string{"Deployment/shop", "Ingress/shop", "Service/shop"}; !slices.Equal(keys(objects), want) {
+	if want := []string{"ConfigMap/iidp-domains", "Deployment/shop", "Ingress/shop", "Service/shop"}; !slices.Equal(keys(objects), want) {
 		t.Errorf("rendered %v, want exactly %v", keys(objects), want)
 	}
 }

@@ -17,7 +17,12 @@ docker run -p 3000:3000 -e PORT=3000 {{.Name}}
 ```
 
 The container listens on the port the Platform sets in the `PORT`
-environment variable (`3000` by default) and answers `200` on `/`.
+environment variable (`3000` by default) and answers `200` on `/`. It
+runs as the non-root user `nextjs`, uid 1001, named by number in the
+`Dockerfile`'s `USER` line: this Application's values say
+`runAsNonRoot: true`, so the Platform runs it with every capability
+dropped and refuses to start it as root, which the kubelet can only check
+against a numeric user.
 
 ## Deploying
 

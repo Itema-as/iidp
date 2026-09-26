@@ -45,6 +45,10 @@ import (
 // shop carrying the migration command and a Scheduled task from its
 // Application repository's iidp.yaml sets them with the tag, the migration
 // Job runs the command, and the task's CronJob runs a Job that succeeds.
+// Last (testGuardrails) it proves #90: nothing the fixture Applications did,
+// the Scheduled task's Jobs included, failed a guardrail, a NodePort Service
+// is warned about and audited but not denied, and Pod Security refuses a
+// privileged Pod.
 //
 // Run with:
 //
@@ -159,6 +163,9 @@ func TestBootstrap(t *testing.T) {
 		// Healthy against the harness's image, App credential and fake
 		// GitHub (InstallDeployGateStandIns).
 		"deploy-gate": Healthy,
+		// The four admission policies and their bindings: API objects
+		// only, nothing that runs.
+		"guardrails": Healthy,
 		// Cloud-dependent: configured, applied, but nothing to talk to.
 		"platform-tls": Synced,
 		"external-dns": Synced,
@@ -175,6 +182,10 @@ func TestBootstrap(t *testing.T) {
 	// first image adds a workload to the node.
 	testDeployGate(ctx, t, cluster, issuer)
 	testMigrationCommandFromIidpYAML(ctx, t, cluster, issuer)
+	// Last, once every fixture Environment has been created, deployed,
+	// migrated and (shop-staging) deleted: nothing any of that did may
+	// have tripped a guardrail.
+	testGuardrails(ctx, t, cluster)
 }
 
 // brochureRepositoryID and shopRepositoryID are the repository ids the

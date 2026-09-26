@@ -31,7 +31,10 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-USER nextjs
+# By number, not name: the Platform runs this image with runAsNonRoot,
+# and the kubelet can only verify a numeric user is not root (a named one
+# fails to start with "cannot verify user is non-root").
+USER 1001:1001
 
 # The Platform injects PORT (default 3000); server.js reads it.
 EXPOSE 3000

@@ -204,6 +204,19 @@ func TestAppAddCapabilityStagingCopiesProdValues(t *testing.T) {
 	if got := lookup(t, stagingApp, "metadata", "name"); got != "shop-staging" {
 		t.Errorf("staging ArgoCD Application name = %v, want shop-staging", got)
 	}
+	// A staging added later is an Application namespace like any new
+	// Environment's (#90), whatever prod's application.yaml carries.
+	for label, want := range map[string]string{
+		"iidp.itema.no/application":          "shop",
+		"iidp.itema.no/environment":          "staging",
+		"pod-security.kubernetes.io/enforce": "baseline",
+		"pod-security.kubernetes.io/warn":    "restricted",
+		"pod-security.kubernetes.io/audit":   "restricted",
+	} {
+		if got := lookup(t, stagingApp, "spec", "syncPolicy", "managedNamespaceMetadata", "labels", label); got != want {
+			t.Errorf("staging namespace label %s = %v, want %s", label, got, want)
+		}
+	}
 	if !strings.Contains(stdout, "https://shop-staging.app.itma.no") {
 		t.Errorf("stdout = %q, want the staging address", stdout)
 	}

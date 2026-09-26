@@ -149,4 +149,8 @@ spec:
             limits:
               cpu: "100m"
               memory: "64Mi"
+          # bitnami/kubectl runs as uid 1001, whatever the Application's
+          # image does.
+          securityContext:
+            {{- include "application.securityContext" (list . true) | nindent 12 }}
 {{- end }}

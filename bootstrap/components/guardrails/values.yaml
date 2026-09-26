@@ -1,0 +1,65 @@
+# Set by the guardrails Application in bootstrap/templates from the Platform
+# repository's platform.yaml and the bootstrap's own values; the defaults
+# here describe the Platform. See bootstrap/README.md, "Guardrails".
+
+# Ingress hosts in an Application namespace must be under this domain (any
+# depth, not the domain itself) or among the Environment's own declared
+# domains.
+baseDomain: app.itma.no
+
+# What a failed check does, for every binding: Warn (an API warning to the
+# client that made the request) and Audit (an annotation on the request's
+# audit event, docs/implementation-notes/90-guardrails.md). Switching the
+# guardrails on for real is [Deny, Audit]. Kubernetes refuses Deny together
+# with Warn, and so does this chart.
+validationActions:
+  - Warn
+  - Audit
+
+# Where a container image in an Application namespace may come from. An
+# entry ending in "/" is a prefix (a registry, or an organisation on one);
+# any other entry is one repository, matched with any tag or digest
+# (<entry>:<tag> or <entry>@<digest>) and nothing else.
+#
+# - ghcr.io/itema-as/: every Application image (the deploy workflow pushes
+#   there) and the Platform's own.
+# - The CloudNativePG images the application chart's Postgres Capability
+#   runs without naming them: the operator puts its own image (the
+#   bootstrap-controller init container) and its default Postgres image into
+#   every instance Pod and initdb Job, and the Barman Cloud plugin injects
+#   its sidecar. Repositories, not tags: the tags follow the operator and
+#   plugin versions pinned in bootstrap/versions.yaml by themselves. The
+#   kind end-to-end test runs a real Cluster with the pinned versions and
+#   fails on any image this list misses, so a bump that renames one is
+#   caught on its pull request.
+# - The application chart's final Backup PreDelete hook Job image
+#   (application.postgres.finalBackupKubectlImage), pinned there by digest.
+#   Allowed by repository so a chart that moves the digest is not refused
+#   by an older bootstrap: a refused hook would block the Environment's
+#   deletion.
+# - cert-manager's ACME HTTP-01 solver, which cert-manager runs in the
+#   Application's namespace while it issues a certificate for a custom
+#   domain the wildcard does not cover.
+allowedImages:
+  - ghcr.io/itema-as/
+  - ghcr.io/cloudnative-pg/cloudnative-pg
+  - ghcr.io/cloudnative-pg/postgresql
+  - ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar
+  - docker.io/bitnami/kubectl
+  - quay.io/jetstack/cert-manager-acmesolver
+
+# More entries, same format, for a test Platform whose fixture Applications
+# run public images (the kind harness's platform.yaml). Empty on the
+# Platform.
+extraAllowedImages: []
+
+# The ConfigMap, in each Application namespace, that lists the
+# Environment's declared custom domains as its keys. The application chart
+# renders it (chart/application/templates/declared-domains.yaml).
+declaredDomainsConfigMap: iidp-domains
+
+# The Namespace label that marks an Application namespace. The CLI writes
+# it, with the Pod Security labels, into every Environment's ArgoCD
+# Application (syncPolicy.managedNamespaceMetadata); Platform namespaces
+# never carry it.
+applicationNamespaceLabel: iidp.itema.no/application

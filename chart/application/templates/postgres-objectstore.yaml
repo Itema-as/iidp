@@ -31,4 +31,18 @@ spec:
       compression: gzip
   # Backups and WAL older than this are deleted from the bucket.
   retentionPolicy: {{ .Values.postgres.backupRetention | toString | quote }}
+  # The plugin's sidecar in the database Pod, which runs barman-cloud for
+  # every WAL segment and base backup. It has no resources of its own
+  # unless given some here, and the guardrails want limits on every
+  # container (bootstrap/components/guardrails). A small request, since the
+  # node and the kind runner are near their CPU request ceiling, and room
+  # above it for a compressed base backup's upload.
+  instanceSidecarConfiguration:
+    resources:
+      requests:
+        cpu: "10m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
 {{- end }}

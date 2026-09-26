@@ -230,6 +230,27 @@ func TestAppCreateStagingWritesASecondEnvironment(t *testing.T) {
 	if got := lookup(t, stagingApp, "spec", "destination", "namespace"); got != "shop-staging" {
 		t.Errorf("staging namespace = %v, want shop-staging", got)
 	}
+	// Both namespaces are Application namespaces, with their own
+	// Environment's identity and the same Pod Security levels (#90).
+	for _, env := range []struct {
+		name string
+		app  map[string]any
+	}{{"prod", prodApp}, {"staging", stagingApp}} {
+		labels, ok := lookup(t, env.app, "spec", "syncPolicy", "managedNamespaceMetadata", "labels").(map[string]any)
+		if !ok {
+			t.Fatalf("%s application.yaml has no managedNamespaceMetadata labels", env.name)
+		}
+		want := map[string]any{
+			"iidp.itema.no/application":          "shop",
+			"iidp.itema.no/environment":          env.name,
+			"pod-security.kubernetes.io/enforce": "baseline",
+			"pod-security.kubernetes.io/warn":    "restricted",
+			"pod-security.kubernetes.io/audit":   "restricted",
+		}
+		if fmt.Sprint(labels) != fmt.Sprint(want) {
+			t.Errorf("%s namespace labels = %v, want %v", env.name, labels, want)
+		}
+	}
 
 	prodValues := readYAML(t, filepath.Join(clone, "applications/shop/prod/values.yaml"))
 	stagingValues := readYAML(t, filepath.Join(clone, "applications/shop/staging/values.yaml"))

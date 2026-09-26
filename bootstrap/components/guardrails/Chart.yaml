@@ -1,0 +1,5 @@
+apiVersion: v2
+name: guardrails
+description: The Platform's guardrails on Application namespaces - ValidatingAdmissionPolicies for image origin, container limits, Service types and Ingress hosts. Rendered by the guardrails Application of the bootstrap.
+type: application
+version: 0.1.0

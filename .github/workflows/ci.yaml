@@ -73,48 +73,40 @@ jobs:
         run: go test -v ./chart/...
 
   # Renders each built-in Create template with cmd/renderfixture, builds its
-  # Dockerfile and curls / for a 200: the same check done locally with
-  # Podman before this ticket's pull request, kept running on every PR.
+  # Dockerfile, and runs it the way the Platform does (#90): the
+  # application chart with runAsNonRoot: true, in a kind namespace that
+  # enforces Pod Security's restricted level. test/templates/run-restricted.sh
+  # fails on any admission warning, a Pod that does not become Ready, a
+  # container running as root, or anything but a 200 on / at the template's
+  # port (3000 for Next.js, 8080 for the unprivileged nginx of Vite React).
   # "other" is excluded: its stub Dockerfile is not meant to build.
   templates:
     name: Templates
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          - framework: nextjs
-            container_port: 3000
-            run_args: -e PORT=3000
-          - framework: vite-react
-            container_port: 80
-            run_args: ""
+        framework: [nextjs, vite-react]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+      - uses: helm/kind-action@v1
+        with:
+          version: v0.33.0
+          install_only: true
       - name: Render the template
         run: go run ./cmd/renderfixture ${{ matrix.framework }} demoapp fixture
       - name: Build the image
-        run: docker build -t iidp-template-${{ matrix.framework }} fixture
-      - name: Run it and curl /
-        run: |
-          docker run -d --name fixture -p 8080:${{ matrix.container_port }} ${{ matrix.run_args }} iidp-template-${{ matrix.framework }}
-          status=000
-          for _ in $(seq 1 30); do
-            status="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ || true)"
-            [ "$status" = "200" ] && break
-            sleep 1
-          done
-          docker logs fixture || true
-          docker rm -f fixture
-          if [ "$status" != "200" ]; then
-            echo "GET / on the ${{ matrix.framework }} template returned $status, want 200"
-            exit 1
-          fi
+        run: docker build -t iidp-templates.local/${{ matrix.framework }}:ci fixture
+      - name: Run it under Pod Security restricted and curl /
+        run: test/templates/run-restricted.sh ${{ matrix.framework }} iidp-templates.local/${{ matrix.framework }}:ci
       - name: npx and the npm cache work as the runtime user
         if: matrix.framework == 'nextjs'
-        run: docker run --rm iidp-template-nextjs sh -c 'npx --version && npm cache verify'
+        run: docker run --rm iidp-templates.local/nextjs:ci sh -c 'npx --version && npm cache verify'
 
   release-config:
     name: GoReleaser check

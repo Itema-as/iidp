@@ -402,12 +402,20 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	// by id, in the same commit as its Environments; without --path there
 	// is no Application repository to bind
 	// (docs/implementation-notes/58-repository-binding.md).
+	//
+	// The image runs as non-root only when iidp wrote its Dockerfile from
+	// a template that does (Next.js, Vite React; not the Other stub): on
+	// Create, and on Adopt only when the repository had no Dockerfile of
+	// its own. Without --path the image is unknown.
 	var binding *platformrepo.RepositoryBinding
+	runAsNonRoot := false
 	switch plan.path {
 	case pathCreate:
 		binding = &appRepo.Binding
+		runAsNonRoot = plan.framework.RunsAsNonRoot()
 	case pathAdopt:
 		binding = &adoptResult.Binding
+		runAsNonRoot = !adoptResult.HasDockerfile && adoptResult.Framework.RunsAsNonRoot()
 	}
 
 	app := platformrepo.Application{
@@ -422,6 +430,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		Domains:         plan.domains,
 		Login:           plan.login,
 		LoginGroups:     plan.loginGroups,
+		RunAsNonRoot:    runAsNonRoot,
 		Repository:      binding,
 	}
 

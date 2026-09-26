@@ -276,6 +276,14 @@ func TestAppCreateWritesProdEnvironmentToPlatformRepository(t *testing.T) {
 		{[]any{"spec", "syncPolicy", "automated", "prune"}, true},
 		{[]any{"spec", "syncPolicy", "automated", "selfHeal"}, true},
 		{[]any{"spec", "syncPolicy", "syncOptions", 0}, "CreateNamespace=true"},
+		// The namespace ArgoCD creates is an Application namespace: the
+		// guardrails' bindings select it by the first label, and Pod
+		// Security enforces baseline and reports restricted (#90).
+		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "iidp.itema.no/application"}, "shop"},
+		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "iidp.itema.no/environment"}, "prod"},
+		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "pod-security.kubernetes.io/enforce"}, "baseline"},
+		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "pod-security.kubernetes.io/warn"}, "restricted"},
+		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "pod-security.kubernetes.io/audit"}, "restricted"},
 		// A retry is always against the newest commit, so a fix pushed while
 		// a sync keeps failing is picked up (#75).
 		{[]any{"spec", "syncPolicy", "retry", "limit"}, -1},
@@ -313,6 +321,11 @@ func TestAppCreateWritesProdEnvironmentToPlatformRepository(t *testing.T) {
 	}
 	if env, ok := lookup(t, values, "env").(map[string]any); !ok || len(env) != 0 {
 		t.Errorf("values.yaml env = %v, want an empty map", lookup(t, values, "env"))
+	}
+	// No --path: the CLI does not know the image, so it must not promise
+	// the chart it runs as non-root.
+	if got, has := values["runAsNonRoot"]; has {
+		t.Errorf("values.yaml runAsNonRoot = %v, want it absent for an image iidp did not generate", got)
 	}
 
 	for _, want := range []string{"https://shop.app.itma.no", "https://argocd.platform.itma.no", "https://itema.grafana.net"} {

@@ -83,6 +83,24 @@ deployGate:
   # with it before committing the tag.
   ghcrSecret: ghcr-pull-token
 
+# The guardrails on Application namespaces (templates/guardrails.yaml,
+# README.md "Guardrails"): four ValidatingAdmissionPolicies whose bindings
+# take these actions when a check fails.
+guardrails:
+  # Warn and Audit: a failed check is reported to the client and recorded
+  # in the API server's audit log, and the request still goes through.
+  # Switching them on for real is this one line becoming [Deny, Audit],
+  # here for every Platform (a bootstrap release), or in platform.yaml for
+  # one. Deny and Warn together are refused.
+  validationActions: [Warn, Audit]
+  # Images allowed in Application namespaces besides the Platform's own
+  # list (bootstrap/components/guardrails/values.yaml): ghcr.io/itema-as/,
+  # the CloudNativePG images, the chart's kubectl image and cert-manager's
+  # HTTP-01 solver. An entry ending in "/" is a prefix, any other one
+  # repository. For a test Platform whose fixture Applications run public
+  # images; the Platform leaves it empty.
+  extraAllowedImages: []
+
 # Where this chart lives, for the component Applications that point back at
 # it (bootstrap/components/*). The Platform repository sets both from ArgoCD's
 # build environment so they always match the pinned bootstrap revision.

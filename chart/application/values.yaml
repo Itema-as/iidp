@@ -38,7 +38,8 @@ platform:
   backupsCredentialsSecret: backups-credentials
 
 # What the Application fundamentally is: web-service (a container listening
-# on port) or static-site (an nginx image built by CI, listening on 80).
+# on port) or static-site (an nginx image built by CI, listening on 8080
+# with runAsNonRoot, on 80 without).
 kind: web-service
 
 image:
@@ -56,13 +57,25 @@ image:
 # chart; see _helpers.tpl and README.md.
 size: small
 
-# The port the container listens on. It is injected as PORT and is the port
-# the Service and the probes use.
+# The port a Web service listens on. It is injected as PORT and is the port
+# the Service and the probes use. A Static site ignores it: see
+# runAsNonRoot below.
 port: 3000
 
 probe:
   # The path the readiness and liveness probes request on port.
   path: /
+
+# Whether the image runs as a non-root user with a numeric UID, as the
+# images built from iidp's Next.js and Vite React templates do. true makes
+# the containers pass Pod Security's restricted level: the chart requires
+# a non-root user and drops every capability, and a Static site listens on
+# 8080 (an unprivileged nginx cannot bind 80). false, the default, is for
+# an image that may run as root, such as an Adopted nginx on 80: it keeps
+# the container runtime's default capabilities, which such an image needs
+# to start. Either way the chart sets the RuntimeDefault seccomp profile
+# and forbids privilege escalation.
+runAsNonRoot: false
 
 # Plain environment variables, name to value. Secrets do not go here, and
 # neither does DATABASE_URL, which the Postgres Capability injects.

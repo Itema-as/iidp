@@ -147,6 +147,7 @@ func TestEveryTemplateHonoursTheReleasedGate(t *testing.T) {
 // releasedObjects is what the prod Environment of the Application in
 // TestReleasingAnEnvironmentRendersIt renders once it has an image.
 var releasedObjects = []string{
+	"ConfigMap/iidp-domains",
 	"CronJob/shop-nightly-cleanup",
 	"Deployment/shop",
 	"Ingress/shop",
@@ -239,7 +240,7 @@ func TestAddedStagingEnvironmentIsUnreleasedUntilItsFirstImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := keys(renderFile(t, writeValues(t, prod))); !slices.Equal(got, []string{"Deployment/shop", "Ingress/shop", "Service/shop"}) {
+	if got := keys(renderFile(t, writeValues(t, prod))); !slices.Equal(got, []string{"ConfigMap/iidp-domains", "Deployment/shop", "Ingress/shop", "Service/shop"}) {
 		t.Fatalf("released prod rendered %v", got)
 	}
 
@@ -255,7 +256,7 @@ func TestAddedStagingEnvironmentIsUnreleasedUntilItsFirstImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"Deployment/shop-staging", "Ingress/shop-staging", "Service/shop-staging"}
+	want := []string{"ConfigMap/iidp-domains", "Deployment/shop-staging", "Ingress/shop-staging", "Service/shop-staging"}
 	if got := keys(renderFile(t, writeValues(t, staging))); !slices.Equal(got, want) {
 		t.Fatalf("staging after its first image rendered %v, want %v", got, want)
 	}

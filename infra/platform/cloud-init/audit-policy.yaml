@@ -1,0 +1,30 @@
+# The Kubernetes API server's audit policy on the Platform node, and on the
+# kind cluster of the end-to-end test (test/e2e), which reads this same
+# file. It exists for the guardrails (bootstrap/README.md, "Guardrails"):
+# their admission policies and Pod Security record a failed check as an
+# annotation on the request's audit event (the Audit action), and without
+# an audit log there is nowhere for that annotation to go.
+#
+# Only writes to the objects the guardrails and Pod Security check, at
+# Metadata level: who changed what, when, and the admission annotations
+# (validation.policy.admission.k8s.io/validation_failure,
+# pod-security.kubernetes.io/audit-violations), never an object's body.
+# Everything else, reads and Secrets included, is not logged. A few
+# hundred events a day on a Platform this size.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  - level: Metadata
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: ""
+        resources: ["pods", "services"]
+      - group: apps
+        resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+      - group: batch
+        resources: ["jobs", "cronjobs"]
+      - group: networking.k8s.io
+        resources: ["ingresses"]
+  - level: None

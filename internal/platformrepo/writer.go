@@ -128,6 +128,12 @@ type Application struct {
 	// with any, only their members get past Itema login. Needs Login
 	// (docs/implementation-notes/92-sign-in-groups.md).
 	LoginGroups []string
+	// RunAsNonRoot says the image runs as a non-root user with a numeric
+	// UID, which the CLI knows only for a Dockerfile it generated from the
+	// Next.js or Vite React template (templates.Framework.RunsAsNonRoot).
+	// Written into every Environment as runAsNonRoot: true
+	// (docs/implementation-notes/90-guardrails.md).
+	RunAsNonRoot bool
 	// Repository, when set, binds the Application to its Application
 	// repository by id: written as applications/<name>/repository.yaml in
 	// the same commit. Create and Adopt set it; app create without --path
@@ -469,6 +475,7 @@ func (w *Writer) writeEnvironment(dir string, cfg Config, app Application, envir
 		ProbePath:       app.ProbePath,
 		PostgresEnabled: app.Postgres,
 		Login:           app.Login,
+		RunAsNonRoot:    app.RunAsNonRoot,
 	}
 	if app.Postgres {
 		env.BackupsBucket = cfg.BackupsBucket

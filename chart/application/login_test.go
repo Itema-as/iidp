@@ -309,8 +309,9 @@ func TestLoginGroupsFixturePassesKubeconformWithTheCRDSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kubeconform: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "Valid: 5") {
-		t.Errorf("kubeconform did not validate all five objects, the Middleware included: %s", out)
+	// Six since #90 added the iidp-domains ConfigMap.
+	if !strings.Contains(string(out), "Valid: 6") {
+		t.Errorf("kubeconform did not validate all six objects, the Middleware included: %s", out)
 	}
 	t.Logf("kubeconform: %s", strings.TrimSpace(string(out)))
 }

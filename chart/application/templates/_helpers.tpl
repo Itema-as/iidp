@@ -45,6 +45,9 @@ Helm renders first. It produces no output.
 {{- define "application.validate" -}}
 {{- $_ := include "application.kind" . -}}
 {{- $_ = include "application.domains" . -}}
+{{- if not (kindIs "bool" .Values.runAsNonRoot) -}}
+{{- fail (printf "runAsNonRoot must be true or false, got %v" .Values.runAsNonRoot) -}}
+{{- end -}}
 {{- if hasKey (.Values.env | default dict) "PORT" -}}
 {{- fail "env must not set PORT; it is injected from port" -}}
 {{- end -}}
@@ -461,15 +464,56 @@ The Platform address of this Environment: <name>.<baseDomain> for prod and
 
 {{/*
 The port the container listens on, as an integer. A Web service listens on
-port and is told so through PORT; a Static site is an nginx image, which
-listens on 80 and is not configured through the environment.
+port and is told so through PORT. A Static site is an nginx image, not
+configured through the environment: the unprivileged nginx of iidp's Vite
+React template (runAsNonRoot) listens on 8080, since a non-root process
+cannot bind a port below 1024; an nginx running as root, which every
+Static site built before #90 and any Adopted one is, listens on 80. port
+is ignored for a Static site, as it always was: the CLI wrote 3000 there
+for every Static site before #90, so honouring it would break them.
 */}}
 {{- define "application.port" -}}
 {{- if eq (include "application.kind" .) "static-site" -}}
-80
+{{- if .Values.runAsNonRoot -}}8080{{- else -}}80{{- end -}}
 {{- else -}}
 {{- .Values.port | int -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+The container securityContext of every container the chart renders: the
+Deployment's, the migration Job's, the final Backup hook's and each
+Scheduled task CronJob's (and any workload added later). From a list of
+the root context and whether the container's image runs as a non-root user with a numeric UID; the
+Application image's containers pass .Values.runAsNonRoot.
+
+Always: the RuntimeDefault seccomp profile and no privilege escalation
+(no setuid binary can gain privileges). Neither breaks an image that runs
+as root: nginx as root still starts its workers as another user, since
+that is a setuid() call, not an escalation.
+
+With a non-root image, what Pod Security's restricted level asks for
+besides: runAsNonRoot, so the kubelet refuses to start the container as
+root (it needs a numeric USER to check that), and every capability
+dropped. Without one, the container runtime's default capabilities stay:
+nginx running as root needs CHOWN, SETUID and SETGID to start and
+NET_BIND_SERVICE for port 80, and an Adopted image may need others, so
+dropping them all, or all but a guessed few, would break images the Platform
+already runs. Such a container passes baseline, which is what Application
+namespaces enforce, and is reported against restricted
+(docs/implementation-notes/90-guardrails.md).
+*/}}
+{{- define "application.securityContext" -}}
+{{- $nonRoot := index . 1 -}}
+seccompProfile:
+  type: RuntimeDefault
+allowPrivilegeEscalation: false
+{{- if $nonRoot }}
+runAsNonRoot: true
+capabilities:
+  drop:
+    - ALL
+{{- end }}
 {{- end -}}
 
 {{/*
