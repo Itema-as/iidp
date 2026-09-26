@@ -786,6 +786,43 @@ assert_contains "$out" "Entra refused iidp-argocd's tenant, client id or secret 
 assert_not_contains "$out" "Trace ID"
 assert_not_contains "$out" "secret=["
 
+# Sign-in groups (#92): oauth2-proxy's registration needs the groups claim
+# in its ID tokens, and the argocd one is left as it was.
+t_start "entra_register_app (manual) says to add the groups claim when asked"
+answers=$(scratch_dir)/answers.env
+printf '%s\n' "reg_tenant=11111111-1111-1111-1111-111111111111
+reg_client_id=22222222-2222-2222-2222-222222222222
+reg_client_secret=fake-secret-value" > "$answers"
+out=$(in_wizard "
+  IIDP_WIZARD_ANSWERS='$answers'
+  entra_register_app iidp-oauth2-proxy https://auth.app.itma.no/oauth2/callback '' T C S SecurityGroup
+" 2>&1)
+assert_success "$?"
+assert_contains "$out" "Token configuration: Add groups claim, Security groups, ID token as Group ID (groupMembershipClaims: SecurityGroup)"
+
+t_start "entra_register_app (manual) says nothing about a groups claim otherwise"
+run_entra_register_app "reg_tenant=11111111-1111-1111-1111-111111111111
+reg_client_id=22222222-2222-2222-2222-222222222222
+reg_client_secret=fake-secret-value"
+assert_success "$rc"
+assert_not_contains "$out" "groups claim"
+
+t_start "az_create_entra_app sets groupMembershipClaims when asked"
+out=$(in_wizard "
+  DRY_RUN=1
+  az_create_entra_app iidp-oauth2-proxy https://auth.app.itma.no/oauth2/callback T C S SecurityGroup
+" 2>&1)
+assert_success "$?"
+assert_contains "$out" "would run: az ad app update --id <appId> --set groupMembershipClaims=SecurityGroup"
+
+t_start "az_create_entra_app leaves groupMembershipClaims alone otherwise"
+out=$(in_wizard "
+  DRY_RUN=1
+  az_create_entra_app iidp-argocd https://argocd.app.itma.no/api/dex/callback T C S
+" 2>&1)
+assert_success "$?"
+assert_not_contains "$out" "groupMembershipClaims"
+
 # ── GHCR pull token (#59) ───────────────────────────────────────────────
 
 t_start "http_header reads a header in any case, and tells an empty value from a missing one"

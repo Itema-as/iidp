@@ -72,6 +72,7 @@ type createOptions struct {
 	staging          bool
 	domains          []string
 	login            bool
+	loginGroups      []string
 	// interactive forces the wizard even without a terminal on stdin: the
 	// hidden --interactive flag, so tests can drive it with an injected
 	// reader and writer (docs/implementation-notes/14-cli-wizard.md).
@@ -131,6 +132,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod: its own address, its own database, the same Capabilities")
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to serve besides the Platform address, for prod only (repeatable)")
 	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included; every --domain must then be inside platform.yaml's cloudflareZone, the sign-in cookie's domain, which the browser sends to every host in it")
+	f.StringArrayVar(&opts.loginGroups, "login-group", nil, "Entra group object id (a GUID) whose members may sign in; repeatable, a member of any one gets in. Needs --login. Without it, every Itema user gets in")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
 	f.BoolVar(&opts.interactive, "interactive", false, "Run the wizard even without a terminal on stdin")
@@ -283,6 +285,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			Staging:         plan.staging,
 			Domains:         plan.domains,
 			Login:           plan.login,
+			LoginGroups:     plan.loginGroups,
 		}
 		preview, err := platformWriter.PreviewApplication(cmd.Context(), app)
 		if err != nil {
@@ -418,6 +421,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		Staging:         plan.staging,
 		Domains:         plan.domains,
 		Login:           plan.login,
+		LoginGroups:     plan.loginGroups,
 		Repository:      binding,
 	}
 
@@ -435,6 +439,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	}
 	if app.Login {
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required on every address")
+		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(app.LoginGroups))
 	}
 	if binding != nil {
 		fmt.Fprintf(out, "  Repository: %s (repository id %d, owner id %d)\n", binding.Repository, binding.RepositoryID, binding.RepositoryOwnerID)
@@ -608,6 +613,9 @@ type createPlan struct {
 	staging             bool
 	domains             []string
 	login               bool
+	// loginGroups are --login-group, lowercased and checked
+	// (platformrepo.NormalizeLoginGroups).
+	loginGroups []string
 }
 
 // plan validates every flag before anything is cloned or written, and
@@ -724,6 +732,13 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	// cloudflareZone, which needs the Platform repository cloned.
 	// checkLoginDomains runs on the first clone, before anything is
 	// created (docs/implementation-notes/76-login-in-zone-domains.md).
+	loginGroups, err := parseLoginGroups(o.loginGroups)
+	if err != nil {
+		return createPlan{}, err
+	}
+	if cmd.Flags().Changed("login-group") && !o.login {
+		return createPlan{}, fmt.Errorf("%w: give --login with --login-group", platformrepo.ErrLoginGroupsWithoutLogin)
+	}
 
 	private := true
 	if o.path == pathCreate {
@@ -757,7 +772,34 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		staging:             o.staging,
 		domains:             o.domains,
 		login:               o.login,
+		loginGroups:         loginGroups,
 	}, nil
+}
+
+// parseLoginGroups turns the values of the repeatable --login-group flag
+// into sign-in groups: Entra group object ids, lowercased and checked by
+// platformrepo.NormalizeLoginGroups. A single empty value (an empty
+// --login-group) means no groups at all, which is how add-capability
+// removes them; an empty value next to ids is refused, since it would
+// otherwise be silently dropped.
+func parseLoginGroups(values []string) ([]string, error) {
+	if len(values) == 1 && strings.TrimSpace(values[0]) == "" {
+		return []string{}, nil
+	}
+	for _, v := range values {
+		if strings.TrimSpace(v) == "" {
+			return nil, errors.New("--login-group '' removes every sign-in group and cannot be given together with group ids")
+		}
+	}
+	return platformrepo.NormalizeLoginGroups(values)
+}
+
+// signInGroupsText describes the sign-in groups for the command's output.
+func signInGroupsText(groups []string) string {
+	if len(groups) == 0 {
+		return "none, every Itema user gets in"
+	}
+	return strings.Join(groups, ", ") + " (a member of any one gets in)"
 }
 
 // parseRepoFlag splits --repo into an owner and a repository name: either
@@ -877,6 +919,7 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 	}
 	if res.Login {
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
+		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(res.LoginGroups))
 	}
 	if res.Config.ArgoCDURL != "" {
 		fmt.Fprintf(out, "  ArgoCD:   %s\n", res.Config.ArgoCDURL)

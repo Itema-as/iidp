@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -146,6 +147,38 @@ func EnableLogin(valuesYAML []byte, cookieDomain string) ([]byte, error) {
 	setNestedValue(root, []string{"login", "enabled"}, boolNode(true))
 	setNestedValue(root, []string{"platform", "loginCookieDomain"}, scalarNode(cookieDomain))
 	return encodeDocument(root)
+}
+
+// SetLoginGroups edits an Environment's values.yaml in place to make
+// login.groups exactly groups (an empty list when there are none), and
+// reports whether it changed anything. The list is replaced, not merged:
+// iidp app add-capability --login-group gives the whole new list
+// (docs/implementation-notes/92-sign-in-groups.md). Everything else in the
+// document is preserved.
+func SetLoginGroups(valuesYAML []byte, groups []string) (out []byte, changed bool, err error) {
+	root, err := decodeDocument(valuesYAML, "values.yaml")
+	if err != nil {
+		return nil, false, err
+	}
+	if existing := mappingValue(mappingValue(root, "login"), "groups"); existing != nil && existing.Kind == yaml.SequenceNode {
+		var current []string
+		for _, item := range existing.Content {
+			current = append(current, item.Value)
+		}
+		if slices.Equal(current, groups) {
+			return valuesYAML, false, nil
+		}
+	}
+	seq := &yaml.Node{Kind: yaml.SequenceNode}
+	if len(groups) == 0 {
+		seq.Style = yaml.FlowStyle
+	}
+	for _, g := range groups {
+		seq.Content = append(seq.Content, scalarNode(g))
+	}
+	setNestedValue(root, []string{"login", "groups"}, seq)
+	out, err = encodeDocument(root)
+	return out, true, err
 }
 
 // CopyValuesForStaging turns a prod Environment's values.yaml (after any

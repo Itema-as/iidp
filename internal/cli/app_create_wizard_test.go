@@ -120,8 +120,8 @@ func TestAppCreateWizardOffersLoginForDomainsInsideTheZone(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
 
-	// postgres, staging, domain, login, size, confirm.
-	stdin := "n\nn\nbutikk.app.itma.no, x.itma.no\ny\n\ny\n"
+	// postgres, staging, domain, login, sign-in groups, size, confirm.
+	stdin := "n\nn\nbutikk.app.itma.no, x.itma.no\ny\n\n\ny\n"
 
 	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
 		"--name", "shop", "--path", "create", "--framework", "nextjs")

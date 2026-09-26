@@ -60,6 +60,7 @@ Helm renders first. It produces no output.
 {{- if .Values.login.enabled -}}
 {{- $_ = include "application.login.checkDomains" . -}}
 {{- end -}}
+{{- $_ = include "application.login.groups" . -}}
 {{- if and .Values.postgres.enabled (hasKey .Values.postgres "finalBackupTimeout") (not (regexMatch "^[1-9][0-9]*$" (.Values.postgres.finalBackupTimeout | toString))) -}}
 {{- fail (printf "postgres.finalBackupTimeout must be a positive whole number of seconds, got %v" .Values.postgres.finalBackupTimeout) -}}
 {{- end -}}
@@ -290,12 +291,64 @@ domains outside it are named. It produces no output.
 {{- end -}}
 
 {{/*
+The sign-in groups, validated, as the comma-separated list oauth2-proxy's
+allowed_groups takes: Entra ID group object ids, lowercased (the form the
+ID token's groups claim and Microsoft Graph use, compared as strings by
+oauth2-proxy), in the order given. Empty without groups. Refuses groups
+without login.enabled, anything that is not a GUID (which also keeps
+anything but a GUID out of the Middleware's query string), and a group
+listed twice.
+*/}}
+{{- define "application.login.groups" -}}
+{{- $groups := .Values.login.groups -}}
+{{- if kindIs "invalid" $groups -}}
+{{- $groups = list -}}
+{{- end -}}
+{{- if not (kindIs "slice" $groups) -}}
+{{- fail (printf "login.groups must be a list of Entra group object ids, got %v" $groups) -}}
+{{- end -}}
+{{- if and $groups (not .Values.login.enabled) -}}
+{{- fail "login.groups needs login.enabled: true; sign-in groups restrict Itema login, which is off" -}}
+{{- end -}}
+{{- $seen := dict -}}
+{{- $ids := list -}}
+{{- range $groups -}}
+{{- $id := . | toString | lower -}}
+{{- if not (regexMatch "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" $id) -}}
+{{- fail (printf "login.groups: %q is not an Entra group object id, a GUID such as 0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b" (. | toString)) -}}
+{{- end -}}
+{{- if hasKey $seen $id -}}
+{{- fail (printf "login.groups: %q is listed twice" $id) -}}
+{{- end -}}
+{{- $_ := set $seen $id true -}}
+{{- $ids = append $ids $id -}}
+{{- end -}}
+{{- join "," $ids -}}
+{{- end -}}
+
+{{/*
+The name of the Environment's own ForwardAuth Middleware, rendered only
+with sign-in groups: <fullname>-itema-login, in the Environment's
+namespace.
+*/}}
+{{- define "application.login.middleware" -}}
+{{- printf "%s-itema-login" (include "application.fullname" .) -}}
+{{- end -}}
+
+{{/*
 The Traefik middleware annotation of the Itema login Capability, for every
-Ingress of an Environment with login.enabled: the bootstrap's shared
-oauth2-proxy ForwardAuth middleware, in oauth2-proxy's own namespace. An
-unauthenticated browser gets oauth2-proxy's own redirect to Entra ID
-(bootstrap/components/oauth2-proxy-login/middleware.yaml). Empty without
-login.
+Ingress of an Environment with login.enabled. Without sign-in groups it
+names the bootstrap's shared oauth2-proxy ForwardAuth middleware, in
+oauth2-proxy's own namespace
+(bootstrap/components/oauth2-proxy-login/middleware.yaml). With groups it
+names the Environment's own Middleware (login-middleware.yaml), in the
+Environment's namespace, which asks the same oauth2-proxy to check them as
+well. Either way an unauthenticated browser gets oauth2-proxy's own
+redirect to Entra ID. Empty without login.
+
+A Traefik Middleware is named <namespace>-<name>@kubernetescrd in the
+annotation, and the Environment's namespace is the one ArgoCD renders the
+chart for (.Release.Namespace, the Application's destination).
 
 cert-manager's HTTP-01 challenge for a host on the ingress-http01.yaml
 Ingress does not pass through it: the solver serves the challenge path from
@@ -305,7 +358,11 @@ router for the path because a longer rule wins
 */}}
 {{- define "application.login.annotation" -}}
 {{- if .Values.login.enabled -}}
+{{- if include "application.login.groups" . -}}
+traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s@kubernetescrd" .Release.Namespace (include "application.login.middleware" .) }}
+{{- else -}}
 traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-itema-login-auth@kubernetescrd
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

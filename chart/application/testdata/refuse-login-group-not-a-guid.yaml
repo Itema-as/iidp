@@ -1,0 +1,14 @@
+application:
+  name: shop
+environment: prod
+platform:
+  baseDomain: app.itma.no
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 1.4.2
+login:
+  enabled: true
+  groups:
+    # Would add a second query parameter to the Middleware's address.
+    - 0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b&allowed_emails=x

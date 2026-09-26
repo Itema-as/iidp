@@ -26,6 +26,7 @@ type addCapabilityOptions struct {
 	domains          []string
 	size             string
 	login            bool
+	loginGroups      []string
 	platformRepo     string
 }
 
@@ -47,7 +48,11 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 			"values (its secrets are not copied). --domain (repeatable) adds a custom\n" +
 			"domain to prod. --size changes the size of every Environment. --login\n" +
 			"requires Itema (Entra ID) sign-in on every address of every Environment,\n" +
-			"custom domains included.\n\n" +
+			"custom domains included. --login-group (repeatable) restricts it to the\n" +
+			"members of Entra groups, replacing the Application's sign-in groups in\n" +
+			"every Environment; --login-group '' removes them all, letting every\n" +
+			"Itema user in again. It needs Itema login, already on or given with\n" +
+			"--login in the same run.\n\n" +
 			"Itema login and custom domains go together only inside platform.yaml's\n" +
 			"cloudflareZone, the domain the sign-in cookie is set for: --login is\n" +
 			"refused while prod has, or is given, a custom domain outside it, and so\n" +
@@ -68,6 +73,7 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to add to prod (repeatable)")
 	f.StringVar(&opts.size, "size", "", "New size for every Environment: small, medium or large")
 	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included; refused while a custom domain is outside platform.yaml's cloudflareZone, the sign-in cookie's domain")
+	f.StringArrayVar(&opts.loginGroups, "login-group", nil, "Entra group object id (a GUID) whose members may sign in; repeatable, a member of any one gets in. Replaces the sign-in groups of every Environment; --login-group '' removes them all. Needs Itema login, already on or given with --login")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
 	return cmd
@@ -81,8 +87,15 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 	// or --staging=false is "changed" but asks for nothing, and would
 	// otherwise reach AddCapabilities with an all-zero Capabilities and no
 	// file to commit.
-	if !opts.postgres && !opts.staging && len(opts.domains) == 0 && opts.size == "" && !opts.login {
-		return fmt.Errorf("at least one Capability flag is required: --postgres, --staging, --domain, --size or --login")
+	// --login-group is checked with Changed: --login-group '' (no groups at
+	// all) is a request too.
+	setLoginGroups := cmd.Flags().Changed("login-group")
+	if !opts.postgres && !opts.staging && len(opts.domains) == 0 && opts.size == "" && !opts.login && !setLoginGroups {
+		return fmt.Errorf("at least one Capability flag is required: --postgres, --staging, --domain, --size, --login or --login-group")
+	}
+	loginGroups, err := parseLoginGroups(opts.loginGroups)
+	if err != nil {
+		return err
 	}
 	if opts.migrationCommand != "" && !opts.postgres {
 		return fmt.Errorf("--migration-command requires --postgres: there is no database to migrate")
@@ -108,15 +121,17 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 		return fmt.Errorf("not logged in to GitHub, so %s cannot be written: %w", platform.Repository, err)
 	}
 
-	fmt.Fprintf(out, "Adding Capabilities to %s: %s\n", name, strings.Join(capabilitySummary(opts), ", "))
+	fmt.Fprintf(out, "Adding Capabilities to %s: %s\n", name, strings.Join(capabilitySummary(opts, setLoginGroups, loginGroups), ", "))
 
 	writer := &platformrepo.Writer{URL: opts.platformRepo, Auth: git.Auth{Token: token}, BeforePush: deps.BeforePush}
 	res, err := writer.AddCapabilities(cmd.Context(), name, platformrepo.Capabilities{
-		Postgres: opts.postgres,
-		Staging:  opts.staging,
-		Domains:  opts.domains,
-		Size:     opts.size,
-		Login:    opts.login,
+		Postgres:       opts.postgres,
+		Staging:        opts.staging,
+		Domains:        opts.domains,
+		Size:           opts.size,
+		Login:          opts.login,
+		SetLoginGroups: setLoginGroups,
+		LoginGroups:    loginGroups,
 	}, out)
 	if err != nil {
 		return err
@@ -134,7 +149,7 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 
 // capabilitySummary describes, for the progress line, which Capabilities
 // were asked for.
-func capabilitySummary(opts addCapabilityOptions) []string {
+func capabilitySummary(opts addCapabilityOptions, setLoginGroups bool, loginGroups []string) []string {
 	var s []string
 	if opts.postgres {
 		s = append(s, "Postgres")
@@ -150,6 +165,13 @@ func capabilitySummary(opts addCapabilityOptions) []string {
 	}
 	if opts.login {
 		s = append(s, "login")
+	}
+	if setLoginGroups {
+		if len(loginGroups) == 0 {
+			s = append(s, "no sign-in groups")
+		} else {
+			s = append(s, "sign-in groups "+strings.Join(loginGroups, ", "))
+		}
 	}
 	return s
 }
@@ -209,6 +231,7 @@ func printAddCapabilityResult(out io.Writer, name string, res platformrepo.Resul
 	}
 	if res.Login {
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
+		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(res.LoginGroups))
 	}
 	printDomains(out, res)
 }

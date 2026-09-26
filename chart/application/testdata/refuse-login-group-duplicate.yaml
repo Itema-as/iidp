@@ -1,0 +1,15 @@
+application:
+  name: shop
+environment: prod
+platform:
+  baseDomain: app.itma.no
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 1.4.2
+login:
+  enabled: true
+  groups:
+    # The same group twice, once in upper case.
+    - 0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b
+    - 0F3B6A4E-8C1D-4E2F-9A7B-5C6D7E8F9A0B

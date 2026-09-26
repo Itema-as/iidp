@@ -46,7 +46,7 @@ iidp app create --name shop --kind web-service
 iidp app create --name shop --kind web-service --size medium --port 8080 --probe-path /healthz
 ```
 
-Run it on a terminal with some flags missing and it asks instead: the nine questions from [`docs/design.md`](docs/design.md#the-wizard), in order, with the defaults shown in brackets, each mapping to one of the flags above. A question whose flag was already given is skipped and never printed, so a script that already sets `--name` and `--kind` only gets asked about Postgres, staging, a custom domain, Itema login and size. Itema login is only asked when every custom domain given is inside `platform.yaml`'s `cloudflareZone`; otherwise the wizard says which domain is outside it and skips the question. The Postgres question shows what migration tooling was detected (Prisma, Drizzle, an npm `migrate` script) before asking for the command. Once every question is answered, a summary lists every choice made and asks for confirmation; declining exits with no side effects — nothing cloned, nothing created:
+Run it on a terminal with some flags missing and it asks instead: the nine questions from [`docs/design.md`](docs/design.md#the-wizard), in order, with the defaults shown in brackets, each mapping to one of the flags above. A question whose flag was already given is skipped and never printed, so a script that already sets `--name` and `--kind` only gets asked about Postgres, staging, a custom domain, Itema login and size. Itema login is only asked when every custom domain given is inside `platform.yaml`'s `cloudflareZone`; otherwise the wizard says which domain is outside it and skips the question. With Itema login on, it then asks which Entra groups may sign in (empty for every Itema user), and says where to find a group's object id. The Postgres question shows what migration tooling was detected (Prisma, Drizzle, an npm `migrate` script) before asking for the command. Once every question is answered, a summary lists every choice made and asks for confirmation; declining exits with no side effects — nothing cloned, nothing created:
 
 ```sh
 iidp app create
@@ -63,7 +63,7 @@ iidp app create --name storefront --path create --framework vite-react --public
 iidp app create --name legacy-api --path create --framework other --kind web-service
 ```
 
-Add Capabilities with more flags. `--postgres` gives every Environment its own Postgres database and, without `--migration-command`, looks for a Prisma schema, a Drizzle config or an npm `migrate` script and proposes the matching command; `--staging` adds a second Environment next to prod with the same Capabilities; `--domain` (repeatable) serves a custom domain beside the Platform address; `--login` requires an Entra ID sign-in on every address, custom domains included as long as they are inside `platform.yaml`'s `cloudflareZone` (see "Itema login and custom domains" below):
+Add Capabilities with more flags. `--postgres` gives every Environment its own Postgres database and, without `--migration-command`, looks for a Prisma schema, a Drizzle config or an npm `migrate` script and proposes the matching command; `--staging` adds a second Environment next to prod with the same Capabilities; `--domain` (repeatable) serves a custom domain beside the Platform address; `--login` requires an Entra ID sign-in on every address, custom domains included as long as they are inside `platform.yaml`'s `cloudflareZone` (see "Itema login and custom domains" below), and `--login-group` (repeatable, with `--login`) lets in only the members of the Entra groups given (see "Sign-in groups" below):
 
 ```sh
 iidp app create --name shop --path create --framework nextjs --postgres --staging
@@ -71,9 +71,12 @@ iidp app create --name shop --kind web-service --postgres --migration-command "n
 iidp app create --name shop --kind web-service --domain shop.example.com --domain butikk.app.itma.no
 iidp app create --name internal-tool --kind web-service --login
 iidp app create --name intranet --kind web-service --login --domain intranet.itma.no
+iidp app create --name payroll --kind web-service --login --login-group 0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b
 ```
 
 **Itema login and custom domains.** The sign-in cookie is set for `platform.yaml`'s `cloudflareZone` (`itma.no`; `baseDomain` on a Platform without one), so `--login` works with any custom domain inside it: `x.itma.no`, `butikk.app.itma.no`. A domain outside it, such as `shop.example.com`, never receives the cookie, so `--login` together with one is refused, naming it; so is adding one with `add-capability --domain` to an Application that has Itema login. The trade-off: the browser sends the cookie to every host under `itma.no`, including ones the Platform does not run, such as the website or a SaaS CNAME. Whoever controls such a host can capture a signed-in user's session and replay it against every login-protected Application until it expires (up to 7 days). See [`bootstrap/README.md`](bootstrap/README.md#itema-login).
+
+**Sign-in groups.** Without `--login-group`, every Itema user gets past Itema login. With it, only members of the groups given do (a member of any one of them), in every Environment; a signed-in user in none of them gets a 403 page. Each `--login-group` is an Entra group's object id, a GUID: it is on the group's Overview page in the Entra admin center, or `az ad group show --group <name> --query id -o tsv` prints it. The CLI has no Entra access and checks only that each id is a GUID, so a mistyped id lets nobody in. Membership is read from Entra when the user signs in: someone added to a group gets in at their next sign-in, and someone removed keeps access until their session ends, up to 7 days. Signing out at `https://auth.<baseDomain>/oauth2/sign_out` starts a new session straight away. Nested groups count. See [`docs/implementation-notes/92-sign-in-groups.md`](docs/implementation-notes/92-sign-in-groups.md).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -92,6 +95,7 @@ iidp app create --name intranet --kind web-service --login --domain intranet.itm
 | `--staging` | off | Add a `staging` Environment next to `prod`: its own address, its own database, the same Capabilities |
 | `--domain` | none | Custom domain to serve besides the Platform address, for `prod` only (repeatable). Automatic inside `platform.yaml`'s `cloudflareZone`; otherwise the closing summary prints a CNAME to create |
 | `--login` | off | Require an Itema (Entra ID) sign-in on every address of every Environment, custom domains included. Refused together with a `--domain` outside `platform.yaml`'s `cloudflareZone`, the sign-in cookie's domain, naming it |
+| `--login-group` | none | Entra group object id (a GUID) whose members may sign in (repeatable; a member of any one gets in). Needs `--login`. Without it every Itema user gets in |
 | `--yes` | | Skip the wizard's summary confirmation (only asked on a terminal in the first place) |
 
 Adopt an existing repository instead of generating one: `iidp` validates it and reads it through the GitHub API (you need write access), clones its default branch, and opens a pull request adding only what is missing. Only repositories in `Itema-as` can be Applications: one elsewhere is refused before anything is read or written, with a message saying to transfer it to `Itema-as` first (the repository's Settings, Danger Zone, Transfer ownership):
@@ -141,16 +145,18 @@ At least one `KEY` is required, from any mix of a `KEY=value` argument, `--from-
 
 The Postgres Capability's own credentials (the Platform's Object Storage keys CloudNativePG backs databases up with) are not set with `iidp secret set`: the bootstrap wizard writes them once, encrypted, to `bootstrap/templates/backups-credentials.enc.yaml` in the Platform repository, and `--postgres` (on `app create` or `app add-capability`) copies that file byte for byte into every Environment that needs it — the CLI never decrypts it and needs no private key. A Platform repository without that file refuses `--postgres` before writing anything, naming the file and the wizard.
 
-Add a Capability to an Application that already exists, reusing the same writers as `iidp app create`. At least one flag is required; a Capability already present (Postgres already enabled, a `staging` Environment that already exists, a domain already listed, the same size, Itema login already enabled) is refused, naming it, and nothing is written:
+Add a Capability to an Application that already exists, reusing the same writers as `iidp app create`. At least one flag is required; a Capability already present (Postgres already enabled, a `staging` Environment that already exists, a domain already listed, the same size, Itema login already enabled, the same sign-in groups) is refused, naming it, and nothing is written:
 
 ```sh
 iidp app add-capability shop --postgres
 iidp app add-capability shop --staging
 iidp app add-capability shop --domain shop.example.com --size medium
 iidp app add-capability internal-tool --login
+iidp app add-capability internal-tool --login-group 0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b --login-group 6e1d2c3b-4a5f-4b6c-8d7e-9f0a1b2c3d4e
+iidp app add-capability internal-tool --login-group ''
 ```
 
-`--postgres` enables Postgres in every Environment the Application already has (needs `platform.yaml`'s `backupsBucket` and `objectStorageEndpoint`, the same as `app create`). It cannot write your repository, so it prints the `migrationCommand:` line to add to `iidp.yaml`: `--migration-command`, or, without it, the command for a Prisma schema, a Drizzle config or an npm `migrate` script found in the current directory (or `--app-dir`). Push that line and the next deploy brings the command with it. `--staging` adds a second Environment next to `prod`, copying `prod`'s values (`environment: staging`, no image tag yet); `prod`'s secrets are not copied, and the command says so. `--domain` (repeatable) adds a custom domain to `prod`, classified the same way `app create` does. `--size` changes every Environment's size. `--login` requires an Entra ID sign-in on every address of every Environment the Application already has; refused while `prod` lists, or is given, a custom domain outside `cloudflareZone`. For an Application with Itema login, `--domain` outside `cloudflareZone` is refused too.
+`--postgres` enables Postgres in every Environment the Application already has (needs `platform.yaml`'s `backupsBucket` and `objectStorageEndpoint`, the same as `app create`). It cannot write your repository, so it prints the `migrationCommand:` line to add to `iidp.yaml`: `--migration-command`, or, without it, the command for a Prisma schema, a Drizzle config or an npm `migrate` script found in the current directory (or `--app-dir`). Push that line and the next deploy brings the command with it. `--staging` adds a second Environment next to `prod`, copying `prod`'s values (`environment: staging`, no image tag yet); `prod`'s secrets are not copied, and the command says so. `--domain` (repeatable) adds a custom domain to `prod`, classified the same way `app create` does. `--size` changes every Environment's size. `--login` requires an Entra ID sign-in on every address of every Environment the Application already has; refused while `prod` lists, or is given, a custom domain outside `cloudflareZone`. For an Application with Itema login, `--domain` outside `cloudflareZone` is refused too. `--login-group` (repeatable) replaces the sign-in groups of every Environment with the ones given; `--login-group ''` removes them all, so every Itema user gets in again. It needs Itema login, already on or given with `--login` in the same run.
 
 Delete an Application. On a terminal it asks for the Application name typed back and refuses on a mismatch; `--force` skips the confirmation for scripts; without a terminal and without `--force`, it refuses outright:
 

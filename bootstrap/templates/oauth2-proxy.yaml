@@ -75,6 +75,15 @@
 # once more. The __Secure- prefix is what oauth2-proxy's docs recommend
 # with cookie-secure. docs/implementation-notes/76-login-in-zone-domains.md
 # has the source this was checked against.
+#
+# Sign-in groups: groupsClaim fills the session's groups from the ID
+# token's groups claim at sign-in, which the Entra app registration only
+# issues with groupMembershipClaims set (the bootstrap wizard sets
+# SecurityGroup). For a user in more than 200 groups the entra-id provider
+# reads them from Microsoft Graph instead, with the delegated User.Read the
+# registration already has. An Environment's own ForwardAuth Middleware
+# then passes allowed_groups to the root address. See
+# docs/implementation-notes/92-sign-in-groups.md.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
