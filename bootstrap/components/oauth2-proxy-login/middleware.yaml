@@ -24,6 +24,14 @@
 # docs/implementation-notes/77-login-redirect.md has why this replaced the
 # /oauth2/auth plus errors-middleware shape, and when the errors
 # middleware was removed.
+#
+# An Environment with sign-in groups (login.groups) gets its own copy of
+# this Middleware from the application chart (templates/login-middleware.
+# yaml), with ?allowed_groups=<ids> on the address; oauth2-proxy's root
+# address checks it once the session is valid and answers a 403 outside
+# the groups. chart/application/login_test.go requires that copy to match
+# this spec apart from the query, so change both together
+# (docs/implementation-notes/92-sign-in-groups.md).
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:

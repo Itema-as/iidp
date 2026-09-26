@@ -125,3 +125,10 @@ login:
   # is outside platform.loginCookieDomain, because the oauth2-proxy cookie
   # would never reach it.
   enabled: false
+  # Sign-in groups: Entra ID group object ids (GUIDs). Empty lets every
+  # Itema user in. With groups, the Environment gets a ForwardAuth
+  # Middleware of its own that asks the same oauth2-proxy to check them
+  # (allowed_groups), and every Ingress names it instead of the shared
+  # one: a signed-in user outside every group gets a 403. Needs
+  # enabled: true.
+  groups: []

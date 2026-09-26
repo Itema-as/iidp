@@ -1,0 +1,23 @@
+application:
+  name: shop
+environment: staging
+platform:
+  baseDomain: app.itma.no
+  loginCookieDomain: itma.no
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 1.4.2
+size: small
+login:
+  enabled: true
+  # Sign-in groups: Entra group object ids. The second is upper case, as
+  # someone might paste it; the chart lowercases it.
+  groups:
+    - 0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b
+    - 6E1D2C3B-4A5F-4B6C-8D7E-9F0A1B2C3D4E
+domains:
+  # One on the Platform Ingress (under the wildcard) and one on the
+  # HTTP-01 Ingress: both must name the Environment's own Middleware.
+  - butikk.app.itma.no
+  - x.itma.no

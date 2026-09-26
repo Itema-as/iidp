@@ -715,10 +715,14 @@ az_available() {
   az account show >/dev/null 2>&1
 }
 
-# az_create_entra_app NAME REDIRECT_URI OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET
+# az_create_entra_app NAME REDIRECT_URI OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET [GROUP_CLAIMS]
 # Uses namerefs (bash >= 4.3) to hand three values back to the caller.
+# GROUP_CLAIMS, when given, is the registration's groupMembershipClaims
+# (SecurityGroup for oauth2-proxy: its ID tokens then carry the groups
+# claim that sign-in groups are checked against,
+# docs/implementation-notes/92-sign-in-groups.md).
 az_create_entra_app() {
-  local name="$1" redirect_uri="$2"
+  local name="$1" redirect_uri="$2" group_claims="${6:-}"
   # shellcheck disable=SC2034  # namerefs: written here, read through the caller's own variable names
   local -n out_tenant="$3" out_client_id="$4" out_client_secret="$5"
 
@@ -730,6 +734,9 @@ az_create_entra_app() {
 
   if [[ "$DRY_RUN" == "1" ]]; then
     dry "would run: az ad app create --display-name $name --sign-in-audience AzureADMyOrg --web-redirect-uris $redirect_uri"
+    if [[ -n "$group_claims" ]]; then
+      dry "would run: az ad app update --id <appId> --set groupMembershipClaims=$group_claims"
+    fi
     dry "would run: az ad app permission add --id <appId> --api $graph_api --api-permissions $perm_user_read $perm_group_member_read_all"
     dry "would run: az ad app permission admin-consent --id <appId>"
     dry "would run: az ad app credential reset --id <appId> --append"
@@ -747,6 +754,11 @@ az_create_entra_app() {
   app_id=$(az ad app create --display-name "$name" --sign-in-audience AzureADMyOrg \
              --web-redirect-uris "$redirect_uri" --query appId -o tsv) \
     || die "az ad app create failed for $name"
+
+  if [[ -n "$group_claims" ]] && ! az ad app update --id "$app_id" --set "groupMembershipClaims=$group_claims" >/dev/null 2>&1; then
+    warn "az ad app update failed for $name; set its groups claim by hand"
+    MANUAL_STEPS+=("In Entra > App registrations > $name (app id $app_id) > Token configuration, add a groups claim: $group_claims (Security groups), Group ID")
+  fi
 
   if ! az ad app permission add --id "$app_id" --api "$graph_api" \
          --api-permissions "$perm_user_read" "$perm_group_member_read_all" >/dev/null 2>&1; then
@@ -1289,20 +1301,21 @@ ENTRA_OAUTH2_PROXY_COOKIE_SECRET=""
 ARGOCD_URL="" ARGOCD_ADMIN_GROUP=""
 OAUTH2_PROXY_HOST=""
 
-# entra_register_app NAME REDIRECT_URI DEFAULT_TENANT OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET
+# entra_register_app NAME REDIRECT_URI DEFAULT_TENANT OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET [GROUP_CLAIMS]
 # Creates the app registration via az_create_entra_app when az is available
 # and logged in, otherwise prints what to create by hand and asks for the
 # three resulting values, refusing them unless Entra issues a token for
 # them (an encrypted secret can't be fixed later). OUT_* are namerefs (bash >= 4.3), same convention
-# as az_create_entra_app itself, which this wraps.
+# as az_create_entra_app itself, which this wraps. GROUP_CLAIMS is passed on
+# to it: the registration's groupMembershipClaims, when it needs one.
 entra_register_app() {
-  local name="$1" redirect_uri="$2" default_tenant="$3"
+  local name="$1" redirect_uri="$2" default_tenant="$3" group_claims="${7:-}"
   # shellcheck disable=SC2034  # namerefs: written here, read through the caller's own variable names
   local -n reg_tenant="$4" reg_client_id="$5" reg_client_secret="$6"
 
   if az_available; then
     say "az is logged in: creating the $name app registration automatically."
-    az_create_entra_app "$name" "$redirect_uri" reg_tenant reg_client_id reg_client_secret
+    az_create_entra_app "$name" "$redirect_uri" reg_tenant reg_client_id reg_client_secret "$group_claims"
     ok "created Entra app '$name' (client id $reg_client_id)"
   else
     say "az is not available or not logged in with rights to register apps."
@@ -1311,6 +1324,9 @@ entra_register_app() {
     note "  name: $name"
     note "  redirect URI (Web): ${redirect_uri}"
     note "  API permissions (delegated, admin consent): User.Read, GroupMember.Read.All"
+    if [[ -n "$group_claims" ]]; then
+      note "  Token configuration: Add groups claim, Security groups, ID token as Group ID (groupMembershipClaims: $group_claims)"
+    fi
     note "  Certificates & secrets: new client secret"
     ask reg_tenant "Tenant id:" "$default_tenant"
     ask reg_client_id "Client id:"
@@ -1360,9 +1376,13 @@ stage_entra() {
     return 0
   fi
 
+  # SecurityGroup: the groups claim in its ID tokens is what sign-in
+  # groups (login.groups, allowed_groups) are checked against; without it
+  # a group-restricted Application refuses everyone
+  # (docs/implementation-notes/92-sign-in-groups.md).
   say "oauth2-proxy (Itema login) needs its own registration."
   entra_register_app "iidp-oauth2-proxy" "$oauth2_proxy_redirect" "$ENTRA_ARGOCD_TENANT" \
-    ENTRA_OAUTH2_PROXY_TENANT ENTRA_OAUTH2_PROXY_CLIENT_ID ENTRA_OAUTH2_PROXY_CLIENT_SECRET
+    ENTRA_OAUTH2_PROXY_TENANT ENTRA_OAUTH2_PROXY_CLIENT_ID ENTRA_OAUTH2_PROXY_CLIENT_SECRET SecurityGroup
 
   # The cookie-signing secret oauth2-proxy needs: exactly 32 bytes, as a
   # plain string, not base64-encoded. Confirmed against the running proxy

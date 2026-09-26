@@ -97,4 +97,5 @@ func ExampleValues() {
 	//     backupRetention: 30d
 	// login:
 	//     enabled: false
+	//     groups: []
 }

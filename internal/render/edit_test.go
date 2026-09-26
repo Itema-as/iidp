@@ -252,6 +252,88 @@ func TestEnableLoginPreservesExistingContent(t *testing.T) {
 	}
 }
 
+const (
+	groupA = "0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b"
+	groupB = "6e1d2c3b-4a5f-4b6c-8d7e-9f0a1b2c3d4e"
+)
+
+// Setting groups writes the whole list, and setting another list replaces
+// it rather than adding to it: add-capability --login-group gives the new
+// list in full.
+func TestSetLoginGroupsWritesAndReplacesTheList(t *testing.T) {
+	enabled, err := render.EnableLogin([]byte(testValuesYAML), "itma.no")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withSecret, _, err := render.AddSecretName(enabled, "shop-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, changed, err := render.SetLoginGroups(withSecret, []string{groupA, groupB})
+	if err != nil {
+		t.Fatalf("SetLoginGroups: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if want := "login:\n    enabled: true\n    groups:\n        - " + groupA + "\n        - " + groupB + "\n"; !strings.Contains(string(first), want) {
+		t.Errorf("login.groups not written as %q:\n%s", want, first)
+	}
+	second, changed, err := render.SetLoginGroups(first, []string{groupB})
+	if err != nil {
+		t.Fatalf("SetLoginGroups: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if strings.Contains(string(second), groupA) || !strings.Contains(string(second), "    groups:\n        - "+groupB+"\n") {
+		t.Errorf("login.groups was not replaced by [%s]:\n%s", groupB, second)
+	}
+	for _, want := range []string{"# Values for the prod Environment of shop", "secrets:\n    - shop-api-key\n", "loginCookieDomain: itma.no\n"} {
+		if !strings.Contains(string(second), want) {
+			t.Errorf("lost %q:\n%s", want, second)
+		}
+	}
+}
+
+// An empty list clears the groups, written as groups: [] the way app
+// create writes it; the same list again changes nothing.
+func TestSetLoginGroupsClearsAndReportsNoChange(t *testing.T) {
+	with, _, err := render.SetLoginGroups([]byte(testValuesYAML), []string{groupA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := render.SetLoginGroups(with, []string{groupA}); err != nil || changed {
+		t.Errorf("the same list again: changed = %v, err = %v, want no change", changed, err)
+	}
+	cleared, changed, err := render.SetLoginGroups(with, nil)
+	if err != nil {
+		t.Fatalf("SetLoginGroups: %v", err)
+	}
+	if !changed || !strings.Contains(string(cleared), "login:\n    groups: []\n") || strings.Contains(string(cleared), groupA) {
+		t.Errorf("changed = %v, want the groups cleared to []:\n%s", changed, cleared)
+	}
+	if _, changed, err := render.SetLoginGroups(cleared, []string{}); err != nil || changed {
+		t.Errorf("clearing again: changed = %v, err = %v, want no change", changed, err)
+	}
+}
+
+// A new staging Environment takes prod's groups with the rest of prod's
+// values.
+func TestCopyValuesForStagingKeepsTheLoginGroups(t *testing.T) {
+	with, _, err := render.SetLoginGroups([]byte(testValuesYAML), []string{groupA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := render.CopyValuesForStaging(with)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "    groups:\n        - "+groupA+"\n") {
+		t.Errorf("staging lost the login groups:\n%s", out)
+	}
+}
+
 func TestSetSizeChangesTheSizeKey(t *testing.T) {
 	out, changed, err := render.SetSize([]byte(testValuesYAML), "medium")
 	if err != nil {

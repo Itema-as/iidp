@@ -46,6 +46,11 @@ type Environment struct {
 	// without one. Set only with Login, the one Capability the chart needs
 	// it for (docs/implementation-notes/76-login-in-zone-domains.md).
 	LoginCookieDomain string
+	// LoginGroups are the sign-in groups, Entra ID group object ids: with
+	// any, only their members get past Itema login. Written the same in
+	// every Environment, and always, empty included, like domains
+	// (docs/implementation-notes/92-sign-in-groups.md).
+	LoginGroups []string
 }
 
 // Name is the Environment's object name, <application>-<environment>: the
@@ -131,6 +136,10 @@ func Values(env Environment) ([]byte, error) {
 	if domains == nil {
 		domains = []string{}
 	}
+	loginGroups := env.LoginGroups
+	if loginGroups == nil {
+		loginGroups = []string{}
+	}
 	v := values{
 		Application: applicationValues{Name: env.Application},
 		Environment: env.Environment,
@@ -152,7 +161,7 @@ func Values(env Environment) ([]byte, error) {
 			MigrationCommand: env.MigrationCommand,
 			BackupRetention:  defaultBackupRetention,
 		},
-		Login: loginValues{Enabled: env.Login},
+		Login: loginValues{Enabled: env.Login, Groups: loginGroups},
 	}
 	return marshal("Values for the "+env.Environment+" Environment of "+env.Application+". image.tag is written by the deploy workflow; until then it is empty and the Environment renders nothing.", v)
 }
@@ -277,5 +286,6 @@ type probeValues struct {
 // disabled, the same convention postgres and domains already follow
 // (docs/implementation-notes/13-cli-capabilities.md).
 type loginValues struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool     `yaml:"enabled"`
+	Groups  []string `yaml:"groups"`
 }

@@ -123,6 +123,11 @@ type Application struct {
 	// a domain outside the login cookie domain (Config.LoginCookieDomain,
 	// docs/implementation-notes/76-login-in-zone-domains.md).
 	Login bool
+	// LoginGroups are the sign-in groups, Entra ID group object ids,
+	// lowercased (NormalizeLoginGroups), written into every Environment:
+	// with any, only their members get past Itema login. Needs Login
+	// (docs/implementation-notes/92-sign-in-groups.md).
+	LoginGroups []string
 	// Repository, when set, binds the Application to its Application
 	// repository by id: written as applications/<name>/repository.yaml in
 	// the same commit. Create and Adopt set it; app create without --path
@@ -145,6 +150,9 @@ type Result struct {
 	Domains []DomainPlan
 	// Login is whether the Itema login Capability is enabled.
 	Login bool
+	// LoginGroups are the Application's sign-in groups once the run is
+	// done; none means any Itema user gets in.
+	LoginGroups []string
 }
 
 // Writer commits Applications to the Platform repository.
@@ -347,6 +355,9 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 			return Result{}, err
 		}
 	}
+	if len(app.LoginGroups) > 0 && !app.Login {
+		return Result{}, fmt.Errorf("%w: give --login with --login-group", ErrLoginGroupsWithoutLogin)
+	}
 
 	environments := []string{"prod"}
 	if app.Staging {
@@ -431,6 +442,9 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 		Domains: domainPlans,
 		Login:   app.Login,
 	}
+	if app.Login {
+		res.LoginGroups = app.LoginGroups
+	}
 	if app.Staging {
 		res.StagingAddress = "https://" + stagingAddress
 	}
@@ -462,6 +476,7 @@ func (w *Writer) writeEnvironment(dir string, cfg Config, app Application, envir
 	}
 	if app.Login {
 		env.LoginCookieDomain = cfg.LoginCookieDomain()
+		env.LoginGroups = app.LoginGroups
 	}
 	// Custom domains apply to prod only; staging keeps its Platform address
 	// (docs/implementation-notes/13-cli-capabilities.md).

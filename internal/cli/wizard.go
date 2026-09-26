@@ -145,7 +145,7 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		if err != nil {
 			return err
 		}
-		for _, host := range splitDomains(answer) {
+		for _, host := range splitList(answer) {
 			if err := f.Set("domain", host); err != nil {
 				return err
 			}
@@ -171,6 +171,12 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 			if err := askItemaLogin(f, p); err != nil {
 				return err
 			}
+		}
+	}
+	// 7b. Sign-in groups, right after login, when login is on.
+	if opts.login && !f.Changed("login-group") {
+		if err := askSignInGroups(f, p, out); err != nil {
+			return err
 		}
 	}
 
@@ -240,10 +246,11 @@ func migrationHelpText(det migrate.Detection, ok bool) string {
 	return b.String()
 }
 
-// splitDomains turns a wizard answer into the hosts --domain would have
-// received, one per repeated flag: comma-separated, trimmed, with blanks
-// and a literal "none" (the question's bracketed default) dropped.
-func splitDomains(answer string) []string {
+// splitList turns a wizard answer into the values a repeatable flag
+// (--domain, --login-group) would have received, one per repeated flag:
+// comma-separated, trimmed, with blanks and a literal "none" (the
+// question's bracketed default) dropped.
+func splitList(answer string) []string {
 	var hosts []string
 	for _, part := range strings.Split(answer, ",") {
 		host := strings.TrimSpace(part)
@@ -267,6 +274,30 @@ func askItemaLogin(f *pflag.FlagSet, p *prompt.Prompter) error {
 		return err
 	}
 	return f.Set("login", strconv.FormatBool(yes))
+}
+
+// askSignInGroups asks which Entra groups may sign in, saying how to find a
+// group's object id, and sets --login-group once per id. The default,
+// none, sets nothing: every Itema user gets in. An answer that is not a
+// comma-separated list of GUIDs is asked again, with the reason
+// (docs/implementation-notes/92-sign-in-groups.md).
+func askSignInGroups(f *pflag.FlagSet, p *prompt.Prompter, out io.Writer) error {
+	fmt.Fprintln(out, "Sign-in groups (optional)")
+	fmt.Fprintln(out, "Only members of these Entra groups get past Itema login; leave empty to let")
+	fmt.Fprintln(out, "every Itema user in. Give each group's object id, comma-separated: "+platformrepo.FindGroupIDHelp+".")
+	answer, err := p.Text("Sign-in groups", "none", func(s string) error {
+		_, err := platformrepo.NormalizeLoginGroups(splitList(s))
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	for _, id := range splitList(answer) {
+		if err := f.Set("login-group", id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // printSummary lists every choice the developer made — the wizard's
@@ -317,6 +348,7 @@ func printSummary(out io.Writer, plan createPlan, app platformrepo.Application, 
 	}
 	if app.Login {
 		fmt.Fprintln(out, "  Login:      Itema (Entra ID) sign-in required")
+		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(app.LoginGroups))
 	} else {
 		fmt.Fprintln(out, "  Login:      disabled")
 	}

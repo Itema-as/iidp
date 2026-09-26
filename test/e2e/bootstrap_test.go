@@ -502,6 +502,14 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 			t.Fatal(err)
 		}
 	}
+	// shop-staging has a sign-in group, so the redirect above came through
+	// its own Middleware, which asks oauth2-proxy for allowed_groups, named
+	// on both its Ingresses (#92). A signed-in user outside the group
+	// would get a 403 from it; kind cannot sign anyone in to show that
+	// (docs/implementation-notes/92-sign-in-groups.md).
+	if err := checkSignInGroupMiddleware(ctx, cluster); err != nil {
+		t.Fatal(err)
+	}
 	// shop-staging's custom domain inside the fixture zone, on the chart's
 	// HTTP-01 Ingress, is protected the same way: the login cookie and the
 	// redirect allowlist cover the whole zone, so the state carries its own
@@ -517,6 +525,33 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 	if err := cluster.CheckRolloutServes(ctx, "shop-prod", "shop", "shop.app.example.test"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// checkSignInGroupMiddleware checks that shop-staging's sign-in group
+// reached the cluster: its Middleware asks oauth2-proxy's root address
+// with the group as allowed_groups, and both its Ingresses name it.
+func checkSignInGroupMiddleware(ctx context.Context, cluster *Cluster) error {
+	const (
+		address    = "http://oauth2-proxy.oauth2-proxy.svc.cluster.local/?allowed_groups=0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b"
+		annotation = "shop-staging-shop-staging-itema-login@kubernetescrd"
+	)
+	got, err := cluster.Kubectl(ctx, "-n", "shop-staging", "get", "middlewares.traefik.io", "shop-staging-itema-login", "-o", "jsonpath={.spec.forwardAuth.address}")
+	if err != nil {
+		return fmt.Errorf("shop-staging's sign-in group Middleware: %w", err)
+	}
+	if strings.TrimSpace(got) != address {
+		return fmt.Errorf("shop-staging-itema-login forwardAuth.address = %q, want %q", got, address)
+	}
+	for _, ingress := range []string{"shop-staging", "shop-staging-http01"} {
+		got, err := cluster.Kubectl(ctx, "-n", "shop-staging", "get", "ingress", ingress, "-o", `jsonpath={.metadata.annotations.traefik\.ingress\.kubernetes\.io/router\.middlewares}`)
+		if err != nil {
+			return fmt.Errorf("Ingress %s: %w", ingress, err)
+		}
+		if strings.TrimSpace(got) != annotation {
+			return fmt.Errorf("Ingress %s router.middlewares = %q, want %q", ingress, got, annotation)
+		}
+	}
+	return nil
 }
 
 // shopStagingCustomDomain is the custom domain the fixture's shop-staging

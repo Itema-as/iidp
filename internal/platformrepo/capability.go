@@ -49,6 +49,13 @@ type Capabilities struct {
 	// Login is the Itema login Capability, added to every Environment the
 	// Application already has (docs/implementation-notes/18-itema-login.md).
 	Login bool
+	// SetLoginGroups replaces the sign-in groups of every Environment the
+	// Application already has with LoginGroups (NormalizeLoginGroups); an
+	// empty LoginGroups removes them, letting any Itema user in again.
+	// Needs Itema login, already on or turned on by Login
+	// (docs/implementation-notes/92-sign-in-groups.md).
+	SetLoginGroups bool
+	LoginGroups    []string
 }
 
 // environmentState is the handful of values AddCapabilities reads back out
@@ -61,7 +68,8 @@ type environmentState struct {
 	Domains []string `yaml:"domains"`
 	Size    string   `yaml:"size"`
 	Login   struct {
-		Enabled bool `yaml:"enabled"`
+		Enabled bool     `yaml:"enabled"`
+		Groups  []string `yaml:"groups"`
 	} `yaml:"login"`
 }
 
@@ -228,6 +236,12 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		Domains: domainPlans,
 		Login:   caps.Login || prod.Login.Enabled,
 	}
+	switch {
+	case caps.SetLoginGroups:
+		res.LoginGroups = caps.LoginGroups
+	case prod.Login.Enabled:
+		res.LoginGroups = prod.Login.Groups
+	}
 	if stagingExists || caps.Staging {
 		res.StagingAddress = "https://" + application + "-staging." + cfg.BaseDomain
 	}
@@ -247,7 +261,25 @@ func checkCapabilitiesAbsent(application string, caps Capabilities, prod environ
 		return fmt.Errorf("%w: %q is already size %q", ErrCapabilityExists, application, caps.Size)
 	}
 	if caps.Login && prod.Login.Enabled {
+		if caps.SetLoginGroups {
+			return fmt.Errorf("%w: Itema login is already enabled for %q; to change its sign-in groups, give --login-group without --login", ErrCapabilityExists, application)
+		}
 		return fmt.Errorf("%w: Itema login is already enabled for %q", ErrCapabilityExists, application)
+	}
+	if caps.SetLoginGroups && !caps.Login && !prod.Login.Enabled {
+		return fmt.Errorf("%w: %q does not have Itema login; give --login with --login-group to turn it on for these groups only", ErrLoginGroupsWithoutLogin, application)
+	}
+	if caps.SetLoginGroups && prod.Login.Enabled {
+		current := make([]string, len(prod.Login.Groups))
+		for i, g := range prod.Login.Groups {
+			current[i] = strings.ToLower(g)
+		}
+		if slices.Equal(current, caps.LoginGroups) {
+			if len(current) == 0 {
+				return fmt.Errorf("%w: %q has no sign-in groups; every Itema user already gets in", ErrCapabilityExists, application)
+			}
+			return fmt.Errorf("%w: the sign-in groups of %q are already %s", ErrCapabilityExists, application, strings.Join(current, ", "))
+		}
 	}
 	for _, host := range caps.Domains {
 		for _, existing := range prod.Domains {
@@ -288,6 +320,14 @@ func applyCapabilitiesToEnvironment(dir, application, environment string, caps C
 			return nil, nil, err
 		}
 		changed = true
+	}
+	if caps.SetLoginGroups {
+		var groupsChanged bool
+		data, groupsChanged, err = render.SetLoginGroups(data, caps.LoginGroups)
+		if err != nil {
+			return nil, nil, err
+		}
+		changed = changed || groupsChanged
 	}
 	if caps.Size != "" {
 		var sizeChanged bool
@@ -374,6 +414,9 @@ func capabilityNames(caps Capabilities) []string {
 	}
 	if caps.Login {
 		names = append(names, "login")
+	}
+	if caps.SetLoginGroups {
+		names = append(names, "login-group")
 	}
 	return names
 }

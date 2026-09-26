@@ -1,7 +1,7 @@
 # Values for shop's staging Environment. See prod/values.yaml for what each
 # key is for; only the Environment, the read-write Service the migration
 # checks (shop-staging-db-rw, staging's own CloudNativePG Cluster), and
-# login.enabled (see below) differ.
+# login (see below) differ.
 application:
   name: shop
 environment: staging
@@ -44,8 +44,14 @@ postgres:
 # to the provider's sign-in while the unprotected prod address still answers 200
 # (docs/implementation-notes/18-itema-login.md), reusing this Environment
 # rather than adding a third Application.
+# With a sign-in group, so the redirect goes through the Environment's own
+# Middleware (allowed_groups) rather than the shared one: TestBootstrap
+# proves an unauthenticated request is still sent to sign-in (#92). The
+# group is a made-up GUID; kind never completes a sign-in.
 login:
   enabled: true
+  groups:
+    - 0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b
 # A custom domain inside the fixture zone (example.test) but not under the
 # base domain, so it goes on the chart's HTTP-01 Ingress: TestBootstrap
 # proves it redirects to sign-in too, and that cert-manager's challenge
