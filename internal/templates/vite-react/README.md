@@ -41,6 +41,6 @@ Images stay private in GHCR: the workflow pushes them with its own
 credential.
 
 `iidp.yaml` holds the settings `iidp ci set-image` sends the Platform with
-every deploy, read from the commit it deploys. Today that is only a
-migration command, which needs a Postgres database; a Static site has none,
-so its `migrationCommand` stays commented out.
+every deploy, read from the commit it deploys: a migration command, which
+needs a Postgres database, and Scheduled tasks, which need a Web service. A
+Static site has neither, so both stay commented out.

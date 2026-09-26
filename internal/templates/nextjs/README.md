@@ -62,3 +62,20 @@ always matches the code it migrates: staging gets it on the push to
 database comes from the Postgres Capability
 (`iidp app add-capability {{.Name}} --postgres`); a command without it is
 refused.
+
+## Scheduled tasks
+
+`iidp.yaml` also holds Scheduled tasks: commands run on a schedule, each
+in a one-off container from this Application's image, with the same
+environment, secrets and database, in each Environment it deploys to:
+
+```yaml
+tasks:
+  - name: nightly-cleanup
+    schedule: "0 3 * * *"
+    command: node scripts/cleanup.js
+```
+
+`schedule` is five cron fields on Europe/Oslo time. They travel with the
+deploy like the migration command, and removing a task stops it with the
+next deploy. The comments in `iidp.yaml` give the rules.

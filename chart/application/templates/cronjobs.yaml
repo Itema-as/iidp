@@ -1,0 +1,87 @@
+{{- include "application.validate" . -}}
+{{- if and (include "application.released" .) .Values.runTasks }}
+{{- range .Values.tasks }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "application.tasks.name" (list $ .name) }}
+  labels:
+    {{- include "application.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: scheduled-task
+    iidp.itema.no/task: {{ .name | quote }}
+spec:
+  schedule: {{ .schedule | toString | quote }}
+  # Every task runs on Norwegian time, whatever the node's clock says. A
+  # time from 02:00 to 02:59 is skipped on the last Sunday of March and
+  # runs twice on the last Sunday of October: put nightly work outside it.
+  timeZone: Europe/Oslo
+  # A run still going when the next is due makes that next one skip; the
+  # two never overlap.
+  concurrencyPolicy: Forbid
+  # A run that cannot start within five minutes of its time (the node was
+  # down, or a previous run was still going) is skipped, not made up late:
+  # the next time on the schedule runs as usual. It also bounds how many
+  # missed times the controller counts, so a long outage never trips its
+  # "too many missed start times" limit.
+  startingDeadlineSeconds: 300
+  # The last successful run and the last three failed ones are kept, with
+  # their Pods and logs, for iidp app status and kubectl logs.
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "application.name" $ }}
+        app.kubernetes.io/component: scheduled-task
+        iidp.itema.no/application: {{ include "application.name" $ }}
+        iidp.itema.no/environment: {{ include "application.environment" $ }}
+        iidp.itema.no/task: {{ .name | quote }}
+    spec:
+      # One attempt: a failed run is reported and the next time on the
+      # schedule runs it again; retrying at once could repeat whatever
+      # the failed run already did.
+      backoffLimit: 0
+      # A run that takes longer than an hour is stopped and fails.
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          # Not the selector labels: the Service must never route to this
+          # Pod. The iidp.itema.no labels attribute its logs in Alloy.
+          labels:
+            app.kubernetes.io/name: {{ include "application.name" $ }}
+            app.kubernetes.io/component: scheduled-task
+            iidp.itema.no/application: {{ include "application.name" $ }}
+            iidp.itema.no/environment: {{ include "application.environment" $ }}
+            iidp.itema.no/task: {{ .name | quote }}
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: task
+              image: {{ include "application.image" $ | quote }}
+              command:
+                - sh
+                - -c
+                - {{ .command | toString | quote }}
+              {{- if or $.Values.env (include "application.postgres.enabled" $) }}
+              env:
+                {{- range $name, $value := $.Values.env }}
+                - name: {{ $name | quote }}
+                  value: {{ $value | toString | quote }}
+                {{- end }}
+                {{- if include "application.postgres.enabled" $ }}
+                {{- include "application.postgres.databaseURLEnv" $ | nindent 16 }}
+                {{- end }}
+              {{- end }}
+              {{- with $.Values.secrets }}
+              # The same named Secrets the Application gets.
+              envFrom:
+                {{- range . }}
+                - secretRef:
+                    name: {{ . | toString | quote }}
+                {{- end }}
+              {{- end }}
+              resources:
+                {{- include "application.tasks.resources" $ | nindent 16 }}
+{{- end }}
+{{- end }}

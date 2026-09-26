@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Itema-as/iidp/internal/appconfig"
 )
 
 // AddSecretName ensures the top-level secrets: list of a values.yaml
@@ -154,7 +157,8 @@ func EnableLogin(valuesYAML []byte, cookieDomain string) ([]byte, error) {
 // size, port, probe, plain env and Postgres settings, but environment:
 // staging, no image tag yet (nothing has deployed there), no custom domains
 // (they apply to prod only, docs/implementation-notes/13-cli-capabilities.md),
-// and no secrets list -- prod's Secrets are not copied, since the CLI would
+// no Scheduled tasks (staging's first deploy brings its own), and no
+// secrets list -- prod's Secrets are not copied, since the CLI would
 // have to read them back out of the cluster's age-encrypted documents to do
 // so, which it cannot; secretsDropped reports whether prod had any, so the
 // caller can tell the developer to run iidp secret set again for staging.
@@ -172,6 +176,9 @@ func CopyValuesForStaging(prodValuesYAML []byte) (out []byte, secretsDropped boo
 		domains.Content = nil
 	}
 	secretsDropped = removeMappingKey(root, "secrets")
+	// Staging's Scheduled tasks are those of the commit its first deploy
+	// brings, not prod's.
+	removeMappingKey(root, "tasks")
 	out, err = encodeDocument(root)
 	return out, secretsDropped, err
 }
@@ -290,6 +297,55 @@ func SetMigrationCommand(valuesYAML []byte, command string) (out []byte, changed
 		value.Style = yaml.DoubleQuotedStyle
 	}
 	setNestedValue(root, []string{"postgres", "migrationCommand"}, value)
+	out, err = encodeDocument(root)
+	return out, true, err
+}
+
+// ErrTasksOnStaticSite is returned by SetTasks for tasks on an Environment
+// whose kind is static-site: a Static site's image is nginx serving files,
+// with no command of the Application's to run, and the chart would refuse
+// to render them.
+var ErrTasksOnStaticSite = errors.New("a Static site cannot run Scheduled tasks")
+
+// SetTasks sets the top-level tasks list of a values.yaml document to
+// tasks, leaving every other key and comment untouched, and reports whether
+// it changed anything. No tasks removes the key, so an Environment that
+// never had tasks keeps a values file without one. Tasks on a Static site
+// (kind: static-site) are refused with ErrTasksOnStaticSite; removing is
+// always allowed.
+func SetTasks(valuesYAML []byte, tasks []appconfig.Task) (out []byte, changed bool, err error) {
+	root, err := decodeDocument(valuesYAML, "values.yaml")
+	if err != nil {
+		return nil, false, err
+	}
+	var current []appconfig.Task
+	if existing := mappingValue(root, "tasks"); existing != nil {
+		if err := existing.Decode(&current); err != nil {
+			return nil, false, fmt.Errorf("values.yaml tasks: %w", err)
+		}
+	}
+	if slices.Equal(current, tasks) {
+		return valuesYAML, false, nil
+	}
+	if len(tasks) == 0 {
+		removeMappingKey(root, "tasks")
+		out, err = encodeDocument(root)
+		return out, true, err
+	}
+	if kind := mappingValue(root, "kind"); kind != nil && kind.Value == "static-site" {
+		return nil, false, ErrTasksOnStaticSite
+	}
+	list := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, task := range tasks {
+		item := &yaml.Node{Kind: yaml.MappingNode}
+		for _, field := range [][2]string{{"name", task.Name}, {"schedule", task.Schedule}, {"command", task.Command}} {
+			// Every value a string scalar, whatever it looks like: yaml
+			// quotes a schedule (it starts with a digit or *) as needed.
+			item.Content = append(item.Content, scalarNode(field[0]), &yaml.Node{Kind: yaml.ScalarNode, Value: field[1], Tag: "!!str"})
+		}
+		list.Content = append(list.Content, item)
+	}
+	setNestedValue(root, []string{"tasks"}, list)
 	out, err = encodeDocument(root)
 	return out, true, err
 }

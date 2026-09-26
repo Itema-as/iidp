@@ -29,8 +29,12 @@ The `iidp` command developers run to create and change Applications. It is the o
 _Avoid_: tool, wizard (the wizard is one flow inside the CLI)
 
 **Capability**:
-Something an Application can request from the Platform and have provisioned for it, such as a Postgres database, a custom domain, or a `staging` Environment. Capabilities are chosen in the wizard and can be added later.
+Something an Application can request from the Platform and have provisioned for it, such as a Postgres database, a custom domain, or a `staging` Environment. Most Capabilities are chosen in the wizard and can be added later; a Scheduled task is declared in the Application repository instead.
 _Avoid_: feature, add-on, resource, service
+
+**Scheduled task**:
+A Capability of a Web service: a command that runs on a schedule in a one-off container from the Application's own image, with the same database and secrets as the Environment it belongs to.
+_Avoid_: cron job (as a Kind), batch job, worker
 
 **Kind**:
 What an Application fundamentally is, chosen once at creation. The Kinds are Static site (built files served as-is) and Web service (a container listening on a port).

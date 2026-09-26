@@ -536,6 +536,51 @@ func (c *Cluster) WaitForJobRunning(ctx context.Context, namespace, name, comman
 	return logs, nil
 }
 
+// WaitForScheduledTaskRun polls until a Job the named Scheduled task's
+// CronJob created (the chart labels it iidp.itema.no/task) has succeeded,
+// and returns that Job's log. A run that failed fails the wait at once,
+// with its log.
+func (c *Cluster) WaitForScheduledTaskRun(ctx context.Context, namespace, task string, timeout time.Duration) (string, error) {
+	var last, succeeded string
+	err := pollUntil(ctx, timeout, 5*time.Second,
+		func() (bool, error) {
+			out, err := c.Kubectl(ctx, "-n", namespace, "get", "jobs", "-l", "iidp.itema.no/task="+task, "-o",
+				`jsonpath={range .items[*]}{.metadata.name}|{.status.succeeded}|{.status.failed}{"\n"}{end}`)
+			last = out
+			if err != nil {
+				return false, nil
+			}
+			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+				fields := strings.Split(line, "|")
+				if len(fields) != 3 {
+					continue
+				}
+				name, ok, failed := fields[0], fields[1], fields[2]
+				if ok != "" && ok != "0" {
+					succeeded = name
+					return true, nil
+				}
+				if failed != "" && failed != "0" {
+					logs, _ := c.Kubectl(ctx, "-n", namespace, "logs", "job/"+name)
+					return false, fmt.Errorf("scheduled task %s's job %s/%s failed:\n%s", task, namespace, name, logs)
+				}
+			}
+			return false, nil
+		},
+		func() error {
+			cronJob, _ := c.Kubectl(ctx, "-n", namespace, "get", "cronjobs", "-l", "iidp.itema.no/task="+task, "-o", "yaml")
+			return fmt.Errorf("no run of scheduled task %s in %s succeeded within %s; jobs:\n%s\ncronjob:\n%s", task, namespace, timeout, last, cronJob)
+		})
+	if err != nil {
+		return "", err
+	}
+	logs, err := c.Kubectl(ctx, "-n", namespace, "logs", "job/"+succeeded)
+	if err != nil {
+		return "", fmt.Errorf("logs of job %s/%s: %w\n%s", namespace, succeeded, err, logs)
+	}
+	return logs, nil
+}
+
 // BackupPhases returns every CloudNativePG Backup in namespace with its
 // status.phase (empty until the operator has picked it up). A namespace
 // without Backups, or one that no longer exists, yields an empty map.

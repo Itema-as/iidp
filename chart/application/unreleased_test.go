@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Itema-as/iidp/internal/appconfig"
 	valuesrender "github.com/Itema-as/iidp/internal/render"
 )
 
@@ -146,6 +147,7 @@ func TestEveryTemplateHonoursTheReleasedGate(t *testing.T) {
 // releasedObjects is what the prod Environment of the Application in
 // TestReleasingAnEnvironmentRendersIt renders once it has an image.
 var releasedObjects = []string{
+	"CronJob/shop-nightly-cleanup",
 	"Deployment/shop",
 	"Ingress/shop",
 	"Ingress/shop-http01",
@@ -192,6 +194,12 @@ func TestReleasingAnEnvironmentRendersIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The Deploy gate writes the deployed commit's Scheduled tasks in the
+	// same edit.
+	released, _, err = valuesrender.SetTasks(released, []appconfig.Task{{Name: "nightly-cleanup", Schedule: "0 3 * * *", Command: "node scripts/cleanup.js"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	objects := renderFile(t, writeValues(t, released))
 	want := slices.Sorted(slices.Values(releasedObjects))
 	if got := keys(objects); !slices.Equal(got, want) {
@@ -203,6 +211,10 @@ func TestReleasingAnEnvironmentRendersIt(t *testing.T) {
 	migrate := get[[]any](t, mustObject(t, objects, "Job/shop-migrate"), "spec", "template", "spec", "containers")
 	if image := get[string](t, migrate[0], "image"); image != "ghcr.io/itema-as/shop:1.0.0" {
 		t.Errorf("migration image = %q, want ghcr.io/itema-as/shop:1.0.0", image)
+	}
+	task := get[[]any](t, mustObject(t, objects, "CronJob/shop-nightly-cleanup"), "spec", "jobTemplate", "spec", "template", "spec", "containers")
+	if image := get[string](t, task[0], "image"); image != "ghcr.io/itema-as/shop:1.0.0" {
+		t.Errorf("task image = %q, want ghcr.io/itema-as/shop:1.0.0", image)
 	}
 }
 
