@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -323,31 +324,129 @@ func TestAppAddCapabilityRefusesLoginAlreadyEnabled(t *testing.T) {
 	}
 }
 
-func TestAppAddCapabilityRefusesLoginWithDomainGivenTogether(t *testing.T) {
+func TestAppAddCapabilityRefusesLoginWithDomainOutsideTheZoneGivenTogether(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url)
+	before := headSubject(t, url)
 
-	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login", "--domain", "shop.example.com")
+	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login", "--domain", "x.itma.no", "--domain", "shop.example.com")
 
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "--login") || !strings.Contains(stderr, "--domain") {
-		t.Errorf("stderr = %q, want it to name both --login and --domain", stderr)
+	if !strings.Contains(stderr, "--login refused, custom domains outside itma.no: shop.example.com.") {
+		t.Errorf("stderr = %q, want it to refuse --login naming shop.example.com", stderr)
+	}
+	if got := headSubject(t, url); got != before {
+		t.Errorf("Platform repository has a new commit %q, want none", got)
 	}
 }
 
-func TestAppAddCapabilityRefusesLoginWhenDomainAlreadyPresent(t *testing.T) {
+func TestAppAddCapabilityLoginWithDomainInsideTheZoneGivenTogether(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
-	seedApplication(t, url, "--domain", "shop.example.com")
+	seedApplication(t, url, "--staging")
+
+	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login", "--domain", "x.itma.no")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	clone := cloneMain(t, url)
+	for _, env := range []string{"prod", "staging"} {
+		values := readYAML(t, filepath.Join(clone, "applications/shop", env, "values.yaml"))
+		if got := lookup(t, values, "login", "enabled"); got != true {
+			t.Errorf("%s login.enabled = %v, want true", env, got)
+		}
+		if got := lookup(t, values, "platform", "loginCookieDomain"); got != "itma.no" {
+			t.Errorf("%s platform.loginCookieDomain = %v, want itma.no", env, got)
+		}
+	}
+	prod := readYAML(t, filepath.Join(clone, "applications/shop/prod/values.yaml"))
+	if got := fmt.Sprint(lookup(t, prod, "domains")); got != "[x.itma.no]" {
+		t.Errorf("prod domains = %s, want [x.itma.no]", got)
+	}
+}
+
+func TestAppAddCapabilityRefusesLoginWhenDomainOutsideTheZoneAlreadyPresent(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url, "--domain", "x.itma.no", "--domain", "shop.example.com")
 
 	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login")
 
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "shop") {
-		t.Errorf("stderr = %q, want it to name the Application with the existing custom domain", stderr)
+	if !strings.Contains(stderr, "outside itma.no: shop.example.com.") {
+		t.Errorf("stderr = %q, want it to name the existing domain outside the zone", stderr)
+	}
+}
+
+func TestAppAddCapabilityLoginWhenDomainInsideTheZoneAlreadyPresent(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url, "--domain", "x.itma.no")
+
+	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
+	if got := lookup(t, values, "login", "enabled"); got != true {
+		t.Errorf("login.enabled = %v, want true", got)
+	}
+	if got := lookup(t, values, "platform", "loginCookieDomain"); got != "itma.no" {
+		t.Errorf("platform.loginCookieDomain = %v, want itma.no", got)
+	}
+}
+
+// A custom domain added to an Application that already has Itema login
+// must be inside the zone too.
+func TestAppAddCapabilityRefusesDomainOutsideTheZoneWithLogin(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url, "--login")
+	before := headSubject(t, url)
+
+	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--domain", "shop.example.com")
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr, `--domain shop.example.com refused: "shop" has Itema login.`) {
+		t.Errorf("stderr = %q, want it to refuse the domain, naming it and the Application", stderr)
+	}
+	if got := headSubject(t, url); got != before {
+		t.Errorf("Platform repository has a new commit %q, want none", got)
+	}
+}
+
+// An in-zone domain is accepted, and writes platform.loginCookieDomain
+// into prod even when its values.yaml predates the field (#76): the chart
+// would otherwise check the domain against baseDomain and refuse it.
+func TestAppAddCapabilityDomainInsideTheZoneWithLoginWritesTheCookieDomain(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	seedApplication(t, url, "--login")
+	valuesPath := "applications/shop/prod/values.yaml"
+	data, err := os.ReadFile(filepath.Join(cloneMain(t, url), valuesPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := strings.Replace(string(data), "    loginCookieDomain: itma.no\n", "", 1)
+	if old == string(data) {
+		t.Fatalf("seeded values.yaml has no loginCookieDomain line to remove:\n%s", data)
+	}
+	pushCommit(t, url, "An Environment written before #76", map[string]string{valuesPath: old})
+
+	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--domain", "x.itma.no")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	values := readYAML(t, filepath.Join(cloneMain(t, url), valuesPath))
+	if got := lookup(t, values, "platform", "loginCookieDomain"); got != "itma.no" {
+		t.Errorf("platform.loginCookieDomain = %v, want itma.no", got)
+	}
+	if got := fmt.Sprint(lookup(t, values, "domains")); got != "[x.itma.no]" {
+		t.Errorf("domains = %s, want [x.itma.no]", got)
 	}
 }
 

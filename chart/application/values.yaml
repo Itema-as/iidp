@@ -20,6 +20,12 @@ platform:
   # for a custom domain the Platform's wildcard does not cover. Created by
   # the bootstrap.
   httpIssuer: letsencrypt-http01
+  # The domain the Itema login cookie is set for, without the leading dot:
+  # platform.yaml's cloudflareZone, or baseDomain on a Platform without
+  # one (the bootstrap's oauth2-proxy uses the same rule). With
+  # login.enabled, every custom domain must be inside it. Empty means
+  # baseDomain.
+  loginCookieDomain: ""
   # The Object Storage bucket every Application database is backed up to.
   # Required when postgres.enabled.
   backupsBucket: ""
@@ -97,9 +103,10 @@ postgres:
   finalBackupTimeout: 1800
 
 login:
-  # The Itema login Capability: the Platform address's Ingress gets the
+  # The Itema login Capability: every Ingress of the Environment gets the
   # Traefik ForwardAuth middleware annotation for the bootstrap's shared
-  # oauth2-proxy, so an Entra ID sign-in is required to reach it. Platform
-  # addresses only: fails rendering when domains is non-empty, because the
-  # oauth2-proxy cookie is scoped to the Platform base domain.
+  # oauth2-proxy, so an Entra ID sign-in is required to reach the Platform
+  # address and every custom domain. Fails rendering when a custom domain
+  # is outside platform.loginCookieDomain, because the oauth2-proxy cookie
+  # would never reach it.
   enabled: false

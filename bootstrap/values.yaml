@@ -12,7 +12,9 @@
 baseDomain: app.itma.no
 
 # The Cloudflare zone that contains baseDomain. external-dns only manages
-# records in this zone.
+# records in this zone. It is also the domain the Itema login cookie is set
+# for (templates/_helpers.tpl, iidp-bootstrap.loginCookieDomain); empty
+# means baseDomain. A baseDomain outside it fails rendering.
 cloudflareZone: itma.no
 
 # Where ArgoCD is served. Its host must be covered by the wildcard

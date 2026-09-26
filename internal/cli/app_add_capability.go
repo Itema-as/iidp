@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -47,9 +46,14 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 			"sends it to the Platform with its image. --staging adds a second Environment next to prod, copying prod's\n" +
 			"values (its secrets are not copied). --domain (repeatable) adds a custom\n" +
 			"domain to prod. --size changes the size of every Environment. --login\n" +
-			"requires Itema (Entra ID) sign-in on the Platform addresses, in every\n" +
-			"Environment; refused together with --domain, or when a custom domain is\n" +
-			"already present.",
+			"requires Itema (Entra ID) sign-in on every address of every Environment,\n" +
+			"custom domains included.\n\n" +
+			"Itema login and custom domains go together only inside platform.yaml's\n" +
+			"cloudflareZone, the domain the sign-in cookie is set for: --login is\n" +
+			"refused while prod has, or is given, a custom domain outside it, and so\n" +
+			"is --domain outside it for an Application that has Itema login. The\n" +
+			"browser sends the cookie to every host in the zone, including ones the\n" +
+			"Platform does not run.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAppAddCapability(cmd, args[0], opts, deps)
@@ -63,7 +67,7 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod, copying prod's values (its secrets are not copied)")
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to add to prod (repeatable)")
 	f.StringVar(&opts.size, "size", "", "New size for every Environment: small, medium or large")
-	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on the Platform addresses, in every Environment; refused together with --domain, or when a custom domain is already present")
+	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included; refused while a custom domain is outside platform.yaml's cloudflareZone, the sign-in cookie's domain")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
 	return cmd
@@ -89,9 +93,9 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 	if opts.size != "" && !slices.Contains(sizes, opts.size) {
 		return fmt.Errorf("unknown size %q: --size must be %s", opts.size, strings.Join(sizes, ", "))
 	}
-	if opts.login && len(opts.domains) > 0 {
-		return errors.New(platformrepo.LoginDomainConflictMessage)
-	}
+	// --login with --domain is checked by AddCapabilities against
+	// platform.yaml's cloudflareZone, before anything is written
+	// (docs/implementation-notes/76-login-in-zone-domains.md).
 
 	out := cmd.OutOrStdout()
 	migrationCommand, err := detectAddCapabilityMigrationCommand(opts.postgres, opts.migrationCommand, opts.appDir, out)

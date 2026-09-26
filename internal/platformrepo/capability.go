@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -131,13 +132,6 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 			return Result{}, err
 		}
 	}
-	if caps.Login && len(caps.Domains) > 0 {
-		return Result{}, errors.New(LoginDomainConflictMessage)
-	}
-	if caps.Login && len(prod.Domains) > 0 {
-		return Result{}, fmt.Errorf("--login is refused: %q already has a custom domain, and Itema login is for Platform addresses only, since its cookie is scoped to the base domain", application)
-	}
-
 	platformAddresses := []string{application + "." + cfg.BaseDomain}
 	if stagingExists || caps.Staging {
 		platformAddresses = append(platformAddresses, application+"-staging."+cfg.BaseDomain)
@@ -145,6 +139,19 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 	domainPlans, err := ValidateDomains(caps.Domains, cfg.BaseDomain, cfg.CloudflareZone, platformAddresses)
 	if err != nil {
 		return Result{}, err
+	}
+	// Itema login and custom domains go together only inside the login
+	// cookie domain, whichever of the two is being added
+	// (docs/implementation-notes/76-login-in-zone-domains.md).
+	switch {
+	case caps.Login:
+		if err := CheckLoginDomains(cfg, append(slices.Clone(prod.Domains), caps.Domains...)); err != nil {
+			return Result{}, err
+		}
+	case prod.Login.Enabled && len(caps.Domains) > 0:
+		if err := checkDomainsForLogin(cfg, application, caps.Domains); err != nil {
+			return Result{}, err
+		}
 	}
 
 	envs := []string{"prod"}
@@ -154,7 +161,7 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 	var files []string
 	var prodValuesAfterEdits []byte
 	for _, env := range envs {
-		envFiles, newValues, err := applyCapabilitiesToEnvironment(dir, application, env, caps, cfg)
+		envFiles, newValues, err := applyCapabilitiesToEnvironment(dir, application, env, caps, cfg, prod.Login.Enabled)
 		if err != nil {
 			return Result{}, err
 		}
@@ -254,9 +261,12 @@ func checkCapabilitiesAbsent(application string, caps Capabilities, prod environ
 
 // applyCapabilitiesToEnvironment edits one existing Environment's
 // values.yaml for the Capabilities that touch every Environment (Postgres,
-// size, and, for prod only, domains), returning the paths it wrote and, for
-// convenience, the values.yaml content after editing.
-func applyCapabilitiesToEnvironment(dir, application, environment string, caps Capabilities, cfg Config) (files []string, newValues []byte, err error) {
+// size, login, and, for prod only, domains), returning the paths it wrote
+// and, for convenience, the values.yaml content after editing. loginOn is
+// whether the Application already has Itema login: custom domains added to
+// its prod also (re)write platform.loginCookieDomain, which an Environment
+// written before #76 does not have and the chart checks them against.
+func applyCapabilitiesToEnvironment(dir, application, environment string, caps Capabilities, cfg Config, loginOn bool) (files []string, newValues []byte, err error) {
 	valuesRelPath := path.Join(EnvironmentDir(application, environment), "values.yaml")
 	valuesAbsPath := filepath.Join(dir, filepath.FromSlash(valuesRelPath))
 	data, err := os.ReadFile(valuesAbsPath)
@@ -272,8 +282,8 @@ func applyCapabilitiesToEnvironment(dir, application, environment string, caps C
 		}
 		changed = true
 	}
-	if caps.Login {
-		data, err = render.EnableLogin(data)
+	if caps.Login || (loginOn && environment == "prod" && len(caps.Domains) > 0) {
+		data, err = render.EnableLogin(data, cfg.LoginCookieDomain())
 		if err != nil {
 			return nil, nil, err
 		}

@@ -38,9 +38,14 @@ type Environment struct {
 	BackupsBucket         string
 	ObjectStorageEndpoint string
 	// Login is the Itema login Capability: written the same in every
-	// Environment, since one oauth2-proxy cookie for the Platform base
-	// domain covers both (docs/implementation-notes/18-itema-login.md).
+	// Environment, since one oauth2-proxy cookie covers both
+	// (docs/implementation-notes/18-itema-login.md).
 	Login bool
+	// LoginCookieDomain is platform.loginCookieDomain, the domain the login
+	// cookie is set for: platform.yaml's cloudflareZone, or BaseDomain
+	// without one. Set only with Login, the one Capability the chart needs
+	// it for (docs/implementation-notes/76-login-in-zone-domains.md).
+	LoginCookieDomain string
 }
 
 // Name is the Environment's object name, <application>-<environment>: the
@@ -131,6 +136,7 @@ func Values(env Environment) ([]byte, error) {
 		Environment: env.Environment,
 		Platform: platformValues{
 			BaseDomain:            env.BaseDomain,
+			LoginCookieDomain:     env.LoginCookieDomain,
 			BackupsBucket:         env.BackupsBucket,
 			ObjectStorageEndpoint: env.ObjectStorageEndpoint,
 		},
@@ -246,6 +252,7 @@ type applicationValues struct {
 
 type platformValues struct {
 	BaseDomain            string `yaml:"baseDomain"`
+	LoginCookieDomain     string `yaml:"loginCookieDomain,omitempty"`
 	BackupsBucket         string `yaml:"backupsBucket,omitempty"`
 	ObjectStorageEndpoint string `yaml:"objectStorageEndpoint,omitempty"`
 }
@@ -266,7 +273,7 @@ type probeValues struct {
 }
 
 // loginValues is the Itema login Capability: one shared oauth2-proxy in
-// front of every Platform-address Ingress. Written in full, even when
+// front of every Ingress of the Environment. Written in full, even when
 // disabled, the same convention postgres and domains already follow
 // (docs/implementation-notes/13-cli-capabilities.md).
 type loginValues struct {

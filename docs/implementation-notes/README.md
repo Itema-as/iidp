@@ -27,4 +27,5 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #72 | [72-custom-domain-docs.md](72-custom-domain-docs.md) |
 | #74 | [74-reusable-deploy-workflow.md](74-reusable-deploy-workflow.md) |
 | #75 | [75-cutover-friction.md](75-cutover-friction.md) |
+| #76 | [76-login-in-zone-domains.md](76-login-in-zone-domains.md) |
 | #77, #78 | [77-login-redirect.md](77-login-redirect.md) |

@@ -27,8 +27,10 @@ import (
 // anything. Answers are applied with Flags().Set, which both assigns opts'
 // bound field and marks the flag Changed, so the rest of the command (plan,
 // detectMigrationCommand) cannot tell an answer typed at a prompt from one
-// given on the command line.
-func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) error {
+// given on the command line. loginCookieDomain reads the Itema login
+// cookie's domain from platform.yaml; it is called only when question 7
+// needs it.
+func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, loginCookieDomain func() (string, error)) error {
 	f := cmd.Flags()
 	out := cmd.OutOrStdout()
 
@@ -150,11 +152,25 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) erro
 		}
 	}
 
-	// 7. Itema login: docs/design.md's wizard offers this only when no
-	// custom domain was given.
-	if !f.Changed("login") && len(opts.domains) == 0 {
-		if err := askItemaLogin(f, p); err != nil {
-			return err
+	// 7. Itema login: docs/design.md's wizard offers this unless a custom
+	// domain is outside the login cookie domain, which only platform.yaml
+	// knows, so it is read (once, lazily) only when domains were given.
+	if !f.Changed("login") {
+		offer := true
+		if len(opts.domains) > 0 {
+			cookieDomain, err := loginCookieDomain()
+			if err != nil {
+				return err
+			}
+			if outside := platformrepo.HostsOutsideLoginCookieDomain(opts.domains, cookieDomain); len(outside) > 0 {
+				fmt.Fprintf(out, "Itema login is not offered: its sign-in cookie is set for %s, and %s outside it.\n", cookieDomain, strings.Join(outside, ", "))
+				offer = false
+			}
+		}
+		if offer {
+			if err := askItemaLogin(f, p); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -240,12 +256,11 @@ func splitDomains(answer string) []string {
 }
 
 // askItemaLogin asks docs/design.md's wizard question 7, "Itema login?
-// [no]", and sets --login with the answer. runWizard only calls it when no
-// custom domain was given (a custom domain's certificate and DNS are its
-// own, and the login cookie is scoped to the Platform base domain, so the
-// two are mutually exclusive the same way --postgres is refused on a
-// Static site): the wizard does not ask a question whose answer plan()
-// would then refuse.
+// [no]", and sets --login with the answer. runWizard only calls it when
+// every custom domain given is inside the login cookie domain (the cookie
+// never reaches a host outside it): the wizard does not ask a question
+// whose answer would then be refused
+// (docs/implementation-notes/76-login-in-zone-domains.md).
 func askItemaLogin(f *pflag.FlagSet, p *prompt.Prompter) error {
 	yes, err := p.YesNo("Itema login?", false)
 	if err != nil {

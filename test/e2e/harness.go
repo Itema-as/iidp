@@ -692,6 +692,9 @@ type SignIn struct {
 	// callback on the auth address can read what the Application's host
 	// set.
 	CookieDomain string
+	// CSRFCookie is the CSRF cookie's name: oauth2-proxy's cookie-name
+	// with _csrf appended.
+	CSRFCookie string
 }
 
 // CheckSignInRedirect requests path on host through Traefik's websecure
@@ -699,7 +702,8 @@ type SignIn struct {
 // described by want: a 3xx whose Location is want.LoginURL with
 // want.Callback as redirect_uri and, in the OAuth state, the original
 // https URL (path and query included) to come back to after signing in,
-// plus oauth2-proxy's CSRF cookie for want.CookieDomain. A 3xx without a
+// plus oauth2-proxy's CSRF cookie want.CSRFCookie for want.CookieDomain.
+// A 3xx without a
 // Location, which a browser renders instead of following, fails it. It
 // retries a 5xx (oauth2-proxy not up yet) and a 404 (no route yet) until
 // timeout; any other answer fails at once.
@@ -736,12 +740,12 @@ func (c *Cluster) CheckSignInRedirect(ctx context.Context, host, path string, wa
 		}
 		csrf := false
 		for _, cookie := range resp.Cookies() {
-			if strings.HasPrefix(cookie.Name, "_oauth2_proxy_csrf") && cookie.Domain == want.CookieDomain {
+			if cookie.Name == want.CSRFCookie && cookie.Domain == want.CookieDomain {
 				csrf = true
 			}
 		}
 		if !csrf {
-			return false, false, fmt.Sprintf("%s -> %s: no _oauth2_proxy_csrf cookie for %s in %q", resp.Status, location, want.CookieDomain, resp.Header.Values("Set-Cookie"))
+			return false, false, fmt.Sprintf("%s -> %s: no %s cookie for %s in %q", resp.Status, location, want.CSRFCookie, want.CookieDomain, resp.Header.Values("Set-Cookie"))
 		}
 		return true, false, resp.Status + " -> " + location
 	})
@@ -759,12 +763,17 @@ func (c *Cluster) CheckSignInRedirect(ctx context.Context, host, path string, wa
 // check immediately instead of waiting out the full timeout. A failure to
 // connect at all is always retried.
 func (c *Cluster) pollGET(ctx context.Context, host, path string, timeout time.Duration, want func(resp *http.Response) (ok, retry bool, message string)) error {
+	return c.pollGETAt(ctx, fmt.Sprintf("https://127.0.0.1:%d%s", c.HTTPSPort, path), host, timeout, want)
+}
+
+// pollGETAt is pollGET for a full URL, so a check can use Traefik's plain
+// HTTP web entrypoint (HTTPPort) too.
+func (c *Cluster) pollGETAt(ctx context.Context, url, host string, timeout time.Duration, want func(resp *http.Response) (ok, retry bool, message string)) error {
 	client := &http.Client{
 		Timeout:       10 * time.Second,
 		Transport:     &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // kind has no real certificate to check
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	url := fmt.Sprintf("https://127.0.0.1:%d%s", c.HTTPSPort, path)
 	var lastErr error
 	return pollUntil(ctx, timeout, 3*time.Second,
 		func() (bool, error) {
@@ -792,6 +801,93 @@ func (c *Cluster) pollGET(ctx context.Context, host, path string, timeout time.D
 			return true, nil
 		},
 		func() error { return lastErr })
+}
+
+// CheckACMEChallengeBypassesLogin proves that cert-manager's HTTP-01
+// challenge for a login-protected custom domain is not sent to sign-in: it
+// creates, in namespace, an Ingress shaped like the solver Ingress
+// cert-manager v1.21 creates for a challenge (pkg/issuer/acme/http/ingress.go:
+// ingressClassName from the ClusterIssuer's solver, one rule for host with
+// the Exact path /.well-known/acme-challenge/<token>, and no Traefik
+// annotation), backed by service:port instead of a solver Pod. kind can
+// run no real challenge: Let's Encrypt never issues for .test.
+//
+// Then, through Traefik:
+//   - https://host/<challenge path> must be answered by that backend, an
+//     nginx 404 (the fixture's image has no such file), not by the
+//     ForwardAuth middleware on the Application's own Ingress for host,
+//     whose answer is a redirect to sign-in. A redirect is retried until
+//     timeout, since Traefik may not have loaded the new Ingress yet.
+//   - http://host/<challenge path> must be redirected to the same https URL
+//     by the web entrypoint, which is what Let's Encrypt's validator
+//     follows (docs/implementation-notes/08-chart-static-domains-secrets.md).
+//
+// The Ingress is deleted afterwards.
+func (c *Cluster) CheckACMEChallengeBypassesLogin(ctx context.Context, namespace, host, service string, port int, timeout time.Duration) error {
+	const name = "cm-acme-http-solver-e2e"
+	path := "/.well-known/acme-challenge/e2e-token"
+	manifest := fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: %[1]s
+  namespace: %[2]s
+  labels:
+    acme.cert-manager.io/http01-solver: "true"
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: 0.0.0.0/0,::/0
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: %[3]s
+      http:
+        paths:
+          - path: %[4]s
+            pathType: Exact
+            backend:
+              service:
+                name: %[5]s
+                port:
+                  number: %[6]d
+`, name, namespace, host, path, service, port)
+	if err := c.Apply(ctx, manifest); err != nil {
+		return err
+	}
+	defer func() {
+		if out, err := c.Kubectl(context.WithoutCancel(ctx), "-n", namespace, "delete", "ingress", name, "--ignore-not-found"); err != nil {
+			c.Log("deleting ingress %s/%s: %v\n%s", namespace, name, err, out)
+		}
+	}()
+	return c.checkACMEChallengeServed(ctx, host, path, timeout)
+}
+
+// checkACMEChallengeServed is CheckACMEChallengeBypassesLogin's two
+// requests, once the solver-shaped Ingress exists.
+func (c *Cluster) checkACMEChallengeServed(ctx context.Context, host, path string, timeout time.Duration) error {
+	err := c.pollGET(ctx, host, path, timeout, func(resp *http.Response) (ok, retry bool, message string) {
+		server := resp.Header.Get("Server")
+		switch {
+		case resp.StatusCode == http.StatusNotFound && strings.HasPrefix(server, "nginx"):
+			return true, false, resp.Status + " from " + server + " (the challenge's own backend)"
+		case resp.StatusCode >= 300 && resp.StatusCode < 400:
+			return false, true, fmt.Sprintf("%s -> %s: the challenge path went through the login middleware", resp.Status, resp.Header.Get("Location"))
+		default:
+			return false, true, fmt.Sprintf("%s (Server %q), want the challenge's own backend, an nginx 404", resp.Status, server)
+		}
+	})
+	if err != nil {
+		return err
+	}
+
+	// The port, if any, is the websecure entrypoint's, whatever the chart
+	// publishes it as; the scheme, host and path are what matter.
+	return c.pollGETAt(ctx, fmt.Sprintf("http://127.0.0.1:%d%s", c.HTTPPort, path), host, timeout, func(resp *http.Response) (ok, retry bool, message string) {
+		location := resp.Header.Get("Location")
+		target, err := url.Parse(location)
+		if resp.StatusCode < 300 || resp.StatusCode >= 400 || err != nil || target.Scheme != "https" || target.Hostname() != host || target.Path != path {
+			return false, false, fmt.Sprintf("%s -> %q, want a redirect to https://%s%s", resp.Status, location, host, path)
+		}
+		return true, false, resp.Status + " -> " + location
+	})
 }
 
 // pollUntil calls attempt every interval until it reports done, an error, or

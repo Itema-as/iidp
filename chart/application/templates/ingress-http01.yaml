@@ -20,6 +20,11 @@ metadata:
     # ingress-shim creates a Certificate per tls entry below, solved over
     # HTTP-01 by the bootstrap's ClusterIssuer.
     cert-manager.io/cluster-issuer: {{ .Values.platform.httpIssuer | quote }}
+    {{- with include "application.login.annotation" . }}
+    # The Itema login Capability (application.login.annotation), for the
+    # hosts inside the login cookie domain that the wildcard does not cover.
+    {{- . | nindent 4 }}
+    {{- end }}
 spec:
   ingressClassName: traefik
   tls:

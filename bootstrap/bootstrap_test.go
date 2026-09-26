@@ -200,11 +200,13 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	}
 
 	values := get[object](t, chartSource, "helm", "valuesObject")
-	if got := get[string](t, values, "extraArgs", "cookie-domain"); got != ".app.example.test" {
-		t.Errorf("cookie-domain = %q, want .app.example.test", got)
+	// The fixture's cloudflareZone, so a custom domain inside it can be
+	// protected too (#76). TestOauth2ProxyCookieDomain covers the rest.
+	if got := get[string](t, values, "extraArgs", "cookie-domain"); got != ".example.test" {
+		t.Errorf("cookie-domain = %q, want .example.test", got)
 	}
-	if got := get[string](t, values, "extraArgs", "whitelist-domain"); got != ".app.example.test" {
-		t.Errorf("whitelist-domain = %q, want .app.example.test", got)
+	if got := get[string](t, values, "extraArgs", "whitelist-domain"); got != ".example.test" {
+		t.Errorf("whitelist-domain = %q, want .example.test", got)
 	}
 	if got := get[string](t, values, "extraArgs", "redirect-url"); got != "https://auth.app.example.test/oauth2/callback" {
 		t.Errorf("redirect-url = %q", got)
@@ -224,6 +226,49 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	providerMap := get[object](t, map[string]any{"p": provider}, "p")
 	if got := get[string](t, providerMap, "provider"); got != "entra-id" {
 		t.Errorf("provider = %q, want entra-id", got)
+	}
+}
+
+// The login cookie and the redirect allowlist cover cloudflareZone, or
+// baseDomain on a Platform without one; the callback stays on
+// auth.<baseDomain> either way, so the Entra app registration never
+// changes. The cookie is not oauth2-proxy's default name, so a browser
+// still holding the old .<baseDomain> cookie never sends two of the same
+// name (docs/implementation-notes/76-login-in-zone-domains.md).
+func TestOauth2ProxyCookieDomain(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"cloudflareZone set", []string{"--set", "baseDomain=app.itma.no", "--set", "cloudflareZone=itma.no"}, ".itma.no"},
+		{"cloudflareZone is baseDomain", []string{"--set", "baseDomain=itma.no", "--set", "cloudflareZone=itma.no"}, ".itma.no"},
+		{"no cloudflareZone", []string{"--set", "baseDomain=app.itma.no", "--set", "cloudflareZone="}, ".app.itma.no"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			apps := renderApplications(t, append([]string{"--values", fixture}, tc.args...)...)
+			sources := get[[]any](t, apps["oauth2-proxy"], "spec", "sources")
+			values := get[object](t, map[string]any{"s": sources[0]}, "s", "helm", "valuesObject")
+			for _, arg := range []string{"cookie-domain", "whitelist-domain"} {
+				if got := get[string](t, values, "extraArgs", arg); got != tc.want {
+					t.Errorf("%s = %q, want %q", arg, got, tc.want)
+				}
+			}
+			if got, want := get[string](t, values, "extraArgs", "redirect-url"), "https://auth."+strings.TrimPrefix(tc.args[1], "baseDomain=")+"/oauth2/callback"; got != want {
+				t.Errorf("redirect-url = %q, want %q", got, want)
+			}
+			if got := get[string](t, values, "extraArgs", "cookie-name"); got != "__Secure-itema_login" {
+				t.Errorf("cookie-name = %q, want __Secure-itema_login", got)
+			}
+		})
+	}
+
+	// A cookie for the zone set from auth.<baseDomain> is only accepted if
+	// that host is inside the zone.
+	requireHelm(t)
+	out, err := exec.Command("helm", "template", "t", ".", "--values", fixture, "--set", "baseDomain=app.itma.no", "--set", "cloudflareZone=example.com").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), `baseDomain "app.itma.no" must be inside cloudflareZone "example.com"`) {
+		t.Errorf("rendering with baseDomain outside cloudflareZone: err = %v, output:\n%s\nwant a refusal naming both", err, out)
 	}
 }
 
@@ -259,7 +304,7 @@ func TestLoginMiddlewares(t *testing.T) {
 // and hands the component the Platform's values, including the org id it
 // pins and the bootstrap revision its image tag comes from.
 func TestDeployGateFollowsTheBootstrapAndThePlatformValues(t *testing.T) {
-	apps := renderApplications(t, "--values", "values.yaml", "--set", "baseDomain=app.example.test",
+	apps := renderApplications(t, "--values", "values.yaml", "--set", "baseDomain=app.example.test", "--set", "cloudflareZone=example.test",
 		"--set", "bootstrap.repoURL=https://example.test/iidp.git",
 		"--set", "bootstrap.targetRevision=v9.9.9")
 	gate := apps["deploy-gate"]

@@ -51,13 +51,6 @@ var ErrApplicationExists = errors.New("Application already exists")
 // ErrInvalidName is wrapped by ValidateName.
 var ErrInvalidName = errors.New("invalid Application name")
 
-// LoginDomainConflictMessage is the refusal both the CLI (flag-only, before
-// anything is cloned) and the Writer (after the clone, where an existing
-// custom domain on prod can also be seen) give for --login together with a
-// custom domain: Itema login is for Platform addresses only, since its
-// cookie is scoped to the base domain.
-const LoginDomainConflictMessage = "--login cannot be combined with --domain: Itema login is for Platform addresses only, since its cookie is scoped to the base domain"
-
 var dns1035Label = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 
 // ValidateName checks that name can be an Application name: a lowercase
@@ -125,9 +118,10 @@ type Application struct {
 	// keeps its Platform address (docs/implementation-notes/13-cli-capabilities.md).
 	Domains []string
 	// Login is the Itema login Capability, written into every Environment:
-	// one oauth2-proxy cookie for the Platform base domain covers both
+	// one oauth2-proxy cookie covers both
 	// (docs/implementation-notes/18-itema-login.md). Refused together with
-	// Domains: Itema login is for Platform addresses only.
+	// a domain outside the login cookie domain (Config.LoginCookieDomain,
+	// docs/implementation-notes/76-login-in-zone-domains.md).
 	Login bool
 	// Repository, when set, binds the Application to its Application
 	// repository by id: written as applications/<name>/repository.yaml in
@@ -246,6 +240,21 @@ func (w *Writer) CheckAvailable(ctx context.Context, name string) (Config, error
 	return cfg, checkApplicationAbsent(dir, name, false)
 }
 
+// ReadConfig returns platform.yaml from a fresh clone of the Platform
+// repository, without writing anything. The wizard uses it to decide
+// whether to offer Itema login for the custom domains it was given.
+func (w *Writer) ReadConfig(ctx context.Context) (Config, error) {
+	dir, err := os.MkdirTemp("", "iidp-platform-config-")
+	if err != nil {
+		return Config{}, err
+	}
+	defer os.RemoveAll(dir)
+	if _, err := git.Clone(ctx, w.URL, Branch, dir, w.Auth); err != nil {
+		return Config{}, fmt.Errorf("cloning %s: %w", platform.Repository, err)
+	}
+	return LoadConfig(dir)
+}
+
 // checkApplicationAbsent errors if name already has a live Environment --
 // an application.yaml under prod/ or staging/ -- in the clone at dir. A
 // directory that exists but holds no application.yaml anywhere is the
@@ -323,10 +332,6 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 			return Result{}, err
 		}
 	}
-	if app.Login && len(app.Domains) > 0 {
-		return Result{}, errors.New(LoginDomainConflictMessage)
-	}
-
 	prodAddress := app.Name + "." + cfg.BaseDomain
 	stagingAddress := app.Name + "-staging." + cfg.BaseDomain
 	platformAddresses := []string{prodAddress}
@@ -336,6 +341,11 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 	domainPlans, err := ValidateDomains(app.Domains, cfg.BaseDomain, cfg.CloudflareZone, platformAddresses)
 	if err != nil {
 		return Result{}, err
+	}
+	if app.Login {
+		if err := CheckLoginDomains(cfg, app.Domains); err != nil {
+			return Result{}, err
+		}
 	}
 
 	environments := []string{"prod"}
@@ -449,6 +459,9 @@ func (w *Writer) writeEnvironment(dir string, cfg Config, app Application, envir
 	if app.Postgres {
 		env.BackupsBucket = cfg.BackupsBucket
 		env.ObjectStorageEndpoint = cfg.ObjectStorageEndpoint
+	}
+	if app.Login {
+		env.LoginCookieDomain = cfg.LoginCookieDomain()
 	}
 	// Custom domains apply to prod only; staging keeps its Platform address
 	// (docs/implementation-notes/13-cli-capabilities.md).

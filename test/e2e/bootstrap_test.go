@@ -443,9 +443,10 @@ func testUnreleasedEnvironments(ctx context.Context, t *testing.T, cluster *Clus
 // chart, its migration run, and an HTTP request through Traefik answered
 // with 200 for both hosts. staging also has the Itema login Capability on
 // (docs/implementation-notes/18-itema-login.md), so an unauthenticated
-// request to its host is asserted to be redirected straight to the
-// provider's sign-in, carrying the URL to come back to, while prod,
-// unprotected, still answers 200
+// request to its host, and to its custom domain inside the fixture zone,
+// is asserted to be redirected straight to the provider's sign-in,
+// carrying the URL to come back to, while that custom domain's ACME
+// challenge path is not (#76), and prod, unprotected, still answers 200
 // (docs/implementation-notes/77-login-redirect.md), and keeps answering 200
 // throughout a rollout (#75).
 func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster) {
@@ -479,10 +480,27 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 			t.Fatal(err)
 		}
 	}
+	// shop-staging's custom domain inside the fixture zone, on the chart's
+	// HTTP-01 Ingress, is protected the same way: the login cookie and the
+	// redirect allowlist cover the whole zone, so the state carries its own
+	// URL and the CSRF cookie is for the zone
+	// (docs/implementation-notes/76-login-in-zone-domains.md). Its ACME
+	// HTTP-01 challenge path is not.
+	if err := cluster.CheckSignInRedirect(ctx, shopStagingCustomDomain, signInPath, fixtureSignIn, 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.CheckACMEChallengeBypassesLogin(ctx, "shop-staging", shopStagingCustomDomain, "shop-staging", 80, 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
 	if err := cluster.CheckRolloutServes(ctx, "shop-prod", "shop", "shop.app.example.test"); err != nil {
 		t.Fatal(err)
 	}
 }
+
+// shopStagingCustomDomain is the custom domain the fixture's shop-staging
+// lists: inside the fixture's cloudflareZone, example.test, not under its
+// baseDomain.
+const shopStagingCustomDomain = "shop-staging.example.test"
 
 // signInPath is a path with a query, so the sign-in check proves both
 // survive the round trip through the provider.
@@ -491,11 +509,14 @@ const signInPath = "/account/orders?page=2&sort=date"
 // fixtureSignIn is the sign-in redirect the fixture Platform gives: its
 // oauth2-proxy skips OIDC discovery and uses a fixed, never-reached
 // authorize endpoint (bootstrap/templates/oauth2-proxy.yaml, platform.yaml's
-// oauth2Proxy.skipOIDCDiscovery).
+// oauth2Proxy.skipOIDCDiscovery). The callback stays on the auth address
+// under baseDomain; the CSRF cookie is for the fixture's cloudflareZone,
+// the login cookie domain, under the bootstrap's cookie name.
 var fixtureSignIn = SignIn{
 	LoginURL:     "https://oauth2-proxy-entra.invalid/authorize",
 	Callback:     "https://auth.app.example.test/oauth2/callback",
-	CookieDomain: "app.example.test",
+	CookieDomain: "example.test",
+	CSRFCookie:   "__Secure-itema_login_csrf",
 }
 
 // testDeleteEnvironment proves #39's design end to end: pushing a commit to

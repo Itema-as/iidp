@@ -1,12 +1,14 @@
 package cli_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Itema-as/iidp/internal/cli"
+	"github.com/Itema-as/iidp/internal/platform"
 )
 
 // testCapabilitiesPlatformYAML is testPlatformYAML plus the fields the
@@ -438,25 +440,123 @@ func TestAppCreateLoginEnablesInEveryEnvironment(t *testing.T) {
 		if got := lookup(t, values, "login", "enabled"); got != true {
 			t.Errorf("%s values.yaml login.enabled = %v, want true", env, got)
 		}
+		// The login cookie's domain, platform.yaml's cloudflareZone, which
+		// the chart checks custom domains against (#76).
+		if got := lookup(t, values, "platform", "loginCookieDomain"); got != "itma.no" {
+			t.Errorf("%s values.yaml platform.loginCookieDomain = %v, want itma.no", env, got)
+		}
 	}
 	if !strings.Contains(stdout, "Itema") {
 		t.Errorf("stdout = %q, want it to mention Itema login", stdout)
 	}
 }
 
-func TestAppCreateLoginRefusedWithCustomDomain(t *testing.T) {
+// Without --login nothing about the login cookie is written.
+func TestAppCreateWithoutLoginWritesNoLoginCookieDomain(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 
 	_, stderr, code := createApplication(t, url, cli.Dependencies{},
-		"--name", "shop", "--kind", "web-service", "--login", "--domain", "shop.example.com")
+		"--name", "shop", "--kind", "web-service", "--domain", "x.itma.no")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
+	if platformValues := lookup(t, values, "platform").(map[string]any); platformValues["loginCookieDomain"] != nil {
+		t.Errorf("platform.loginCookieDomain = %v, want it absent without --login", platformValues["loginCookieDomain"])
+	}
+}
+
+// Custom domains inside cloudflareZone, the login cookie's domain, can be
+// protected: one covered by the wildcard, and one only inside the zone.
+func TestAppCreateLoginWithDomainsInsideTheZone(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+
+	_, stderr, code := createApplication(t, url, cli.Dependencies{},
+		"--name", "shop", "--kind", "web-service", "--login", "--domain", "butikk.app.itma.no", "--domain", "x.itma.no")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
+	if got := lookup(t, values, "login", "enabled"); got != true {
+		t.Errorf("login.enabled = %v, want true", got)
+	}
+	if got := lookup(t, values, "platform", "loginCookieDomain"); got != "itma.no" {
+		t.Errorf("platform.loginCookieDomain = %v, want itma.no", got)
+	}
+	if got := fmt.Sprint(lookup(t, values, "domains")); got != "[butikk.app.itma.no x.itma.no]" {
+		t.Errorf("domains = %s, want [butikk.app.itma.no x.itma.no]", got)
+	}
+}
+
+// A domain outside the zone is refused, named, and nothing is written;
+// the in-zone one given with it is not named.
+func TestAppCreateLoginRefusedWithDomainOutsideTheZone(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+
+	_, stderr, code := createApplication(t, url, cli.Dependencies{},
+		"--name", "shop", "--kind", "web-service", "--login", "--domain", "x.itma.no", "--domain", "shop.example.com")
 
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "--login") || !strings.Contains(stderr, "--domain") {
-		t.Errorf("stderr = %q, want it to name both --login and --domain", stderr)
+	if !strings.Contains(stderr, "--login refused, custom domains outside itma.no: shop.example.com.") {
+		t.Errorf("stderr = %q, want it to refuse --login naming shop.example.com as outside itma.no", stderr)
+	}
+	if strings.Contains(stderr, "x.itma.no") {
+		t.Errorf("stderr = %q, want it not to name x.itma.no, which is inside the zone", stderr)
 	}
 	assertNoApplications(t, url)
+}
+
+// On the Create path the refusal comes before the Application repository
+// is created: it needs platform.yaml, and the clone that checks the name
+// has it.
+func TestAppCreateLoginRefusedWithDomainOutsideTheZoneBeforeCreatingTheRepository(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	gh := newFakeGitHub(t)
+
+	_, stderr, code := createApplication(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--name", "shop", "--path", "create", "--framework", "nextjs", "--login", "--domain", "shop.example.com")
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr, "shop.example.com") {
+		t.Errorf("stderr = %q, want it to name shop.example.com", stderr)
+	}
+	if got := gh.cloneURL(platform.Org, "shop"); got != "" {
+		t.Errorf("the Application repository was created (%s), want the refusal first", got)
+	}
+	assertNoApplications(t, url)
+}
+
+// Without a cloudflareZone the login cookie's domain is baseDomain, as it
+// is for the bootstrap's oauth2-proxy: a custom domain under it is
+// accepted, one only inside itma.no is not.
+func TestAppCreateLoginCookieDomainIsBaseDomainWithoutAZone(t *testing.T) {
+	url := newPlatformRepository(t, testPlatformYAML)
+
+	_, stderr, code := createApplication(t, url, cli.Dependencies{},
+		"--name", "shop", "--kind", "web-service", "--login", "--domain", "x.itma.no")
+	if code == 0 {
+		t.Fatalf("x.itma.no: exit code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr, "outside app.itma.no: x.itma.no") {
+		t.Errorf("stderr = %q, want it to name x.itma.no as outside app.itma.no", stderr)
+	}
+	assertNoApplications(t, url)
+
+	_, stderr, code = createApplication(t, url, cli.Dependencies{},
+		"--name", "shop", "--kind", "web-service", "--login", "--domain", "butikk.app.itma.no")
+	if code != 0 {
+		t.Fatalf("butikk.app.itma.no: exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
+	if got := lookup(t, values, "platform", "loginCookieDomain"); got != "app.itma.no" {
+		t.Errorf("platform.loginCookieDomain = %v, want app.itma.no", got)
+	}
 }
 
 func TestAppCreateAllCapabilitiesCombined(t *testing.T) {

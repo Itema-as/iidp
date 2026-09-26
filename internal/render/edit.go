@@ -132,15 +132,19 @@ func AddDomain(valuesYAML []byte, host string) (out []byte, changed bool, err er
 }
 
 // EnableLogin edits an Environment's values.yaml in place to turn the Itema
-// login Capability on: login.enabled: true. Callers refuse the Capability
-// when it is already enabled or when a custom domain is present, so this
-// always has something to change.
-func EnableLogin(valuesYAML []byte) ([]byte, error) {
+// login Capability on for cookieDomain: login.enabled: true and
+// platform.loginCookieDomain: cookieDomain. On an Environment that already
+// has login on it only (re)writes the cookie domain, which is how a custom
+// domain added to such an Environment, perhaps written before the field
+// existed, gets the value the chart checks it against
+// (docs/implementation-notes/76-login-in-zone-domains.md).
+func EnableLogin(valuesYAML []byte, cookieDomain string) ([]byte, error) {
 	root, err := decodeDocument(valuesYAML, "values.yaml")
 	if err != nil {
 		return nil, err
 	}
 	setNestedValue(root, []string{"login", "enabled"}, boolNode(true))
+	setNestedValue(root, []string{"platform", "loginCookieDomain"}, scalarNode(cookieDomain))
 	return encodeDocument(root)
 }
 

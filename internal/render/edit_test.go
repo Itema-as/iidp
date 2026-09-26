@@ -203,8 +203,8 @@ func TestEnablePostgresPreservesExistingSecretsList(t *testing.T) {
 	}
 }
 
-func TestEnableLoginSetsEnabled(t *testing.T) {
-	out, err := render.EnableLogin([]byte(testValuesYAML))
+func TestEnableLoginSetsEnabledAndTheCookieDomain(t *testing.T) {
+	out, err := render.EnableLogin([]byte(testValuesYAML), "itma.no")
 	if err != nil {
 		t.Fatalf("EnableLogin: %v", err)
 	}
@@ -214,6 +214,28 @@ func TestEnableLoginSetsEnabled(t *testing.T) {
 	if !strings.Contains(string(out), "login:\n    enabled: true\n") {
 		t.Errorf("login.enabled was not set:\n%s", out)
 	}
+	if !strings.Contains(string(out), "platform:\n    baseDomain: app.itma.no\n    loginCookieDomain: itma.no\n") {
+		t.Errorf("platform.loginCookieDomain was not set next to baseDomain:\n%s", out)
+	}
+}
+
+// Enabling again, as add-capability --domain does for an Environment that
+// already has login, rewrites the cookie domain and leaves one of each key.
+func TestEnableLoginAgainRewritesTheCookieDomain(t *testing.T) {
+	first, err := render.EnableLogin([]byte(testValuesYAML), "app.itma.no")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := render.EnableLogin(first, "itma.no")
+	if err != nil {
+		t.Fatalf("EnableLogin: %v", err)
+	}
+	if got := strings.Count(string(out), "loginCookieDomain:"); got != 1 {
+		t.Errorf("loginCookieDomain appears %d times, want 1:\n%s", got, out)
+	}
+	if !strings.Contains(string(out), "loginCookieDomain: itma.no\n") {
+		t.Errorf("loginCookieDomain was not rewritten:\n%s", out)
+	}
 }
 
 func TestEnableLoginPreservesExistingContent(t *testing.T) {
@@ -221,7 +243,7 @@ func TestEnableLoginPreservesExistingContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := render.EnableLogin(withSecret)
+	out, err := render.EnableLogin(withSecret, "itma.no")
 	if err != nil {
 		t.Fatalf("EnableLogin: %v", err)
 	}
