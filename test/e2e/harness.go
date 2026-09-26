@@ -1096,7 +1096,11 @@ func (c *Cluster) ServeGitRepositories(ctx context.Context, repos ...Repository)
 	if err != nil {
 		return fmt.Errorf("render git-repositories ConfigMap: %w\n%s", err, configMap)
 	}
-	if err := c.Apply(ctx, configMap); err != nil {
+	// Server-side: a client-side apply copies the whole object into the
+	// last-applied-configuration annotation, which may not exceed 256 KiB,
+	// and the packed repositories outgrew that. A ConfigMap itself may
+	// hold 1 MiB.
+	if err := c.Apply(ctx, configMap, "--server-side", "--force-conflicts"); err != nil {
 		return err
 	}
 	if err := c.Apply(ctx, gitServerManifest(checksum)); err != nil {
@@ -1172,12 +1176,21 @@ func (c *Cluster) buildRepository(ctx context.Context, work, bare string, repo R
 // checkRepository and PushToRepository both need a real git client to talk
 // to a server only reachable, from the host, through a port-forward.
 func (c *Cluster) withGitServerPortForward(ctx context.Context, name string, fn func(ctx context.Context, url string) error) error {
+	return c.withPortForward(ctx, "git-server", func(ctx context.Context, base string) error {
+		return fn(ctx, base+"/git/"+name+".git")
+	})
+}
+
+// withPortForward port-forwards a free local port to port 80 of service in
+// GitServerNamespace for the duration of fn, which receives its base URL
+// as seen from the host (http://127.0.0.1:<port>).
+func (c *Cluster) withPortForward(ctx context.Context, service string, fn func(ctx context.Context, base string) error) error {
 	port, err := freePort()
 	if err != nil {
 		return err
 	}
 	forwardCtx, cancel := context.WithCancel(ctx)
-	forward := exec.CommandContext(forwardCtx, "kubectl", "-n", GitServerNamespace, "port-forward", "service/git-server", fmt.Sprintf("%d:80", port))
+	forward := exec.CommandContext(forwardCtx, "kubectl", "-n", GitServerNamespace, "port-forward", "service/"+service, fmt.Sprintf("%d:80", port))
 	forward.Env = c.env()
 	if err := forward.Start(); err != nil {
 		cancel()
@@ -1196,10 +1209,9 @@ func (c *Cluster) withGitServerPortForward(ctx context.Context, name string, fn 
 	// git clone, in PushToRepository) would otherwise race it and fail on a
 	// connection refused a few milliseconds too early.
 	if err := waitForLocalPort(ctx, port, 10*time.Second); err != nil {
-		return fmt.Errorf("kubectl port-forward to git-server never started listening on 127.0.0.1:%d: %w", port, err)
+		return fmt.Errorf("kubectl port-forward to %s never started listening on 127.0.0.1:%d: %w", service, port, err)
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d/git/%s.git", port, name)
-	return fn(ctx, url)
+	return fn(ctx, fmt.Sprintf("http://127.0.0.1:%d", port))
 }
 
 // waitForLocalPort polls until a TCP connection to 127.0.0.1:port succeeds,

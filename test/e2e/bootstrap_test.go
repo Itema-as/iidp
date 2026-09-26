@@ -50,6 +50,11 @@ import (
 // Then (testAppStatus) it proves #94: the gate's status endpoint shows
 // shop-prod, Synced and Healthy, to a developer token fakegithub says can
 // read shop's repository, and refuses brochure to it.
+// Then (testPreviewEnvironments) it proves #95: a pull request labelled
+// preview on notes's repository, served by the harness's fake GitHub to
+// ArgoCD's Pull Request generator, gets a Preview Environment behind
+// Itema login and listed by the status endpoint, and closing it removes
+// the preview with its namespace.
 // Last (testGuardrails) it proves #90: nothing the fixture Applications did,
 // the Scheduled task's Jobs included, failed a guardrail, a NodePort Service
 // is warned about and audited but not denied, and Pod Security refuses a
@@ -189,6 +194,9 @@ func TestBootstrap(t *testing.T) {
 	testMigrationCommandFromIidpYAML(ctx, t, cluster, issuer)
 	// Once shop-prod has a migration and a Scheduled task run to show.
 	testAppStatus(ctx, t, cluster)
+	// Once shop-staging's requests are gone too: a preview runs a small
+	// Application and a database while it is open.
+	testPreviewEnvironments(ctx, t, cluster)
 	// Last, once every fixture Environment has been created, deployed,
 	// migrated and (shop-staging) deleted: nothing any of that did may
 	// have tripped a guardrail.

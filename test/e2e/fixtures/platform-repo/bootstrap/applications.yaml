@@ -1,5 +1,7 @@
 # Discovers every Environment's ArgoCD Application under applications/: the
-# CLI writes applications/<name>/<environment>/application.yaml (see
+# CLI writes applications/<name>/<environment>/application.yaml, and each
+# Application's Preview Environments as the ApplicationSet
+# applications/<name>/previews/applicationset.yaml (see
 # docs/platform-repository.md in the iidp repository), and nothing else made
 # ArgoCD pick those up. Not part of the iidp bootstrap chart, like
 # platform-components.yaml and platform-secrets.yaml above: every Platform
@@ -19,7 +21,7 @@ spec:
     path: applications
     directory:
       recurse: true
-      include: '*/*/application.yaml'
+      include: '{*/*/application.yaml,*/previews/applicationset.yaml}'
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

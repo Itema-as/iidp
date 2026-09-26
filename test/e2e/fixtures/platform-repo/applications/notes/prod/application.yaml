@@ -1,0 +1,55 @@
+# The ArgoCD Application for notes's prod Environment, which has no image
+# yet, in the shape iidp app create --path create --staging --postgres
+# --login --previews writes. notes is the fixture's Application with Preview
+# Environments (TestBootstrap's testPreviewEnvironments); neither of its
+# own Environments is ever released, so they cost the node nothing. The
+# one deviation from what the CLI writes is shop's: the chart from this
+# repository's iidp.git, since kind has no GHCR.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: notes-prod
+  namespace: argocd
+  labels:
+    iidp.itema.no/application: notes
+    iidp.itema.no/environment: prod
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp.git
+      targetRevision: main
+      path: chart/application
+      helm:
+        valueFiles:
+          - $values/applications/notes/prod/values.yaml
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+      targetRevision: main
+      ref: values
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+      targetRevision: main
+      path: applications/notes/prod/sops
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: notes-prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    managedNamespaceMetadata:
+      labels:
+        iidp.itema.no/application: notes
+        iidp.itema.no/environment: prod
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/warn: restricted
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

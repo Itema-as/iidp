@@ -68,6 +68,13 @@ type Config struct {
 	// authenticate: the gate takes the App from the cluster Secret
 	// cloud-init writes (docs/implementation-notes/60-deploy-gate.md).
 	GitHubApp GitHubApp `yaml:"githubApp"`
+	// GitHubAPI is the GitHub REST API the Preview Environments' pull
+	// request generator lists an Application repository's pull requests
+	// with, written into each previews ApplicationSet as ArgoCD's api
+	// field. Empty, the default, means GitHub.com and writes nothing; only
+	// a GitHub Enterprise (https://<host>/api/v3) or a test Platform sets
+	// it.
+	GitHubAPI string `yaml:"githubAPI"`
 }
 
 // GitHubApp documents the org GitHub App id and installation id the

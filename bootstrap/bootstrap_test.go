@@ -135,6 +135,17 @@ func TestPlatformValuesReachTheComponents(t *testing.T) {
 	if got := get[bool](t, argocd, "configs", "params", "server.insecure"); !got {
 		t.Errorf("argocd server.insecure not set; Traefik terminates TLS")
 	}
+	// Preview Environments are ApplicationSets (#95): the controller runs,
+	// with a small request.
+	if got := get[int](t, argocd, "applicationSet", "replicas"); got != 1 {
+		t.Errorf("argocd applicationSet.replicas = %d, want 1", got)
+	}
+	if got := fmt.Sprint(get[object](t, argocd, "applicationSet", "resources", "requests")); got != "map[cpu:10m memory:64Mi]" {
+		t.Errorf("argocd applicationSet requests = %s, want 10m CPU and 64Mi", got)
+	}
+	if got := get[string](t, argocd, "applicationSet", "resources", "limits", "memory"); got != "256Mi" {
+		t.Errorf("argocd applicationSet memory limit = %q, want 256Mi", got)
+	}
 
 	dns := values("external-dns")
 	if got := get[string](t, dns, "policy"); got != "sync" {

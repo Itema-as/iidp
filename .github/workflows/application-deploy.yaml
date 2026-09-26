@@ -12,6 +12,13 @@
 # On a v* tag: retags the already-built SHA image with the tag's version,
 # with no rebuild, and runs `iidp ci set-image` to promote it to prod.
 #
+# On a pull request labelled `preview`: builds the pull request's head and
+# pushes it tagged with the head SHA, which its Preview Environment runs.
+# That is all: the Platform finds the pull request itself (ArgoCD's Pull
+# Request generator, docs/adr/0006-preview-environments-from-an-argocd-applicationset.md),
+# so nothing here calls it. Without the label the job is skipped, and the
+# run costs no Actions minutes.
+#
 # Both jobs run `iidp ci set-image` in a checkout of the commit they deploy
 # (the pushed commit, or the tagged one), because it reads iidp.yaml there
 # and sends its migrationCommand and Scheduled tasks with the image: each
@@ -124,6 +131,52 @@ jobs:
         env:
           APPLICATION: ${{ inputs.application }}
         run: iidp ci set-image "${APPLICATION}" auto "${GITHUB_SHA}"
+
+  preview:
+    name: Build and push the preview image
+    # Only for a pull request that has the preview label. A labeled event
+    # for another label changes nothing about the image, so it builds
+    # nothing either.
+    if: >-
+      github.event_name == 'pull_request'
+      && contains(github.event.pull_request.labels.*.name, 'preview')
+      && (github.event.action != 'labeled' || github.event.label.name == 'preview')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # The pull request's head, not the merge commit a pull_request event
+      # checks out by default: the Preview Environment runs the image
+      # tagged with the head SHA, the one the generator reports.
+      - name: Checkout the pull request's head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Image name
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+          APPLICATION: ${{ inputs.application }}
+        run: echo "name=ghcr.io/${OWNER,,}/${APPLICATION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image.outputs.name }}:${{ github.event.pull_request.head.sha }}
 
   promote:
     name: Promote to prod

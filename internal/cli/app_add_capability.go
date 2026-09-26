@@ -15,6 +15,7 @@ import (
 	"github.com/Itema-as/iidp/internal/migrate"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
+	"github.com/Itema-as/iidp/internal/render"
 )
 
 // addCapabilityOptions are the flags of app add-capability.
@@ -27,6 +28,7 @@ type addCapabilityOptions struct {
 	size             string
 	login            bool
 	loginGroups      []string
+	previews         bool
 	platformRepo     string
 }
 
@@ -52,7 +54,10 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 			"members of Entra groups, replacing the Application's sign-in groups in\n" +
 			"every Environment; --login-group '' removes them all, letting every\n" +
 			"Itema user in again. It needs Itema login, already on or given with\n" +
-			"--login in the same run.\n\n" +
+			"--login in the same run. --previews gives every open pull request\n" +
+			"labelled " + render.PreviewLabel + " on the Application repository a Preview Environment, with\n" +
+			"staging's values and secrets; it needs a staging Environment (already\n" +
+			"there or added with --staging) and a repository binding (iidp app bind).\n\n" +
 			"Itema login and custom domains go together only inside platform.yaml's\n" +
 			"cloudflareZone, the domain the sign-in cookie is set for: --login is\n" +
 			"refused while prod has, or is given, a custom domain outside it, and so\n" +
@@ -74,6 +79,7 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 	f.StringVar(&opts.size, "size", "", "New size for every Environment: small, medium or large")
 	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included; refused while a custom domain is outside platform.yaml's cloudflareZone, the sign-in cookie's domain")
 	f.StringArrayVar(&opts.loginGroups, "login-group", nil, "Entra group object id (a GUID) whose members may sign in; repeatable, a member of any one gets in. Replaces the sign-in groups of every Environment; --login-group '' removes them all. Needs Itema login, already on or given with --login")
+	f.BoolVar(&opts.previews, "previews", false, "Give every open pull request labelled "+render.PreviewLabel+" on the Application repository a Preview Environment at <name>-pr-<number>.<baseDomain>: staging's values and secrets, the smallest size, Itema login, an empty database without backups, removed when the pull request closes. Needs a staging Environment and a repository binding")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
 	return cmd
@@ -90,8 +96,8 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 	// --login-group is checked with Changed: --login-group '' (no groups at
 	// all) is a request too.
 	setLoginGroups := cmd.Flags().Changed("login-group")
-	if !opts.postgres && !opts.staging && len(opts.domains) == 0 && opts.size == "" && !opts.login && !setLoginGroups {
-		return fmt.Errorf("at least one Capability flag is required: --postgres, --staging, --domain, --size, --login or --login-group")
+	if !opts.postgres && !opts.staging && len(opts.domains) == 0 && opts.size == "" && !opts.login && !setLoginGroups && !opts.previews {
+		return fmt.Errorf("at least one Capability flag is required: --postgres, --staging, --domain, --size, --login, --login-group or --previews")
 	}
 	loginGroups, err := parseLoginGroups(opts.loginGroups)
 	if err != nil {
@@ -132,6 +138,7 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 		Login:          opts.login,
 		SetLoginGroups: setLoginGroups,
 		LoginGroups:    loginGroups,
+		Previews:       opts.previews,
 	}, out)
 	if err != nil {
 		return err
@@ -172,6 +179,9 @@ func capabilitySummary(opts addCapabilityOptions, setLoginGroups bool, loginGrou
 		} else {
 			s = append(s, "sign-in groups "+strings.Join(loginGroups, ", "))
 		}
+	}
+	if opts.previews {
+		s = append(s, "Preview Environments")
 	}
 	return s
 }
@@ -229,6 +239,7 @@ func printAddCapabilityResult(out io.Writer, name string, res platformrepo.Resul
 	if res.StagingAddress != "" {
 		fmt.Fprintf(out, "  staging:  %s\n", res.StagingAddress)
 	}
+	printPreviews(out, res)
 	if res.Login {
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
 		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(res.LoginGroups))

@@ -13,27 +13,34 @@ for the -staging suffix inside the 63-character limit.
 {{- end -}}
 
 {{/*
-The Environment, which must be prod or staging.
+The Environment: prod, staging, or pr-<number> for the Preview Environment
+of one pull request (docs/adr/0006-preview-environments-from-an-argocd-applicationset.md),
+which the Application's previews ApplicationSet sets over staging's values.
 */}}
 {{- define "application.environment" -}}
 {{- $environment := .Values.environment | toString -}}
-{{- if not (has $environment (list "prod" "staging")) -}}
-{{- fail (printf "environment must be prod or staging, got %q" $environment) -}}
+{{- if not (or (has $environment (list "prod" "staging")) (regexMatch "^pr-[1-9][0-9]*$" $environment)) -}}
+{{- fail (printf "environment must be prod, staging or pr-<pull request number>, got %q" $environment) -}}
 {{- end -}}
 {{- $environment -}}
 {{- end -}}
 
 {{/*
 The name every object of this Environment carries. prod is the unadorned
-Application name; staging carries the -staging suffix, the same shape as the
-Platform address, so both Environments can share a namespace.
+Application name; staging carries the -staging suffix and a Preview
+Environment -pr-<number>, the same shape as the Platform address, so
+Environments can share a namespace.
 */}}
 {{- define "application.fullname" -}}
 {{- $name := include "application.name" . -}}
 {{- if eq (include "application.environment" .) "prod" -}}
 {{- $name -}}
 {{- else -}}
-{{- printf "%s-%s" $name (include "application.environment" .) -}}
+{{- $fullname := printf "%s-%s" $name (include "application.environment" .) -}}
+{{- if gt (len $fullname) 63 -}}
+{{- fail (printf "%s is longer than the 63 characters a Service name and a DNS label allow; the Application's name is too long for this Environment" $fullname) -}}
+{{- end -}}
+{{- $fullname -}}
 {{- end -}}
 {{- end -}}
 
@@ -47,6 +54,9 @@ Helm renders first. It produces no output.
 {{- $_ = include "application.domains" . -}}
 {{- if not (kindIs "bool" .Values.runAsNonRoot) -}}
 {{- fail (printf "runAsNonRoot must be true or false, got %v" .Values.runAsNonRoot) -}}
+{{- end -}}
+{{- if not (kindIs "bool" .Values.postgres.backups) -}}
+{{- fail (printf "postgres.backups must be true or false, got %v" .Values.postgres.backups) -}}
 {{- end -}}
 {{- if hasKey (.Values.env | default dict) "PORT" -}}
 {{- fail "env must not set PORT; it is injected from port" -}}
@@ -76,7 +86,7 @@ same way whether or not the Environment has been released yet.
 */ -}}
 {{- $_ = required "image.repository is required" .Values.image.repository -}}
 {{- $_ = include "application.resources" . -}}
-{{- if .Values.postgres.enabled -}}
+{{- if include "application.postgres.backups" . -}}
 {{- $_ = include "application.postgres.backupPath" . -}}
 {{- $_ = include "application.postgres.objectStorageEndpoint" . -}}
 {{- end -}}
@@ -121,6 +131,17 @@ Whether the Postgres Capability is on.
 */}}
 {{- define "application.postgres.enabled" -}}
 {{- if .Values.postgres.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Whether the database is backed up: "true" with Postgres on and
+postgres.backups not false. Continuous WAL archiving, the daily base backup
+and the final Backup PreDelete hook all follow it. A Preview Environment
+turns it off: its database is empty and thrown away with the pull request,
+so it has nothing worth keeping and must not wait on a backup to be deleted.
+*/}}
+{{- define "application.postgres.backups" -}}
+{{- if and .Values.postgres.enabled .Values.postgres.backups -}}true{{- end -}}
 {{- end -}}
 
 {{/*

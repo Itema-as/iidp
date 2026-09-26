@@ -39,6 +39,9 @@ type DeleteResult struct {
 	// about the final Backup PreDelete hook (there is nothing for it to say
 	// when no Environment ever had a database).
 	PostgresEnabled bool
+	// Previews is true when the Application had Preview Environments,
+	// whose ApplicationSet was removed with the rest.
+	Previews bool
 }
 
 // DeleteApplication removes application from the Platform repository in one
@@ -139,6 +142,17 @@ func (w *Writer) attemptDelete(ctx context.Context, application string, out io.W
 	case !errors.Is(err, fs.ErrNotExist):
 		return DeleteResult{}, fmt.Errorf("checking for %s: %w", RepositoryBindingPath(application), err)
 	}
+	// So do the Preview Environments: ArgoCD deletes the ApplicationSet,
+	// which deletes every preview with its namespace. They take no final
+	// backup, and they render from staging's values.yaml and sops/, which
+	// stay, like every Environment's.
+	previews, err := previewsPresent(dir, application)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+	if previews {
+		removeFiles = append(removeFiles, PreviewsPath(application))
+	}
 
 	fmt.Fprintf(out, "Removing %v...\n", removeFiles)
 	if err := repo.Remove(ctx, removeFiles...); err != nil {
@@ -160,7 +174,7 @@ func (w *Writer) attemptDelete(ctx context.Context, application string, out io.W
 		}
 		return DeleteResult{}, fmt.Errorf("pushing to %s: %w\nIf this is a permission error, ask the Platform admin for write access to %s", platform.Repository, err, platform.Repository)
 	}
-	return DeleteResult{Deleted: removeDirs, PostgresEnabled: postgresEnabled}, nil
+	return DeleteResult{Deleted: removeDirs, PostgresEnabled: postgresEnabled, Previews: previews}, nil
 }
 
 // environmentHasPostgres reads postgres.enabled out of an Environment's

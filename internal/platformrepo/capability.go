@@ -56,6 +56,11 @@ type Capabilities struct {
 	// (docs/implementation-notes/92-sign-in-groups.md).
 	SetLoginGroups bool
 	LoginGroups    []string
+	// Previews adds the Preview Environments' ApplicationSet (PreviewsPath).
+	// It needs a staging Environment, already there or added by Staging, and
+	// a repository binding
+	// (docs/adr/0006-preview-environments-from-an-argocd-applicationset.md).
+	Previews bool
 }
 
 // environmentState is the handful of values AddCapabilities reads back out
@@ -122,6 +127,25 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 
 	if err := checkCapabilitiesAbsent(application, caps, prod, stagingExists); err != nil {
 		return Result{}, err
+	}
+	previewsExist, err := previewsPresent(dir, application)
+	if err != nil {
+		return Result{}, err
+	}
+	// A binding that is not YAML binds nothing, the way every other reader
+	// takes it (docs/platform-repository.md).
+	binding, bound, bindingErr := ReadRepositoryBinding(dir, application)
+	bound = bound && bindingErr == nil
+	if caps.Previews {
+		switch {
+		case previewsExist:
+			return Result{}, fmt.Errorf("%w: %q already has Preview Environments", ErrCapabilityExists, application)
+		case !stagingExists && !caps.Staging:
+			return Result{}, fmt.Errorf("%w: %q has no staging Environment", ErrPreviewsWithoutStaging, application)
+		}
+		if _, _, err := previewsRepository(application, binding, bound); err != nil {
+			return Result{}, err
+		}
 	}
 	if caps.Postgres && (cfg.BackupsBucket == "" || cfg.ObjectStorageEndpoint == "") {
 		return Result{}, fmt.Errorf("%s in %s sets no backupsBucket or objectStorageEndpoint, needed for the Postgres Capability", ConfigFile, platform.Repository)
@@ -211,6 +235,19 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		}
 	}
 
+	// Last, once staging's application.yaml is final: the ApplicationSet
+	// copies its sources.
+	var previewFiles []string
+	if caps.Previews {
+		previewFiles, err = writePreviews(dir, application, cfg, binding, bound)
+	} else {
+		previewFiles, err = refreshPreviews(dir, application, cfg, files)
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	files = append(files, previewFiles...)
+
 	if err := repo.Add(ctx, files...); err != nil {
 		return Result{}, err
 	}
@@ -244,6 +281,9 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 	}
 	if stagingExists || caps.Staging {
 		res.StagingAddress = "https://" + application + "-staging." + cfg.BaseDomain
+	}
+	if previewsExist || caps.Previews {
+		res.PreviewAddress = PreviewAddress(application, cfg.BaseDomain)
 	}
 	return res, nil
 }
@@ -417,6 +457,9 @@ func capabilityNames(caps Capabilities) []string {
 	}
 	if caps.SetLoginGroups {
 		names = append(names, "login-group")
+	}
+	if caps.Previews {
+		names = append(names, "previews")
 	}
 	return names
 }

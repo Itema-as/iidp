@@ -1183,15 +1183,20 @@ stage_github_app() {
   step "GitHub App name: iidp-deploy"
   step "Homepage URL: ${platform_repo_url}"
   step "Webhook: untick Active"
-  step "Repository permissions > Contents: Read and write (leave everything else at No access)"
+  step "Repository permissions > Contents: Read and write, and Pull requests: Read-only (leave everything else at No access)"
   step "Where can this GitHub App be installed? Only on this account"
   step "Create GitHub App. The App's settings page shows its App ID."
   ask GITHUB_APP_ID "App ID shown on the settings page:"
   step "On the same page, Private keys > Generate a private key. The .pem file downloads."
   ask_path PEM_PATH "Path to the downloaded private key .pem file:"
-  step "Install it on the Platform repository only, from Install App in the App's left sidebar:"
+  # All repositories, not the Platform repository alone: ArgoCD's Pull
+  # Request generator lists the pull requests of every Application
+  # repository with this App for Preview Environments, and the CLI creates
+  # Application repositories later that an installation on selected
+  # repositories would not include (docs/implementation-notes/95-preview-environments.md).
+  step "Install it on every repository of ${GITHUB_ORG}, from Install App in the App's left sidebar:"
   print_url "https://github.com/organizations/${GITHUB_ORG}/settings/apps/iidp-deploy/installations"
-  step "Install next to ${GITHUB_ORG} > Only select repositories > ${platform_repo_name} > Install."
+  step "Install next to ${GITHUB_ORG} > All repositories > Install. ArgoCD and the Deploy gate use it on ${platform_repo_name}, and ArgoCD reads the pull requests of every Application repository with it, for Preview Environments."
   step "The page GitHub lands on ends in /installations/<id>."
   ask GITHUB_APP_INSTALLATION_ID "Installation id from that URL:"
 
@@ -1623,8 +1628,10 @@ write_bootstrap_applications() {
   mkdir -p "$(dirname "$file")"
   cat > "$file" <<EOF
 # Discovers every Environment's ArgoCD Application under applications/: the
-# CLI writes applications/<name>/<environment>/application.yaml, and the root
-# Application only syncs bootstrap/. Written by scripts/bootstrap-wizard.sh.
+# CLI writes applications/<name>/<environment>/application.yaml, and each
+# Application's Preview Environments as the ApplicationSet
+# applications/<name>/previews/applicationset.yaml. The root Application
+# only syncs bootstrap/. Written by scripts/bootstrap-wizard.sh.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -1638,7 +1645,7 @@ spec:
     path: applications
     directory:
       recurse: true
-      include: '*/*/application.yaml'
+      include: '{*/*/application.yaml,*/previews/applicationset.yaml}'
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

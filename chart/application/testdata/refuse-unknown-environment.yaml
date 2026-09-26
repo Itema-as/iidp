@@ -1,0 +1,8 @@
+application:
+  name: shop
+environment: pr-007
+platform:
+  baseDomain: app.itma.no
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: "1.0.0"

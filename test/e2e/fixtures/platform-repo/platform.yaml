@@ -18,6 +18,12 @@ grafanaURL: https://example.grafana.net
 # The application chart version the CLI writes into new Environments.
 chartVersion: 0.1.0
 
+# The GitHub API the Preview Environments' pull request generator asks,
+# written into each previews ApplicationSet (applications/notes/previews/).
+# Read by the CLI. The harness's fake GitHub, in the path GitHub
+# Enterprise's API has, since kind has no route to GitHub.
+githubAPI: http://fake-github.iidp-e2e.svc.cluster.local/api/v3
+
 # The org GitHub App the Deploy gate commits deploys as (documentation only).
 githubApp:
   id: 1

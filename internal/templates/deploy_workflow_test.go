@@ -11,8 +11,13 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Itema-as/iidp/internal/platform"
+	"github.com/Itema-as/iidp/internal/render"
 	"github.com/Itema-as/iidp/internal/templates"
 )
+
+// previewLabel is the pull request label that asks for a Preview
+// Environment: the one the CLI's ApplicationSet filters on.
+const previewLabel = render.PreviewLabel
 
 // lookup walks nested maps and lists by string keys and integer indexes,
 // failing the test if the path does not exist.
@@ -103,6 +108,12 @@ func TestDeployWorkflowIsAShortCaller(t *testing.T) {
 			}
 			if got := lookup(t, doc, "on", "push", "tags", 0); got != "v*" {
 				t.Errorf(`on.push.tags[0] = %v, want "v*"`, got)
+			}
+			// Preview Environments (#95): the reusable workflow builds a
+			// labelled pull request's image, so the caller passes the
+			// events that can change it or add the label.
+			if got := fmt.Sprint(lookup(t, doc, "on", "pull_request", "types")); got != "[opened synchronize reopened labeled]" {
+				t.Errorf("on.pull_request.types = %v, want [opened synchronize reopened labeled]", got)
 			}
 			jobs := lookup(t, doc, "jobs").(map[string]any)
 			if len(jobs) != 1 {
@@ -260,6 +271,112 @@ func TestReusableDeployWorkflowJobs(t *testing.T) {
 	}
 	if a, b := installScript(t, doc, "build"), installScript(t, doc, "promote"); a != b {
 		t.Errorf("the two jobs' install scripts differ; keep them identical")
+	}
+}
+
+// pullRequestEvent is the github context of a pull_request event whose
+// pull request carries labels; action and the label the event is about
+// (for labeled) as GitHub sends them.
+func pullRequestEvent(action, label string, labels ...string) map[string]any {
+	var names []any
+	for _, l := range labels {
+		names = append(names, map[string]any{"name": l})
+	}
+	event := map[string]any{
+		"action": action,
+		"pull_request": map[string]any{
+			"labels": names,
+			"head":   map[string]any{"sha": "0123456789abcdef0123456789abcdef01234567"},
+		},
+	}
+	if label != "" {
+		event["label"] = map[string]any{"name": label}
+	}
+	return map[string]any{"github": map[string]any{
+		"event_name": "pull_request",
+		"ref":        "refs/pull/7/merge",
+		"event":      event,
+	}}
+}
+
+// Which jobs of the reusable workflow each event runs, from their if:
+// conditions: main deploys, a v* tag promotes, and a pull request builds
+// its preview image only while it has the preview label. Anything else
+// runs nothing, so an ordinary pull request costs no Actions minutes.
+func TestReusableDeployWorkflowRunsTheRightJobForEachEvent(t *testing.T) {
+	doc, _ := readReusableWorkflow(t)
+	jobs := lookup(t, doc, "jobs").(map[string]any)
+	push := func(ref string) map[string]any {
+		return map[string]any{"github": map[string]any{"event_name": "push", "ref": ref, "event": map[string]any{}}}
+	}
+	for _, tc := range []struct {
+		name string
+		ctx  map[string]any
+		want string
+	}{
+		{"push to main", push("refs/heads/main"), "build"},
+		{"v* tag", push("refs/tags/v1.2.3"), "promote"},
+		{"push to another branch", push("refs/heads/feature"), ""},
+		{"pull request opened with the label", pullRequestEvent("opened", "", "bug", "preview"), "preview"},
+		{"pull request pushed to, labelled", pullRequestEvent("synchronize", "", "preview"), "preview"},
+		{"pull request reopened, labelled", pullRequestEvent("reopened", "", "preview"), "preview"},
+		{"the label added", pullRequestEvent("labeled", "preview", "preview"), "preview"},
+		{"another label added to a labelled pull request", pullRequestEvent("labeled", "bug", "preview", "bug"), ""},
+		{"pull request opened without the label", pullRequestEvent("opened", ""), ""},
+		{"pull request pushed to, unlabelled", pullRequestEvent("synchronize", "", "bug"), ""},
+		{"another label added to an unlabelled pull request", pullRequestEvent("labeled", "bug", "bug"), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var ran []string
+			for name, job := range jobs {
+				cond, _ := job.(map[string]any)["if"].(string)
+				if cond == "" {
+					t.Fatalf("job %s has no if:; every job must say which events it runs for", name)
+				}
+				if evalIf(t, cond, tc.ctx) {
+					ran = append(ran, name)
+				}
+			}
+			if got := strings.Join(ran, ","); got != tc.want {
+				t.Errorf("jobs run = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The preview job builds the pull request's head and pushes it tagged
+// with the head SHA, the tag the Preview Environment's ApplicationSet
+// takes from the generator, and calls nothing on the Platform: no iidp,
+// no OIDC token.
+func TestReusableDeployWorkflowPreviewJobOnlyBuildsTheHead(t *testing.T) {
+	doc, _ := readReusableWorkflow(t)
+	job := lookup(t, doc, "jobs", "preview").(map[string]any)
+	if perms := job["permissions"].(map[string]any); perms["id-token"] != nil {
+		t.Errorf("jobs.preview.permissions = %v, want no id-token: it deploys nothing", perms)
+	}
+	if cond := job["if"].(string); !strings.Contains(cond, "'"+previewLabel+"'") {
+		t.Errorf("jobs.preview.if = %q, want it to test the %s label", cond, previewLabel)
+	}
+	var checkedOut, pushed bool
+	for _, s := range job["steps"].([]any) {
+		step := s.(map[string]any)
+		if run, _ := step["run"].(string); strings.Contains(run, "iidp") || strings.Contains(run, "curl") {
+			t.Errorf("jobs.preview runs %q, want nothing that talks to the Platform", run)
+		}
+		uses, _ := step["uses"].(string)
+		with, _ := step["with"].(map[string]any)
+		switch {
+		case strings.HasPrefix(uses, "actions/checkout"):
+			checkedOut = with["ref"] == "${{ github.event.pull_request.head.sha }}"
+		case strings.HasPrefix(uses, "docker/build-push-action"):
+			pushed = with["push"] == true && with["tags"] == "${{ steps.image.outputs.name }}:${{ github.event.pull_request.head.sha }}"
+		}
+	}
+	if !checkedOut {
+		t.Error("jobs.preview does not check out the pull request's head SHA")
+	}
+	if !pushed {
+		t.Error("jobs.preview does not push the image tagged with the head SHA")
 	}
 }
 

@@ -25,9 +25,14 @@ applications/
     staging/                  the same files, when the Application has a staging Environment
                                (--staging on iidp app create), its own address
                                (<name>-staging.<baseDomain>) and its own database
+    previews/
+      applicationset.yaml     the ArgoCD ApplicationSet for the Preview Environments, when the
+                               Application has them (--previews; below)
 ```
 
 `iidp app delete` no longer writes a `Backup` manifest or a `final-backup-<environment>` Application of its own: the final Postgres backup is now taken by an ArgoCD `PreDelete` hook the chart itself renders (`chart/application/templates/final-backup-job.yaml`). It removes only each Environment's `application.yaml` (and the Application's `repository.yaml`), deliberately leaving `values.yaml` (and any `sops/` secrets) behind -- ArgoCD needs `values.yaml` to still exist to render that PreDelete hook at deletion time; see "`iidp app delete`" below and [`docs/implementation-notes/39-final-backup-predelete-hook.md`](implementation-notes/39-final-backup-predelete-hook.md).
+
+Preview Environments are the one exception to this repository holding every Environment's desired state ([ADR-0006](adr/0006-preview-environments-from-an-argocd-applicationset.md)): what exists is `previews/applicationset.yaml` plus the set of open pull requests labelled `preview` on the Application repository, which is in GitHub. No preview has a directory or a commit of its own.
 
 The CLI only ever adds and changes files under `applications/<name>/`. Anything else in the repository is left alone, so an emergency hand edit elsewhere does not break the next `iidp` run.
 
@@ -47,6 +52,7 @@ Read from the root of the repository on every run, so changing a Platform-wide s
 | `backupsBucket` | only for `--postgres` | The Object Storage bucket every Application database is backed up to, written into the Environment's `values.yaml` as `platform.backupsBucket`. Not required without `--postgres`. |
 | `objectStorageEndpoint` | only for `--postgres` | The S3 endpoint of `backupsBucket`'s location, for example `https://hel1.your-objectstorage.com`, written as `platform.objectStorageEndpoint`. Not required without `--postgres`. |
 | `githubApp.id`, `githubApp.installationId` | documentation only | The org GitHub App (`iidp-deploy`) the Deploy gate commits as and ArgoCD reads this repository with (`bootstrap/README.md`), and the id of its installation, recorded here for a human to see which App and installation are in play. Nothing reads them to authenticate: the gate and ArgoCD take the App's id, installation id and key from the Secret cloud-init writes. |
+| `githubAPI` | no | The GitHub REST API the Preview Environments' pull request generator asks, written into each previews ApplicationSet as ArgoCD's `api`. Empty, the default, means GitHub.com, and nothing is written; only a GitHub Enterprise (`https://<host>/api/v3`) or a test Platform (the kind fixture's fake GitHub) sets it. |
 | `deployGate.*` | no (bootstrap only) | The Deploy gate's settings, all with working defaults for the Platform (`bootstrap/values.yaml`): Itema-as's org id, the image, the OIDC issuer, the GitHub API and this repository's URL. Only a test Platform overrides them; the kind fixture does. The CLI renders the gate's URL, `https://deploy.<baseDomain>`, from `baseDomain` alone. |
 
 ```yaml
@@ -167,7 +173,7 @@ spec:
 
 What the bootstrap must provide for this to reconcile: the `default` ArgoCD project (or a stricter one, if the bootstrap changes `project` here and in the CLI together) allowed to use both source repositories and to deploy to any namespace on the in-cluster server; and ArgoCD credentials for the Platform repository and, if the chart package on GHCR is private, for the OCI registry. Nothing has to be replicated into Environment namespaces: the Platform's wildcard certificate is Traefik's default certificate (a `TLSStore` named `default`, see the chart README), so a new namespace needs no secret of its own.
 
-Nothing makes ArgoCD notice a file under `applications/` by itself: the root Application only syncs `bootstrap/` (see [`bootstrap/README.md`](../bootstrap/README.md)). `bootstrap/applications.yaml` is the file that does, one more hand-written Application next to `platform-components.yaml` and `platform-secrets.yaml`: a directory source on the Platform repository itself, path `applications`, `directory: {recurse: true, include: '*/*/application.yaml'}`. Every Application repository written by the CLI is picked up as soon as it is pushed, with no further wiring; the fixture Platform repository ([`test/e2e/fixtures/platform-repo`](../test/e2e/fixtures/platform-repo)) carries this file, and the kind end-to-end test proves it works. See [`docs/implementation-notes/09-e2e-fixture-application.md`](implementation-notes/09-e2e-fixture-application.md) for the alternatives considered.
+Nothing makes ArgoCD notice a file under `applications/` by itself: the root Application only syncs `bootstrap/` (see [`bootstrap/README.md`](../bootstrap/README.md)). `bootstrap/applications.yaml` is the file that does, one more hand-written Application next to `platform-components.yaml` and `platform-secrets.yaml`: a directory source on the Platform repository itself, path `applications`, `directory: {recurse: true, include: '{*/*/application.yaml,*/previews/applicationset.yaml}'}`. Every Environment the CLI writes, and every Application's Preview Environments' ApplicationSet, is picked up as soon as it is pushed, with no further wiring; the fixture Platform repository ([`test/e2e/fixtures/platform-repo`](../test/e2e/fixtures/platform-repo)) carries this file, and the kind end-to-end test proves it works. See [`docs/implementation-notes/09-e2e-fixture-application.md`](implementation-notes/09-e2e-fixture-application.md) for the alternatives considered.
 
 ## `applications/<name>/<environment>/values.yaml`
 
@@ -211,7 +217,7 @@ tasks:
       command: node scripts/cleanup.js
 ```
 
-`runTasks` (chart default `true`) is not written by the CLI or the gate either; a Preview Environment sets it to `false` so it renders no CronJob from the tasks it shares with staging ([`chart/application/README.md`](../chart/application/README.md)). `iidp app add-capability --staging` does not copy prod's `tasks`: staging's first deploy brings its own.
+`runTasks` (chart default `true`) is not written by the CLI or the gate either; a Preview Environment sets it to `false` so it renders no CronJob from the tasks it shares with staging ([`chart/application/README.md`](../chart/application/README.md)). Nor is `postgres.backups` (chart default `true`), which a Preview Environment sets to `false` (below). `iidp app add-capability --staging` does not copy prod's `tasks`: staging's first deploy brings its own.
 
 When the first write comes depends on the Application: prod without staging gets it on the next push to `main`; with `--staging`, staging gets it on the next push to `main` and prod only on the first `v*` tag, when the deploy workflow promotes staging's image, which can be weeks later; an Adopt Environment waits for its pull request to be merged; and a staging Environment added later with `add-capability --staging` starts empty again. `iidp ci set-image` refuses an empty tag, so nothing in the Platform's own flow ever turns a released Environment back into an unreleased one. Doing so by hand would make ArgoCD prune everything the Environment runs except its database. The chart marks the Postgres `Cluster`, `ObjectStore` and `ScheduledBackup` `Prune=false`, so they stay running and the Environment shows OutOfSync until the edit is undone. The same applies to a hand-set `postgres.enabled: false`. `iidp app delete` is a cascade deletion, not a prune, and still removes the database after its final backup. See [`docs/implementation-notes/47-unreleased-environment.md`](implementation-notes/47-unreleased-environment.md).
 
@@ -229,6 +235,99 @@ When the first write comes depends on the Application: prod without staging gets
 
   **Accepted trade-off.** The browser sends the sign-in cookie to every host under `cloudflareZone`, including hosts the Platform does not run, such as the website or a SaaS CNAME. Whoever controls one can capture a signed-in user's session and replay it against every login-protected Application until it expires (7 days). See [`bootstrap/README.md`](../bootstrap/README.md#itema-login) and [`docs/implementation-notes/76-login-in-zone-domains.md`](implementation-notes/76-login-in-zone-domains.md).
 - **`--login-group <object-id>`** (repeatable) writes `login.groups` into every Environment: the Entra group object ids whose members may sign in, lowercased, in the order given. A member of any one gets in; a signed-in user in none gets a 403. Without it `login.groups` is `[]` and every Itema user gets in, as before. It needs `--login`, and without it the command is refused. Only the shape of each id is checked, a GUID, and one given twice is refused: the CLI has no Entra access, so a GUID that is no group of Itema's lets nobody in. A group's object id is on its Overview page in the Entra admin center, or `az ad group show --group <name> --query id -o tsv` prints it. The chart gives such an Environment a ForwardAuth `Middleware` of its own, `<name>-itema-login` in its namespace, which asks the same oauth2-proxy with `allowed_groups=<ids>`, and every Ingress names it instead of the shared one ([`chart/application/README.md`](../chart/application/README.md#conventions-the-chart-encodes)). Membership is read from the Entra ID token when the user signs in, so a change to a group reaches a user already signed in only at their next sign-in, within 7 days; see [`docs/implementation-notes/92-sign-in-groups.md`](implementation-notes/92-sign-in-groups.md).
+- **`--previews`** writes `applications/<name>/previews/applicationset.yaml`, the Preview Environments' ApplicationSet (below), in the same commit, after staging's files, which it is rendered from. It needs `--staging` ("previews use staging's secrets; add --staging first") and `--path create` or `--path adopt`, whose binding names the repository whose pull requests it follows; both are refused before anything is created.
+
+## `applications/<name>/previews/applicationset.yaml`: Preview Environments
+
+Written by `iidp app create --previews` (with `--staging`, and `--path create` or `--path adopt`) and `iidp app add-capability --previews`, removed by `iidp app delete`. One ArgoCD `ApplicationSet` per Application, `<name>-previews` in the `argocd` namespace, found by `bootstrap/applications.yaml`'s `*/previews/applicationset.yaml` ([`bootstrap/README.md`](../bootstrap/README.md#applicationsyaml)). Its Pull Request generator makes one Environment for each open pull request labelled `preview` on the Application repository, and deletes it when the pull request closes or loses the label ([ADR-0006](adr/0006-preview-environments-from-an-argocd-applicationset.md)):
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: shop-previews
+  namespace: argocd
+  labels:
+    iidp.itema.no/application: shop
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:
+    - pullRequest:
+        github:
+          owner: Itema-as
+          repo: shop
+          appSecretName: platform-repo-github-app
+          labels:
+            - preview
+        requeueAfterSeconds: 180
+  template:
+    metadata:
+      name: shop-pr-{{.number}}
+      namespace: argocd
+      labels:
+        iidp.itema.no/application: shop
+        iidp.itema.no/environment: pr-{{.number}}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      sources:
+        - repoURL: ghcr.io/itema-as/charts
+          chart: application
+          targetRevision: 0.3.1
+          helm:
+            valueFiles:
+              - $values/applications/shop/staging/values.yaml
+            valuesObject:
+              environment: pr-{{.number}}
+              image:
+                tag: '{{.head_sha}}'
+              size: small
+              domains: []
+              runTasks: false
+              login:
+                enabled: true
+              postgres:
+                backups: false
+        - repoURL: https://github.com/Itema-as/iidp-platform.git
+          targetRevision: main
+          ref: values
+        - repoURL: https://github.com/Itema-as/iidp-platform.git
+          path: applications/shop/staging/sops
+          targetRevision: main
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: shop-pr-{{.number}}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+        managedNamespaceMetadata:
+          labels:
+            iidp.itema.no/application: shop
+            iidp.itema.no/environment: pr-{{.number}}
+            pod-security.kubernetes.io/audit: restricted
+            pod-security.kubernetes.io/enforce: baseline
+            pod-security.kubernetes.io/warn: restricted
+          annotations:
+            argocd.argoproj.io/tracking-id: shop-pr-{{.number}}:/Namespace:/shop-pr-{{.number}}
+        retry:
+          limit: -1
+          refresh: true
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m
+```
+
+- **The generator.** `owner` and `repo` are the Application repository as `repository.yaml` names it; a preview needs a binding, and `--previews` is refused without one. GitHub still answers for a repository's old name after a rename, so previews keep working until another repository takes the old name; `iidp app bind` after a rename refreshes `repository.yaml` but not this file ([`docs/implementation-notes/95-preview-environments.md`](implementation-notes/95-preview-environments.md)). `appSecretName` names the Secret cloud-init writes as ArgoCD's credential for this repository, whose GitHub App (`iidp-deploy`) needs Pull requests: Read-only on the Application repositories. `api` appears only when `platform.yaml` sets `githubAPI`. ArgoCD polls every 180 seconds (`requeueAfterSeconds`).
+- **The template is staging's Application.** Its sources are copied from staging's `application.yaml`, so the chart is at staging's pinned version, staging's `values.yaml` is the base, and, once staging has secrets (`iidp secret set <name> staging`, or Postgres's `backups-credentials`), staging's `sops/` source gives the preview the same Secrets through the same KSOPS path. When a CLI command adds that source to staging's `application.yaml`, it rewrites this file in the same commit.
+- **What a preview overrides** (`helm.valuesObject`, which ArgoCD gives precedence over `valueFiles`): the Environment `pr-<number>`, so the chart names everything `<name>-pr-<number>` and serves it at `<name>-pr-<number>.<baseDomain>`; `image.tag`, the pull request's head SHA, the tag the reusable deploy workflow pushes; the smallest size; Itema login on, keeping staging's `login.groups`; no custom domains; `runTasks: false`; and `postgres.backups: false`, so the database gets no WAL archiving, no daily backup and no final backup on delete. Staging's migration command, env and secrets are kept.
+- **The namespace** carries the labels every Environment's namespace carries, `iidp.itema.no/environment: pr-<number>` among them, so the guardrails bind to it. ArgoCD's tracking annotation on it makes the namespace the preview's own: ArgoCD deletes it with the preview, which it does not do for a namespace `CreateNamespace` made otherwise (every other Environment's stays after `iidp app delete`).
 
 ## `applications/<name>/<environment>/sops/`
 
@@ -313,13 +412,14 @@ Edits an Application's existing Environment files in place with the yaml.v3 node
 - **`--size`** rewrites `size` in every Environment the Application already has.
 - **`--login`** sets `login.enabled: true` and `platform.loginCookieDomain` in every Environment the Application already has. Refused, naming the domains, while `prod` lists or is given (`--domain` in the same run) a custom domain outside the login cookie's domain (`cloudflareZone`, above; the same trade-off applies).
 - **`--domain`** on an Application that already has Itema login is refused, naming it, for a host outside the login cookie's domain. A host inside it is added, and `prod`'s `platform.loginCookieDomain` is written again, so an Environment written before the field existed gets it.
+- **`--previews`** writes `applications/<name>/previews/applicationset.yaml` (above). It is refused without a `staging` Environment (already there, or `--staging` in the same run), and without a repository binding, naming `iidp app bind`.
 - **`--login-group <object-id>`** (repeatable) replaces `login.groups` in every Environment the Application already has with the ids given, checked and lowercased as for `app create`. The list is replaced, not added to. `--login-group ''` empties it, so every Itema user gets in again. It needs Itema login: already `enabled`, or `--login` in the same run, which then turns login on for those groups only. `--login` together with `--login-group` on an Application that already has login is refused as login already enabled; give `--login-group` alone. A new `staging` Environment (`--staging`) copies `prod`'s groups with the rest of its values.
 
-Committed as `iidp app add-capability <name> <capabilities>` (space-separated Capability names: `postgres`, `staging`, `domain`, `size`, `login`, `login-group`), pushed with the same retry-once-on-a-moved-`main` behaviour as `app create`.
+Committed as `iidp app add-capability <name> <capabilities>` (space-separated Capability names: `postgres`, `staging`, `domain`, `size`, `login`, `login-group`, `previews`), pushed with the same retry-once-on-a-moved-`main` behaviour as `app create`.
 
 ## `iidp app delete`
 
-Removes an Application in one commit, after the developer types the Application name back (or `--force` on a script): each Environment's `applications/<name>/<environment>/application.yaml` (`prod` and `staging`, whichever exist) is removed, along with `applications/<name>/repository.yaml` when the Application is bound, and the commit `iidp app delete <name>` is pushed. The binding goes because nothing renders from it, so the PreDelete hook does not need it, and a deleted Application must not stay deployable through the Deploy gate. `values.yaml` (and any `sops/` secrets) are deliberately **not** removed -- see below. Unlike before #39, the CLI no longer commits a `Backup` manifest or a `final-backup-<environment>` ArgoCD Application of its own.
+Removes an Application in one commit, after the developer types the Application name back (or `--force` on a script): each Environment's `applications/<name>/<environment>/application.yaml` (`prod` and `staging`, whichever exist) is removed, along with `applications/<name>/repository.yaml` when the Application is bound and `applications/<name>/previews/applicationset.yaml` when it has Preview Environments, and the commit `iidp app delete <name>` is pushed. ArgoCD deletes the ApplicationSet, and with it every preview, its namespace and its database; a preview takes no final backup. The binding goes because nothing renders from it, so the PreDelete hook does not need it, and a deleted Application must not stay deployable through the Deploy gate. `values.yaml` (and any `sops/` secrets) are deliberately **not** removed -- see below. Unlike before #39, the CLI no longer commits a `Backup` manifest or a `final-backup-<environment>` ArgoCD Application of its own.
 
 What guarantees the final backup now is the chart, not commit ordering. Each Environment's own ArgoCD Application carries the resources finalizer, so ArgoCD deletes its resources once it notices `application.yaml` is gone — but a `postgres.enabled` Environment's chart also renders a `ServiceAccount`, `Role`, `RoleBinding` and Job (all named `<fullname>-final-backup`, `chart/application/templates/final-backup-job.yaml`). Only the Job is annotated `argocd.argoproj.io/hook: PreDelete`; the `ServiceAccount`, `Role` and `RoleBinding` are ordinary resources, present whenever `postgres.enabled` and pruned with the rest of the Environment's resources, the same as the Cluster or the Deployment (see the implementation notes for why more than one hook object was found to be unsafe). ArgoCD creates a `PreDelete` hook only when the Application itself is deleted, waits for it to reach Healthy before deleting anything else, and blocks the deletion (a `DeletionError` condition) if it fails. The Job runs a pinned `kubectl` image, creates a CloudNativePG `Backup` targeting the Environment's Cluster (`spec.method: plugin`, `spec.pluginConfiguration.name: barman-cloud.cloudnative-pg.io`, the same shape as the chart's `ScheduledBackup`) named `<fullname>-final-<timestamp>` with the annotation `iidp.itema.no/retain-until` computed 30 days ahead at run time, and polls its `.status.phase` until `completed` (failing, and so blocking the deletion, on `failed` or on timing out after `postgres.finalBackupTimeout` seconds).
 

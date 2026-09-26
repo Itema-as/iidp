@@ -13,8 +13,12 @@ A deployable unit that an Itema developer owns, with its own git repository, its
 _Avoid_: app (in docs), service, project
 
 **Environment**:
-One running instance of an Application with its own data and its own address. Every Application has a `prod` Environment. An Application may also have a `staging` Environment.
+One running instance of an Application with its own data and its own address. Every Application has a `prod` Environment. An Application may also have a `staging` Environment, and Preview Environments.
 _Avoid_: stage, deployment target, tier
+
+**Preview Environment**:
+An Environment for one open pull request labelled `preview` on the Application repository, with its own address and its own empty database. It is removed when the pull request closes or loses the label.
+_Avoid_: review app, ephemeral environment, PR environment
 
 **Application repository**:
 The git repository holding an Application's source code. Owned by the Application's developers.

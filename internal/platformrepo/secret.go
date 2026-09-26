@@ -131,6 +131,13 @@ func (w *Writer) attemptSetSecrets(ctx context.Context, application, environment
 	if err != nil {
 		return Result{}, err
 	}
+	// staging's first secret adds its sops/ source, which the Preview
+	// Environments need too, to get staging's secrets.
+	previewFiles, err := refreshPreviews(dir, application, cfg, files)
+	if err != nil {
+		return Result{}, err
+	}
+	files = append(files, previewFiles...)
 	if err := repo.Add(ctx, files...); err != nil {
 		return Result{}, err
 	}

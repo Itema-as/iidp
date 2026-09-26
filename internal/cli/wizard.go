@@ -16,6 +16,7 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/prompt"
+	"github.com/Itema-as/iidp/internal/render"
 	"github.com/Itema-as/iidp/internal/templates"
 )
 
@@ -135,6 +136,24 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 			return err
 		}
 		if err := f.Set("staging", strconv.FormatBool(yes)); err != nil {
+			return err
+		}
+	}
+
+	// 5b. Preview Environments, right after staging and only with it: a
+	// preview uses staging's values and secrets. Without --path there is no
+	// Application repository whose pull requests it could follow, so the
+	// question would only lead to a refusal.
+	if opts.staging && (opts.path == pathCreate || opts.path == pathAdopt) && !f.Changed("previews") {
+		fmt.Fprintln(out, "Preview Environments (optional)")
+		fmt.Fprintln(out, "Every open pull request labelled "+render.PreviewLabel+" gets an Environment of its own at")
+		fmt.Fprintln(out, "<name>-pr-<number>.<baseDomain>, with staging's values and secrets, Itema login and an")
+		fmt.Fprintln(out, "empty database, removed when the pull request closes or loses the label.")
+		yes, err := p.YesNo("Preview Environments?", false)
+		if err != nil {
+			return err
+		}
+		if err := f.Set("previews", strconv.FormatBool(yes)); err != nil {
 			return err
 		}
 	}
@@ -345,6 +364,11 @@ func printSummary(out io.Writer, plan createPlan, app platformrepo.Application, 
 		fmt.Fprintln(out, "  Staging:    enabled, its own address and database")
 	} else {
 		fmt.Fprintln(out, "  Staging:    disabled")
+	}
+	if app.Previews {
+		fmt.Fprintf(out, "  Previews:   enabled, for pull requests labelled %s (%s)\n", render.PreviewLabel, preview.PreviewAddress)
+	} else {
+		fmt.Fprintln(out, "  Previews:   disabled")
 	}
 	if app.Login {
 		fmt.Fprintln(out, "  Login:      Itema (Entra ID) sign-in required")

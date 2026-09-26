@@ -9,7 +9,9 @@ application:
   # Required.
   name: ""
 
-# The Environment this values file describes: prod or staging.
+# The Environment this values file describes: prod, staging, or
+# pr-<number> for a Preview Environment, which the Application's previews
+# ApplicationSet sets over staging's values file.
 environment: prod
 
 platform:
@@ -114,6 +116,12 @@ postgres:
   # minutes) is generous for a small Application's database and still
   # bounded; a large database (or a slow bucket) may need it raised.
   finalBackupTimeout: 1800
+  # false turns every backup off: no WAL archiving, no daily base backup and
+  # no final backup on delete, so no PreDelete hook to wait for. Preview
+  # Environments set it: their database starts empty and goes with the pull
+  # request. platform.backupsBucket and objectStorageEndpoint are then not
+  # needed.
+  backups: true
 
 # Scheduled tasks, for a Web service only: each is a CronJob named
 # <name>[-staging]-<task name> that runs command with sh -c on schedule

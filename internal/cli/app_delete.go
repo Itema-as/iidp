@@ -122,6 +122,9 @@ func printDeleteResult(out io.Writer, name string, res platformrepo.DeleteResult
 	for _, d := range res.Deleted {
 		fmt.Fprintf(out, "  %s\n", d)
 	}
+	if res.Previews {
+		fmt.Fprintf(out, "\nRemoved the Preview Environments too (%s): ArgoCD deletes every preview with its namespace and database, which have no backups.\n", platformrepo.PreviewsPath(name))
+	}
 	if !res.PostgresEnabled {
 		fmt.Fprintln(out, "\nNo Environment had Postgres enabled; there was nothing to back up.")
 		return

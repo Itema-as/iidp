@@ -23,6 +23,7 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/prompt"
+	"github.com/Itema-as/iidp/internal/render"
 	"github.com/Itema-as/iidp/internal/templates"
 )
 
@@ -74,6 +75,7 @@ type createOptions struct {
 	domains          []string
 	login            bool
 	loginGroups      []string
+	previews         bool
 	// interactive forces the wizard even without a terminal on stdin: the
 	// hidden --interactive flag, so tests can drive it with an injected
 	// reader and writer (docs/implementation-notes/14-cli-wizard.md).
@@ -134,6 +136,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to serve besides the Platform address, for prod only (repeatable)")
 	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included; every --domain must then be inside platform.yaml's cloudflareZone, the sign-in cookie's domain, which the browser sends to every host in it")
 	f.StringArrayVar(&opts.loginGroups, "login-group", nil, "Entra group object id (a GUID) whose members may sign in; repeatable, a member of any one gets in. Needs --login. Without it, every Itema user gets in")
+	f.BoolVar(&opts.previews, "previews", false, "Give every open pull request labelled "+render.PreviewLabel+" on the Application repository a Preview Environment at <name>-pr-<number>.<baseDomain>: staging's values and secrets, the smallest size, Itema login, an empty database without backups, removed when the pull request closes. Needs --staging, and --path create or adopt")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
 	f.BoolVar(&opts.interactive, "interactive", false, "Run the wizard even without a terminal on stdin")
@@ -287,6 +290,15 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			Domains:         plan.domains,
 			Login:           plan.login,
 			LoginGroups:     plan.loginGroups,
+			Previews:        plan.previews,
+		}
+		// Create and Adopt bind the repository only once it exists; the
+		// preview checks the rest with a stand-in.
+		if plan.previews {
+			app.Repository = &platformrepo.RepositoryBinding{Repository: plan.repoOwner + "/" + plan.repoName, RepositoryID: 1, RepositoryOwnerID: 1}
+			if plan.path == pathCreate {
+				app.Repository.Repository = platform.Org + "/" + plan.name
+			}
 		}
 		preview, err := platformWriter.PreviewApplication(cmd.Context(), app)
 		if err != nil {
@@ -433,6 +445,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		LoginGroups:     plan.loginGroups,
 		RunAsNonRoot:    runAsNonRoot,
 		Repository:      binding,
+		Previews:        plan.previews,
 	}
 
 	fmt.Fprintf(out, "\nWriting the prod Environment to %s...\n", platform.Repository)
@@ -450,6 +463,9 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	if app.Login {
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required on every address")
 		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(app.LoginGroups))
+	}
+	if app.Previews {
+		fmt.Fprintf(out, "  Previews: one for each open pull request labelled %s\n", render.PreviewLabel)
 	}
 	if binding != nil {
 		fmt.Fprintf(out, "  Repository: %s (repository id %d, owner id %d)\n", binding.Repository, binding.RepositoryID, binding.RepositoryOwnerID)
@@ -626,6 +642,7 @@ type createPlan struct {
 	// loginGroups are --login-group, lowercased and checked
 	// (platformrepo.NormalizeLoginGroups).
 	loginGroups []string
+	previews    bool
 }
 
 // plan validates every flag before anything is cloned or written, and
@@ -749,6 +766,15 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if cmd.Flags().Changed("login-group") && !o.login {
 		return createPlan{}, fmt.Errorf("%w: give --login with --login-group", platformrepo.ErrLoginGroupsWithoutLogin)
 	}
+	// A preview renders staging's values with staging's secrets, and the
+	// generator follows the pull requests of the repository Create or
+	// Adopt binds; without --path there is none.
+	if o.previews && !o.staging {
+		return createPlan{}, platformrepo.ErrPreviewsWithoutStaging
+	}
+	if o.previews && o.path != pathCreate && o.path != pathAdopt {
+		return createPlan{}, fmt.Errorf("%w: give --path create or --path adopt, which bind it", platformrepo.ErrPreviewsWithoutBinding)
+	}
 
 	private := true
 	if o.path == pathCreate {
@@ -783,6 +809,7 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		domains:             o.domains,
 		login:               o.login,
 		loginGroups:         loginGroups,
+		previews:            o.previews,
 	}, nil
 }
 
@@ -927,6 +954,7 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 	if res.StagingAddress != "" {
 		fmt.Fprintf(out, "  staging:  %s\n", res.StagingAddress)
 	}
+	printPreviews(out, res)
 	if res.Login {
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
 		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(res.LoginGroups))
@@ -939,6 +967,16 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 	}
 	printDomains(out, res)
 	fmt.Fprintf(out, "\nThe Environment deploys once the deploy workflow writes the first image tag.\n")
+}
+
+// printPreviews tells where Preview Environments appear and how to get
+// one, when the Application has them.
+func printPreviews(out io.Writer, res platformrepo.Result) {
+	if res.PreviewAddress == "" {
+		return
+	}
+	fmt.Fprintf(out, "  previews: %s, for each open pull request labelled %s\n", res.PreviewAddress, render.PreviewLabel)
+	fmt.Fprintf(out, "            within 3 minutes of the label, once the deploy workflow has pushed the pull request's image; removed when it closes or loses the label\n")
 }
 
 // printDomains reports, for each custom domain, which branch the chart

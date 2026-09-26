@@ -1,0 +1,52 @@
+# The ArgoCD Application for notes's staging Environment, which has no
+# image yet. Its Preview Environments (previews/applicationset.yaml) render
+# from it: the same chart source, staging's values file as the base, and
+# its sops/ source for staging's secrets. See prod/application.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: notes-staging
+  namespace: argocd
+  labels:
+    iidp.itema.no/application: notes
+    iidp.itema.no/environment: staging
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp.git
+      targetRevision: main
+      path: chart/application
+      helm:
+        valueFiles:
+          - $values/applications/notes/staging/values.yaml
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+      targetRevision: main
+      ref: values
+    - repoURL: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
+      targetRevision: main
+      path: applications/notes/staging/sops
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: notes-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    managedNamespaceMetadata:
+      labels:
+        iidp.itema.no/application: notes
+        iidp.itema.no/environment: staging
+        pod-security.kubernetes.io/audit: restricted
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/warn: restricted
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

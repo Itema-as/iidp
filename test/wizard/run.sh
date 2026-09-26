@@ -591,8 +591,12 @@ assert_contains "$out" "GitHub App name: iidp-deploy"
 assert_contains "$out" "Homepage URL: https://github.com/itema-as/iidp-platform"
 assert_contains "$out" "Webhook: untick Active"
 assert_contains "$out" "Contents: Read and write"
+# ArgoCD's Pull Request generator lists every Application repository's
+# pull requests with the App, for Preview Environments (#95).
+assert_contains "$out" "Pull requests: Read-only"
 assert_contains "$out" "Only on this account"
-assert_contains "$out" "Only select repositories > iidp-platform > Install"
+assert_contains "$out" "All repositories > Install"
+assert_not_contains "$out" "Only select repositories"
 t_start "stage_github_app (fresh App) builds and submits no manifest"
 assert_not_contains "$out" "manifest"
 
@@ -1055,7 +1059,7 @@ assert_contains "$content" "name: applications"
 assert_contains "$content" "repoURL: https://github.com/Itema-as/iidp-platform.git"
 assert_contains "$content" "path: applications"
 assert_contains "$content" "recurse: true"
-assert_contains "$content" "include: '*/*/application.yaml'"
+assert_contains "$content" "include: '{*/*/application.yaml,*/previews/applicationset.yaml}'"
 
 # A retrying sync stays pinned to the revision that failed unless
 # retry.refresh is set, and ArgoCD starts no new automated sync while one
