@@ -11,7 +11,7 @@ The ArgoCD app-of-apps that installs every Phase 1 Platform component. It is a H
 | `cloudnative-pg` | The CloudNativePG operator | `cnpg-system` |
 | `cnpg-barman-cloud` | The CloudNativePG Barman Cloud plugin, which the application chart's Postgres Capability uses for continuous backups to Object Storage | `cnpg-system` |
 | `monitoring` | Grafana's `k8s-monitoring` chart: Alloy shipping pod logs, node and kube-state metrics to Grafana Cloud | `monitoring` |
-| `oauth2-proxy` | The Itema login Capability's one shared oauth2-proxy (Entra ID, `entra-id` provider), served at `auth.<baseDomain>` through an Ingress covered by the wildcard, plus the Traefik ForwardAuth `Middleware` `itema-login-auth` the application chart's `login.enabled` Ingress annotation points at. An unauthenticated browser is redirected straight to Entra ID and back (`docs/implementation-notes/77-login-redirect.md`) | `oauth2-proxy` |
+| `oauth2-proxy` | The Itema login Capability's one shared oauth2-proxy (Entra ID, `entra-id` provider), served at `auth.<baseDomain>` through an Ingress covered by the wildcard, plus the Traefik ForwardAuth `Middleware` `itema-login-auth` the application chart's `login.enabled` Ingress annotation points at. An unauthenticated browser is redirected straight to Entra ID and back (`docs/implementation-notes/77-login-redirect.md`). Its cookie covers `cloudflareZone` ([Itema login](#itema-login)) | `oauth2-proxy` |
 | `deploy-gate` | [`components/deploy-gate`](components/deploy-gate): the Deploy gate (`cmd/iidp-deploy-gate`), the one way an Application repository's CI deploys and promotes, served at `deploy.<baseDomain>` through an Ingress covered by the wildcard (below) | `argocd` |
 
 Every version is pinned in [`versions.yaml`](versions.yaml). The Applications share one sync policy (`templates/_helpers.tpl`): automated with prune and self-heal, server-side apply, and unlimited retries, so a component that needs another one's CRDs or namespace converges on its own. Each retry syncs the newest commit (`retry.refresh: true`), so a fix pushed while a sync keeps failing applies on the next retry instead of waiting for someone to terminate the operation. No Application carries the resources finalizer: removing a component from the bootstrap leaves what it installed in the cluster, to be deleted by hand, rather than cascading into the deletion of CRDs and everything defined with them.
@@ -78,7 +78,7 @@ To add or change it by hand: write the Secret in the clear at `bootstrap/templat
 | Field | Read by | Meaning |
 |---|---|---|
 | `baseDomain` | bootstrap, CLI | Applications are served under `<application>.<baseDomain>`; the wildcard certificate covers `*.<baseDomain>` and `<baseDomain>` |
-| `cloudflareZone` | bootstrap, CLI | The Cloudflare zone containing `baseDomain`: the only zone external-dns manages and where custom domains are automated |
+| `cloudflareZone` | bootstrap, CLI | The Cloudflare zone containing `baseDomain`: the only zone external-dns manages and where custom domains are automated. Also the Itema login cookie's domain (see [Itema login](#itema-login)); without it, `baseDomain` is. A `baseDomain` outside it is refused |
 | `argocdURL` | bootstrap, CLI | Where ArgoCD is served; its host must be under `baseDomain` so the wildcard covers it |
 | `grafanaURL` | CLI | The Grafana Cloud stack, for the closing summary |
 | `chartVersion` | CLI | The application chart version written into new Environments |
@@ -106,6 +106,14 @@ cloud-init installs ArgoCD by rendering the `argo-cd` chart itself with `helm te
 Login is Entra ID through Dex only; the local `admin` account is disabled. The Entra app registration needs the delegated Microsoft Graph permissions `User.Read` and `GroupMember.Read.All` with admin consent, because Dex resolves group membership at login. The Platform admin does not need the UI to act: `argocd --core` uses the kubeconfig directly.
 
 ArgoCD's own credential for the Platform repository — the Secret `argocd/platform-repo-github-app`, labelled `argocd.argoproj.io/secret-type: repository` — is also cloud-init's, applied right before the root Application; see `infra/README.md` ("Rotating the Platform repository credential") for the credential itself and `docs/implementation-notes/41-argocd-platform-repo-credential.md` for why it is shaped the way it is.
+
+## Itema login
+
+The `oauth2-proxy` Application is the one sign-in for every Application with `login.enabled`. The sign-in callback is `https://auth.<baseDomain>/oauth2/callback`, the redirect URI registered on the Entra app. The session cookie, `__Secure-itema_login`, is set there with `Domain=.<cloudflareZone>` (`.itma.no`), or `.<baseDomain>` on a Platform without a `cloudflareZone`, and `whitelist-domain` is the same, so oauth2-proxy only sends a user back to a host under it. One sign-in therefore covers every protected Application, whether it is reached on its Platform address (`shop.app.itma.no`) or on a custom domain inside the zone (`x.itma.no`). A custom domain outside the zone never gets the cookie, so the application chart and the CLI refuse Itema login together with one.
+
+**Accepted trade-off.** The browser sends the cookie to every host under `itma.no`, including hosts the Platform does not run: the website, SaaS services behind a CNAME, anything else in the zone. Whoever controls one of them, or can read its request logs, can capture a signed-in user's session cookie and replay it against every login-protected Application until it expires (`cookie-expire`, 7 days by default). Keeping the cookie on `.app.itma.no` would avoid that but rule out Itema login on any custom domain; #76 chose the zone. Before pointing a host in the zone at a third party, weigh that it will see this cookie.
+
+**The cookie name.** The cookie was once oauth2-proxy's default `_oauth2_proxy` on `.app.itma.no`. Keeping that name on the new domain would leave browsers sending two cookies of the same name to `*.app.itma.no`, and oauth2-proxy reads only the first of each, which can send a user back to sign in forever. The new name leaves the old cookie unread until it expires; everyone signs in once more after the upgrade. [`docs/implementation-notes/76-login-in-zone-domains.md`](../docs/implementation-notes/76-login-in-zone-domains.md) has the source this was checked against.
 
 ## The Deploy gate
 

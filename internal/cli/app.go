@@ -130,7 +130,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	_ = f.MarkHidden("app-dir")
 	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod: its own address, its own database, the same Capabilities")
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to serve besides the Platform address, for prod only (repeatable)")
-	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on the Platform addresses, in every Environment; refused together with --domain")
+	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included; every --domain must then be inside platform.yaml's cloudflareZone, the sign-in cookie's domain, which the browser sends to every host in it")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
 	_ = f.MarkHidden("platform-repo")
 	f.BoolVar(&opts.interactive, "interactive", false, "Run the wizard even without a terminal on stdin")
@@ -166,7 +166,21 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	p := prompt.New(cmd.InOrStdin(), out)
 
 	if interactive {
-		if err := runWizard(cmd, opts, p); err != nil {
+		// The wizard reads platform.yaml only to decide whether to offer
+		// Itema login for the custom domains it was given.
+		loginCookieDomain := func() (string, error) {
+			token, err := deps.TokenSource.Token()
+			if err != nil {
+				return "", fmt.Errorf("not logged in to GitHub, so %s cannot be read: %w", platform.Repository, err)
+			}
+			w := &platformrepo.Writer{URL: opts.platformRepo, Auth: git.Auth{Token: token}}
+			cfg, err := w.ReadConfig(cmd.Context())
+			if err != nil {
+				return "", err
+			}
+			return cfg.LoginCookieDomain(), nil
+		}
+		if err := runWizard(cmd, opts, p, loginCookieDomain); err != nil {
 			return err
 		}
 	} else if err := opts.checkRequiredFlags(cmd); err != nil {
@@ -296,6 +310,9 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		if err != nil {
 			return err
 		}
+		if err := checkLoginDomains(plan, cfg); err != nil {
+			return err
+		}
 
 		creator := &apprepo.Creator{Client: ghClient, Auth: auth}
 		appRepo, err = creator.Create(cmd.Context(), apprepo.Application{
@@ -329,6 +346,9 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		// from.
 		cfg, err := platformWriter.CheckAvailable(cmd.Context(), plan.name)
 		if err != nil {
+			return err
+		}
+		if err := checkLoginDomains(plan, cfg); err != nil {
 			return err
 		}
 
@@ -414,7 +434,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		fmt.Fprintln(out, "  Staging:  a second Environment, its own address and database")
 	}
 	if app.Login {
-		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required on the Platform addresses")
+		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required on every address")
 	}
 	if binding != nil {
 		fmt.Fprintf(out, "  Repository: %s (repository id %d, owner id %d)\n", binding.Repository, binding.RepositoryID, binding.RepositoryOwnerID)
@@ -487,6 +507,18 @@ func checkPostgresKind(postgres bool, kind string) error {
 		return errors.New("--postgres needs --kind web-service (or a framework/detected framework that derives it); a Static site has no server to use a database")
 	}
 	return nil
+}
+
+// checkLoginDomains refuses --login together with a --domain outside the
+// login cookie domain that cfg, platform.yaml, names. Create and Adopt run
+// it on the clone that checks the name, before the Application repository
+// is created or the pull request opened; the Writer checks again when it
+// writes, which is the only check the bare path gets.
+func checkLoginDomains(plan createPlan, cfg platformrepo.Config) error {
+	if !plan.login {
+		return nil
+	}
+	return platformrepo.CheckLoginDomains(cfg, plan.domains)
 }
 
 // checkAdoptPreview turns an AdoptPreview's refusal conditions (no push
@@ -687,9 +719,11 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if err := checkPostgresKind(o.postgres, kind); err != nil {
 		return createPlan{}, err
 	}
-	if o.login && len(o.domains) > 0 {
-		return createPlan{}, errors.New(platformrepo.LoginDomainConflictMessage)
-	}
+	// --login with --domain is not refused here: whether every domain is
+	// inside the login cookie domain depends on platform.yaml's
+	// cloudflareZone, which needs the Platform repository cloned.
+	// checkLoginDomains runs on the first clone, before anything is
+	// created (docs/implementation-notes/76-login-in-zone-domains.md).
 
 	private := true
 	if o.path == pathCreate {

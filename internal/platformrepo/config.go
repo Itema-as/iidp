@@ -48,8 +48,9 @@ type Config struct {
 	AgePublicKey string `yaml:"agePublicKey"`
 	// CloudflareZone is the Cloudflare zone containing BaseDomain: the only
 	// zone external-dns manages, and so the only zone in which the CLI can
-	// fully automate a custom domain (--domain). Required for --domain;
-	// not required to create an Application without one.
+	// fully automate a custom domain (--domain). It is also the Itema login
+	// cookie's domain (LoginCookieDomain). Not required to create an
+	// Application.
 	CloudflareZone string `yaml:"cloudflareZone"`
 	// BackupsBucket is the Object Storage bucket every Application database
 	// is backed up to, written as platform.backupsBucket. Required for

@@ -1,12 +1,14 @@
 {{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
 {{- $host := printf "auth.%s" .Values.baseDomain }}
+{{- $cookieDomain := printf ".%s" (include "iidp-bootstrap.loginCookieDomain" .) }}
 # The Itema login Capability's one shared oauth2-proxy: it fronts every
 # Application whose values.yaml sets login.enabled, issuing one cookie for
-# the whole Platform base domain so signing in once covers every protected
-# Environment. Entra ID credentials (client id, client secret, tenant) and a
-# cookie-signing secret come from the SOPS-encrypted Secret
-# oauth2-proxy/oauth2-proxy-entra (bootstrap/README.md); nothing about them
-# is in git in the clear.
+# the whole cloudflareZone (baseDomain without one) so signing in once
+# covers every protected Environment, on its Platform address or on a
+# custom domain inside the zone. Entra ID credentials (client id, client
+# secret, tenant) and a cookie-signing secret come from the SOPS-encrypted
+# Secret oauth2-proxy/oauth2-proxy-entra (bootstrap/README.md); nothing
+# about them is in git in the clear.
 #
 # Provider: entra-id, the dedicated Microsoft Entra ID provider (current
 # oauth2-proxy documentation, "Configuration > Providers > Microsoft Entra
@@ -56,6 +58,23 @@
 # (errors, sign-out). See docs/implementation-notes/77-login-redirect.md,
 # including why #18's /oauth2/auth plus errors-middleware shape never
 # redirected.
+#
+# Cookie scope: cookie-domain and whitelist-domain are the login cookie
+# domain (iidp-bootstrap.loginCookieDomain), so the cookie set on the
+# callback at auth.<baseDomain> is sent to every host in the zone and
+# oauth2-proxy redirects back to any of them. The browser therefore sends
+# it to hosts the Platform does not run too (the website, SaaS CNAMEs):
+# whoever controls one can replay a signed-in user's session against every
+# protected Application until it expires. Accepted in #76; see
+# bootstrap/README.md. cookie-name is not oauth2-proxy's default
+# _oauth2_proxy because the cookie domain was once .<baseDomain>: a browser
+# still holding that cookie would send both under the same name, and
+# oauth2-proxy reads the first of each (split) cookie name it finds, so a
+# stale or mismatched one could send the user back to sign in forever. A
+# new name leaves the old cookie unread until it expires; everyone signs in
+# once more. The __Secure- prefix is what oauth2-proxy's docs recommend
+# with cookie-secure. docs/implementation-notes/76-login-in-zone-domains.md
+# has the source this was checked against.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -159,8 +178,9 @@ spec:
             reverse-proxy: "true"
             skip-provider-button: "true"
             footer: "-"
-            cookie-domain: {{ printf ".%s" .Values.baseDomain | quote }}
-            whitelist-domain: {{ printf ".%s" .Values.baseDomain | quote }}
+            cookie-name: __Secure-itema_login
+            cookie-domain: {{ $cookieDomain | quote }}
+            whitelist-domain: {{ $cookieDomain | quote }}
             redirect-url: {{ printf "https://%s/oauth2/callback" $host | quote }}
             cookie-secure: "true"
           ingress:

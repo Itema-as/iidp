@@ -7,6 +7,10 @@ application:
 environment: staging
 platform:
   baseDomain: app.example.test
+  # The login cookie's domain the CLI writes with login.enabled:
+  # platform.yaml's cloudflareZone, so the custom domain below can be
+  # protected too.
+  loginCookieDomain: example.test
   backupsBucket: iidp-backups
   # Unlike prod's (see prod/values.yaml), this Environment's endpoint is a
   # real, in-cluster S3-compatible store (test/e2e's harness runs a small
@@ -42,3 +46,13 @@ postgres:
 # rather than adding a third Application.
 login:
   enabled: true
+# A custom domain inside the fixture zone (example.test) but not under the
+# base domain, so it goes on the chart's HTTP-01 Ingress: TestBootstrap
+# proves it redirects to sign-in too, and that cert-manager's challenge
+# path on it does not (docs/implementation-notes/76-login-in-zone-domains.md).
+# The CLI writes custom domains for prod only; the chart takes them on any
+# Environment, and this one is the fixture's protected one. Let's Encrypt
+# staging never issues for .test, so the host keeps Traefik's default
+# certificate, which the harness does not verify anyway.
+domains:
+  - shop-staging.example.test

@@ -1,7 +1,8 @@
-# The Itema login Capability's Traefik middleware. The chart annotates a
-# Platform-address Ingress with traefik.ingress.kubernetes.io/router.middlewares
-# naming it (chart/application/templates/ingress.yaml); its name and this
-# namespace must match exactly.
+# The Itema login Capability's Traefik middleware. The chart annotates every
+# Ingress of a protected Environment with
+# traefik.ingress.kubernetes.io/router.middlewares naming it
+# (chart/application/templates/_helpers.tpl, application.login.annotation);
+# its name and this namespace must match exactly.
 #
 # itema-login-auth is the documented "ForwardAuth with Static Upstreams"
 # shape (oauth2-proxy's "Configuration > Integrations > Traefik"): every

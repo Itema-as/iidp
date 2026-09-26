@@ -1,0 +1,24 @@
+application:
+  name: shop
+environment: prod
+platform:
+  baseDomain: app.itma.no
+  # platform.yaml's cloudflareZone, which the CLI writes with login.
+  loginCookieDomain: itma.no
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 1.4.2
+size: small
+login:
+  enabled: true
+domains:
+  # Directly under the base domain: covered by the wildcard, on the
+  # Platform Ingress.
+  - butikk.app.itma.no
+  # Inside the zone, not directly under the base domain: on the HTTP-01
+  # Ingress.
+  - x.itma.no
+  - test.shop.app.itma.no
+  # The zone apex is inside the cookie domain too.
+  - itma.no

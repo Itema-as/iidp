@@ -57,8 +57,8 @@ Helm renders first. It produces no output.
 {{- if and .Values.postgres.enabled (hasKey (.Values.env | default dict) "DATABASE_URL") -}}
 {{- fail "env must not set DATABASE_URL; the Postgres Capability injects it" -}}
 {{- end -}}
-{{- if and .Values.login.enabled (gt (len .Values.domains) 0) -}}
-{{- fail "login.enabled needs domains to be empty; Itema login is for Platform addresses only, since its cookie is scoped to the base domain" -}}
+{{- if .Values.login.enabled -}}
+{{- $_ = include "application.login.checkDomains" . -}}
 {{- end -}}
 {{- if and .Values.postgres.enabled (hasKey .Values.postgres "finalBackupTimeout") (not (regexMatch "^[1-9][0-9]*$" (.Values.postgres.finalBackupTimeout | toString))) -}}
 {{- fail (printf "postgres.finalBackupTimeout must be a positive whole number of seconds, got %v" .Values.postgres.finalBackupTimeout) -}}
@@ -252,6 +252,61 @@ certificate; any other host is foreign and needs a certificate of its own.
 {{- end -}}
 {{- end -}}
 {{- dict "wildcard" $wildcard "foreign" $foreign | toJson -}}
+{{- end -}}
+
+{{/*
+The domain the Itema login cookie is set for, without the leading dot:
+platform.loginCookieDomain, or the base domain when it is empty (what the
+bootstrap's oauth2-proxy uses on a Platform without a cloudflareZone, and
+on every Platform before #76).
+*/}}
+{{- define "application.login.cookieDomain" -}}
+{{- .Values.platform.loginCookieDomain | default .Values.platform.baseDomain | toString -}}
+{{- end -}}
+
+{{/*
+Refuses login.enabled when a host of the Environment is outside the login
+cookie domain: the browser would never send that host the cookie set on
+the sign-in callback, so every request would go back to sign in. Custom
+domains outside it are named. It produces no output.
+*/}}
+{{- define "application.login.checkDomains" -}}
+{{- $cookieDomain := include "application.login.cookieDomain" . -}}
+{{- $suffix := printf ".%s" $cookieDomain -}}
+{{- $platformHost := include "application.host" . -}}
+{{- if not (hasSuffix $suffix $platformHost) -}}
+{{- fail (printf "login.enabled needs the Platform address %q inside platform.loginCookieDomain %q, the domain the Itema login cookie is set for" $platformHost $cookieDomain) -}}
+{{- end -}}
+{{- $outside := list -}}
+{{- range .Values.domains -}}
+{{- $host := . | toString -}}
+{{- if not (or (eq $host $cookieDomain) (hasSuffix $suffix $host)) -}}
+{{- $outside = append $outside $host -}}
+{{- end -}}
+{{- end -}}
+{{- if $outside -}}
+{{- fail (printf "login.enabled needs every custom domain inside platform.loginCookieDomain %q, the domain the Itema login cookie is set for; outside it: %s" $cookieDomain (join ", " $outside)) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The Traefik middleware annotation of the Itema login Capability, for every
+Ingress of an Environment with login.enabled: the bootstrap's shared
+oauth2-proxy ForwardAuth middleware, in oauth2-proxy's own namespace. An
+unauthenticated browser gets oauth2-proxy's own redirect to Entra ID
+(bootstrap/components/oauth2-proxy-login/middleware.yaml). Empty without
+login.
+
+cert-manager's HTTP-01 challenge for a host on the ingress-http01.yaml
+Ingress does not pass through it: the solver serves the challenge path from
+an Ingress of its own, which carries no middleware, and Traefik picks that
+router for the path because a longer rule wins
+(docs/implementation-notes/76-login-in-zone-domains.md).
+*/}}
+{{- define "application.login.annotation" -}}
+{{- if .Values.login.enabled -}}
+traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-itema-login-auth@kubernetescrd
+{{- end -}}
 {{- end -}}
 
 {{/*

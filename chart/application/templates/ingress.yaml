@@ -12,12 +12,9 @@ metadata:
     # entrypoint setting on the Platform's Traefik, not a per-Application one.
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- if .Values.login.enabled }}
-    # The Itema login Capability: the bootstrap's shared oauth2-proxy
-    # ForwardAuth middleware, in oauth2-proxy's own namespace. An
-    # unauthenticated browser gets oauth2-proxy's own redirect to Entra ID
-    # (bootstrap/components/oauth2-proxy-login/middleware.yaml).
-    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-itema-login-auth@kubernetescrd
+    {{- with include "application.login.annotation" . }}
+    # The Itema login Capability (application.login.annotation).
+    {{- . | nindent 4 }}
     {{- end }}
 spec:
   ingressClassName: traefik

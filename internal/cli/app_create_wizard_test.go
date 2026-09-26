@@ -112,6 +112,69 @@ func TestAppCreateWizardFlagsPreAnswerQuestions(t *testing.T) {
 	}
 }
 
+// TestAppCreateWizardOffersLoginForDomainsInsideTheZone checks that Itema
+// login is asked about when every custom domain is inside platform.yaml's
+// cloudflareZone, the login cookie's domain, and that the answer is
+// written with the domains (#76).
+func TestAppCreateWizardOffersLoginForDomainsInsideTheZone(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	gh := newFakeGitHub(t)
+
+	// postgres, staging, domain, login, size, confirm.
+	stdin := "n\nn\nbutikk.app.itma.no, x.itma.no\ny\n\ny\n"
+
+	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
+		"--name", "shop", "--path", "create", "--framework", "nextjs")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Itema login") || strings.Contains(stdout, "not offered") {
+		t.Errorf("stdout does not ask the Itema login question:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "Login:      Itema (Entra ID) sign-in required") {
+		t.Errorf("summary does not show login enabled:\n%s", stdout)
+	}
+	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
+	if got := lookup(t, values, "login", "enabled"); got != true {
+		t.Errorf("values.yaml login.enabled = %v, want true", got)
+	}
+	if got := lookup(t, values, "platform", "loginCookieDomain"); got != "itma.no" {
+		t.Errorf("values.yaml platform.loginCookieDomain = %v, want itma.no", got)
+	}
+	if got, ok := lookup(t, values, "domains").([]any); !ok || len(got) != 2 {
+		t.Errorf("values.yaml domains = %v, want both domains", lookup(t, values, "domains"))
+	}
+}
+
+// TestAppCreateWizardSkipsLoginForADomainOutsideTheZone checks that the
+// login question is not asked when a custom domain is outside the zone,
+// and that the wizard says why, naming the domain.
+func TestAppCreateWizardSkipsLoginForADomainOutsideTheZone(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+	gh := newFakeGitHub(t)
+
+	// postgres, staging, domain, size, confirm: no login answer.
+	stdin := "n\nn\nx.itma.no, shop.example.com\n\ny\n"
+
+	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
+		"--name", "shop", "--path", "create", "--framework", "nextjs")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "Itema login?") {
+		t.Errorf("stdout asks the Itema login question, want it skipped:\n%s", stdout)
+	}
+	if want := "Itema login is not offered: its sign-in cookie is set for itma.no, and shop.example.com outside it."; !strings.Contains(stdout, want) {
+		t.Errorf("stdout lacks %q:\n%s", want, stdout)
+	}
+	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
+	if got := lookup(t, values, "login", "enabled"); got != false {
+		t.Errorf("values.yaml login.enabled = %v, want false", got)
+	}
+}
+
 // TestAppCreateWizardDefaultsTakenByEmptyAnswers checks that a blank answer
 // takes the bracketed default docs/design.md's wizard names for each
 // question.

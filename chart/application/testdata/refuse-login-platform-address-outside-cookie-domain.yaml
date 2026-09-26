@@ -3,6 +3,9 @@ application:
 environment: prod
 platform:
   baseDomain: app.itma.no
+  # Not a domain containing baseDomain: the Platform address itself would
+  # never get the cookie.
+  loginCookieDomain: example.com
 kind: web-service
 image:
   repository: ghcr.io/itema-as/shop
@@ -10,5 +13,3 @@ image:
 size: small
 login:
   enabled: true
-domains:
-  - butikk.app.itma.no
