@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Itema-as/iidp/internal/appconfig"
 )
 
 // The Deploy gate in kind (docs/implementation-notes/60-deploy-gate.md).
@@ -278,16 +280,20 @@ func (c *Cluster) WaitForDeployGate(ctx context.Context, timeout time.Duration) 
 // host port, with Host set to the gate's, and returns the status and the
 // decoded body.
 func (c *Cluster) CallDeployGate(ctx context.Context, token, application, environment, tag string) (int, map[string]any, error) {
-	return c.CallDeployGateWithMigration(ctx, token, application, environment, tag, nil)
+	return c.CallDeployGateWithIidpYAML(ctx, token, application, environment, tag, nil, nil)
 }
 
-// CallDeployGateWithMigration is CallDeployGate carrying a migration
-// command, as iidp ci set-image sends it when the deployed commit has an
-// iidp.yaml; nil sends none.
-func (c *Cluster) CallDeployGateWithMigration(ctx context.Context, token, application, environment, tag string, migrationCommand *string) (int, map[string]any, error) {
-	request := map[string]string{"application": application, "environment": environment, "tag": tag}
+// CallDeployGateWithIidpYAML is CallDeployGate carrying a migration
+// command and Scheduled tasks, as iidp ci set-image sends them when the
+// deployed commit has an iidp.yaml; nil sends no migration command, and
+// no tasks leaves the key out.
+func (c *Cluster) CallDeployGateWithIidpYAML(ctx context.Context, token, application, environment, tag string, migrationCommand *string, tasks []appconfig.Task) (int, map[string]any, error) {
+	request := map[string]any{"application": application, "environment": environment, "tag": tag}
 	if migrationCommand != nil {
 		request["migrationCommand"] = *migrationCommand
+	}
+	if len(tasks) > 0 {
+		request["tasks"] = tasks
 	}
 	body, _ := json.Marshal(request)
 	status, data, err := c.requestDeployGate(ctx, http.MethodPost, "/v1/deploy", token, body)

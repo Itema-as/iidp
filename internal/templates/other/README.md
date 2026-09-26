@@ -35,4 +35,6 @@ It runs before every rollout, in each Environment this Application deploys
 to, from the image just built, with `DATABASE_URL` set; if it fails, the
 rollout stops. `iidp ci set-image` reads it from the commit it deploys or
 promotes, so it always matches the code it migrates. Remove the line to run
-no migration. Its comments say more.
+no migration. A Web service can also declare Scheduled tasks there,
+commands run on a schedule from its image (`tasks:`). Its comments say
+more.

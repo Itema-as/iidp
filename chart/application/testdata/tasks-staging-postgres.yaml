@@ -1,0 +1,25 @@
+application:
+  name: shop
+environment: staging
+platform:
+  baseDomain: app.itma.no
+  backupsBucket: itema-iidp-db-backups
+  objectStorageEndpoint: https://hel1.your-objectstorage.com
+kind: web-service
+image:
+  repository: ghcr.io/itema-as/shop
+  tag: 0123abc
+size: medium
+env:
+  NODE_ENV: production
+secrets:
+  - shop-stripe
+postgres:
+  enabled: true
+tasks:
+  - name: nightly-cleanup
+    schedule: "0 3 * * *"
+    command: 'node scripts/cleanup.js && echo "cleaned: yes"'
+  - name: report
+    schedule: "*/15 7-17 * * mon-fri"
+    command: npm run report

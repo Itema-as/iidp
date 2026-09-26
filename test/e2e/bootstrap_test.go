@@ -41,9 +41,10 @@ import (
 // issuer, lands in the Platform repository and brochure-prod syncs it,
 // while a call from another repository, one from a disallowed ref and
 // (#61) one with a tag Docker Hub does not have are refused. After it
-// (testMigrationCommandFromIidpYAML) it proves #66: a deploy of shop
-// carrying the migration command from its Application repository's
-// iidp.yaml sets it with the tag, and the migration Job runs it.
+// (testMigrationCommandFromIidpYAML) it proves #66 and #91: a deploy of
+// shop carrying the migration command and a Scheduled task from its
+// Application repository's iidp.yaml sets them with the tag, the migration
+// Job runs the command, and the task's CronJob runs a Job that succeeds.
 //
 // Run with:
 //
@@ -191,27 +192,29 @@ const (
 // the gate checks every new tag against the image's registry (#61).
 const shopDeployTag = "1.30.0-alpine"
 
-// testMigrationCommandFromIidpYAML proves #66 end to end: the migration
-// command in shop's Application repository (the fixture
-// test/e2e/fixtures/shop-repository/iidp.yaml, read with the code iidp ci
-// set-image uses) travels with a deploy through the Deploy gate, lands in
-// shop's prod values.yaml in the same commit as the tag, and is what the
-// migration Job then runs. A command for brochure, which has no Postgres,
-// is refused first.
+// testMigrationCommandFromIidpYAML proves #66 and #91 end to end: the
+// migration command and the Scheduled task in shop's Application
+// repository (the fixture test/e2e/fixtures/shop-repository/iidp.yaml,
+// read with the code iidp ci set-image uses) travel with a deploy through
+// the Deploy gate and land in shop's prod values.yaml in the same commit
+// as the tag. The migration Job then runs the command, and the task's
+// CronJob, on its every-minute schedule, runs a Job that succeeds with
+// DATABASE_URL set. A command for brochure, which has no Postgres, and
+// tasks for brochure, a Static site, are refused first.
 func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster *Cluster, issuer *FakeIssuer) {
 	t.Helper()
 	appConfig, ok, err := appconfig.Read(filepath.Join(cluster.RepoRoot, "test", "e2e", "fixtures", "shop-repository"))
-	if err != nil || !ok || appConfig.MigrationCommand == "" {
-		t.Fatalf("reading the fixture iidp.yaml: ok = %v, command = %q, err = %v", ok, appConfig.MigrationCommand, err)
+	if err != nil || !ok || appConfig.MigrationCommand == "" || len(appConfig.Tasks) != 1 {
+		t.Fatalf("reading the fixture iidp.yaml: ok = %v, command = %q, tasks = %v, err = %v", ok, appConfig.MigrationCommand, appConfig.Tasks, err)
 	}
-	command := appConfig.MigrationCommand
-	call := func(repository string, repositoryID int64, application, tag string) (int, map[string]any) {
+	command, task := appConfig.MigrationCommand, appConfig.Tasks[0]
+	call := func(repository string, repositoryID int64, application, tag string, command *string, tasks []appconfig.Task) (int, map[string]any) {
 		t.Helper()
 		token, err := issuer.Sign(issuer.Claims(repository, repositoryID, "refs/heads/main"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		status, body, err := cluster.CallDeployGateWithMigration(ctx, token, application, "auto", tag, &command)
+		status, body, err := cluster.CallDeployGateWithIidpYAML(ctx, token, application, "auto", tag, command, tasks)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -220,16 +223,21 @@ func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster
 	}
 
 	// brochure has no Postgres: nothing to migrate, so nothing is written.
-	status, body := call("Itema-as/brochure", brochureRepositoryID, "brochure", "1.30-alpine")
+	status, body := call("Itema-as/brochure", brochureRepositoryID, "brochure", "1.30-alpine", &command, nil)
 	if msg, _ := body["error"].(string); status != http.StatusConflict || !strings.Contains(msg, "Add the Postgres Capability first") {
 		t.Errorf("a migration command for brochure: HTTP %d %v, want 409 asking for the Postgres Capability first", status, body)
+	}
+	// brochure is a Static site: no command of its own to schedule.
+	status, body = call("Itema-as/brochure", brochureRepositoryID, "brochure", "1.30-alpine", nil, appConfig.Tasks)
+	if msg, _ := body["error"].(string); status != http.StatusConflict || !strings.Contains(msg, "is a Static site") {
+		t.Errorf("tasks for brochure: HTTP %d %v, want 409 saying it is a Static site", status, body)
 	}
 
 	// shop's deploy. Its staging Environment was deleted
 	// (testDeleteEnvironment), so main deploys to prod.
-	status, body = call("Itema-as/shop", shopRepositoryID, "shop", shopDeployTag)
-	if status != http.StatusOK || body["environment"] != "prod" || body["migrationCommandChanged"] != true {
-		t.Fatalf("the deploy of shop with its iidp.yaml: HTTP %d %v, want 200, prod and the migration command changed", status, body)
+	status, body = call("Itema-as/shop", shopRepositoryID, "shop", shopDeployTag, &command, appConfig.Tasks)
+	if status != http.StatusOK || body["environment"] != "prod" || body["migrationCommandChanged"] != true || body["tasksChanged"] != true {
+		t.Fatalf("the deploy of shop with its iidp.yaml: HTTP %d %v, want 200, prod and the migration command and tasks changed", status, body)
 	}
 
 	err = cluster.ReadRepository(ctx, "iidp-platform", func(dir string) error {
@@ -245,6 +253,9 @@ func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster
 		}
 		if got := git("log", "-1", "--format=%b"); !strings.Contains(got, "Migration command, from iidp.yaml: "+command) {
 			t.Errorf("the deploy's body is %q, want it to name the new migration command", got)
+		}
+		if got := git("log", "-1", "--format=%b"); !strings.Contains(got, "- "+task.Name+" ("+task.Schedule+"): "+task.Command) {
+			t.Errorf("the deploy's body is %q, want it to name the task", got)
 		}
 		if got := git("show", "--stat", "--format=", "HEAD"); !strings.Contains(got, "applications/shop/prod/values.yaml") || !strings.Contains(got, "1 file changed") {
 			t.Errorf("the deploy changed:\n%s\nwant only shop's prod values.yaml, tag and command together", got)
@@ -269,6 +280,17 @@ func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster
 	}
 	if err := cluster.WaitForApplications(ctx, map[string]Expectation{"shop-prod": Healthy}, 5*time.Minute); err != nil {
 		t.Fatal(err)
+	}
+
+	// The same sync applied the task's CronJob. On its every-minute
+	// schedule a run starts within a minute or two; Forbid keeps it to one
+	// small Pod at a time on the runner.
+	logs, err = cluster.WaitForScheduledTaskRun(ctx, "shop-prod", task.Name, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs, "scheduled task ran with DATABASE_URL") {
+		t.Errorf("the task's log is %q, want the marker its command echoes", logs)
 	}
 }
 
