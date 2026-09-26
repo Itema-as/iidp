@@ -49,7 +49,8 @@ appSecret: platform-repo-github-app
 ghcrSecret: ghcr-pull-token
 
 # Small on purpose: the node, and the kind runner, are near their CPU
-# request limits. A deploy is one shallow clone and one push.
+# request limits. A deploy is one shallow clone and one push; a status call
+# (iidp app status) is one clone, one GitHub call and a few list calls.
 resources:
   requests:
     cpu: 5m

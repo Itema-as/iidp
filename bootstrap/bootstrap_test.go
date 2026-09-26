@@ -377,8 +377,13 @@ func TestDeployGateComponentRendersTheGate(t *testing.T) {
 		t.Fatalf("no Deployment/iidp-deploy-gate in %v", keys(objects))
 	}
 	pod := get[object](t, deployment, "spec", "template", "spec")
-	if got := get[bool](t, pod, "automountServiceAccountToken"); got {
-		t.Errorf("the gate mounts a service account token; it needs no Kubernetes API access")
+	// The token is for iidp app status's reads, which
+	// TestDeployGateReadsTheClusterWithListOnly bounds.
+	if got := get[string](t, pod, "serviceAccountName"); got != "iidp-deploy-gate" {
+		t.Errorf("serviceAccountName = %q, want the gate's own read-only service account", got)
+	}
+	if got := get[bool](t, pod, "automountServiceAccountToken"); !got {
+		t.Errorf("the gate mounts no service account token; iidp app status reads the cluster with it")
 	}
 	container := get[object](t, map[string]any{"c": get[[]any](t, pod, "containers")[0]}, "c")
 	if got := get[string](t, container, "image"); got != "ghcr.io/itema-as/iidp-deploy-gate:1.2.3" {
@@ -460,6 +465,83 @@ func TestDeployGateComponentRendersTheGate(t *testing.T) {
 	}
 	if _, ok := objects["Service/iidp-deploy-gate"]; !ok {
 		t.Errorf("no Service/iidp-deploy-gate in %v", keys(objects))
+	}
+}
+
+// The gate's service account reads for iidp app status and nothing else:
+// no verb beyond get, list and watch (in fact only list), only the five
+// kinds status reads, the ArgoCD Applications only in the gate's own
+// namespace, and bound to no one but the gate
+// (docs/implementation-notes/94-app-status.md).
+func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
+	objects := parseObjects(t, helmTemplate(t, "components/deploy-gate",
+		"--namespace", "argocd", "--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
+
+	readOnly := map[string]bool{"get": true, "list": true, "watch": true}
+	granted := map[string]string{} // group/resource -> the kind of role granting it
+	var rbac []string
+	for key, obj := range objects {
+		kind := obj["kind"].(string)
+		switch kind {
+		case "Role", "ClusterRole":
+			rbac = append(rbac, key)
+			for _, r := range get[[]any](t, obj, "rules") {
+				rule := r.(object)
+				if _, ok := rule["nonResourceURLs"]; ok {
+					t.Errorf("%s grants nonResourceURLs: %v", key, rule)
+				}
+				for _, v := range rule["verbs"].([]any) {
+					if !readOnly[v.(string)] {
+						t.Errorf("%s grants %q: only get, list and watch are allowed", key, v)
+					}
+					if v != "list" {
+						t.Errorf("%s grants %q: iidp app status only lists", key, v)
+					}
+				}
+				for _, g := range rule["apiGroups"].([]any) {
+					for _, res := range rule["resources"].([]any) {
+						granted[g.(string)+"/"+res.(string)] = kind
+					}
+				}
+			}
+		case "RoleBinding", "ClusterRoleBinding":
+			rbac = append(rbac, key)
+			subjects := get[[]any](t, obj, "subjects")
+			if len(subjects) != 1 {
+				t.Errorf("%s binds %d subjects, want only the gate's service account", key, len(subjects))
+			}
+			for _, s := range subjects {
+				subject := s.(object)
+				if subject["kind"] != "ServiceAccount" || subject["name"] != "iidp-deploy-gate" || subject["namespace"] != "argocd" {
+					t.Errorf("%s binds %v, want argocd/iidp-deploy-gate", key, subject)
+				}
+			}
+			roleKind := strings.TrimSuffix(kind, "Binding")
+			ref := get[string](t, obj, "roleRef", "name")
+			if get[string](t, obj, "roleRef", "kind") != roleKind {
+				t.Errorf("%s refers to a %s, want a %s", key, get[string](t, obj, "roleRef", "kind"), roleKind)
+			}
+			if _, ok := objects[roleKind+"/"+ref]; !ok {
+				t.Errorf("%s refers to %s/%s, which the chart does not render: it would grant whatever that role is", key, roleKind, ref)
+			}
+		}
+	}
+	want := map[string]string{
+		"argoproj.io/applications": "Role",
+		"/pods":                    "ClusterRole",
+		"apps/deployments":         "ClusterRole",
+		"batch/jobs":               "ClusterRole",
+		"batch/cronjobs":           "ClusterRole",
+	}
+	if fmt.Sprint(granted) != fmt.Sprint(want) {
+		t.Errorf("the gate may list %v, want exactly %v", granted, want)
+	}
+	sort.Strings(rbac)
+	if got := strings.Join(rbac, " "); got != "ClusterRole/iidp-deploy-gate-status ClusterRoleBinding/iidp-deploy-gate-status Role/iidp-deploy-gate-status RoleBinding/iidp-deploy-gate-status" {
+		t.Errorf("RBAC objects = %s", got)
+	}
+	if _, ok := objects["ServiceAccount/iidp-deploy-gate"]; !ok {
+		t.Errorf("no ServiceAccount/iidp-deploy-gate in %v", keys(objects))
 	}
 }
 

@@ -119,19 +119,47 @@ func signWith(t *testing.T, key *rsa.PrivateKey, kid string, claims map[string]a
 	return input + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
-// fakeGitHub fakes the three GitHub calls the gate makes: the App's
-// installation token, the App's slug, and its bot account's id.
+// fakeGitHub fakes the three GitHub calls a deploy makes: the App's
+// installation token, the App's slug, and its bot account's id. It also
+// fakes the one a status call makes with the developer's own token,
+// GET /repositories/{id} (status_test.go).
 type fakeGitHub struct {
 	srv      *httptest.Server
 	appKey   *rsa.PublicKey
 	mu       sync.Mutex
 	requests map[string]int
+	// readers maps a user token to what it may see: repository id to
+	// whether it has pull permission. Anything else is GitHub's 404.
+	readers map[string]map[int64]bool
+	// repositoryTokens are the tokens GET /repositories was called with.
+	repositoryTokens []string
 }
 
 func newFakeGitHub(t *testing.T, appKey *rsa.PublicKey) *fakeGitHub {
 	t.Helper()
-	f := &fakeGitHub{appKey: appKey, requests: map[string]int{}}
+	f := &fakeGitHub{appKey: appKey, requests: map[string]int{}, readers: map[string]map[int64]bool{}}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repositories/{id}", func(w http.ResponseWriter, r *http.Request) {
+		f.count("repositories")
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		f.mu.Lock()
+		f.repositoryTokens = append(f.repositoryTokens, token)
+		visible, known := f.readers[token]
+		f.mu.Unlock()
+		if !known {
+			http.Error(w, `{"message": "Bad credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		var id int64
+		fmt.Sscan(r.PathValue("id"), &id)
+		pull, ok := visible[id]
+		if !ok {
+			http.Error(w, `{"message": "Not Found"}`, http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "full_name": "Itema-as/shop-renamed", "private": true,
+			"permissions": map[string]bool{"pull": pull}})
+	})
 	mux.HandleFunc(fmt.Sprintf("POST /app/installations/%d/access_tokens", installID), func(w http.ResponseWriter, r *http.Request) {
 		f.count("token")
 		if err := f.verifyAppJWT(r); err != nil {

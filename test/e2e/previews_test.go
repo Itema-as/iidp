@@ -5,9 +5,13 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
 // previewHeadSHA is the head SHA of the fixture pull request that gets a
@@ -67,6 +71,11 @@ func testPreviewEnvironments(ctx context.Context, t *testing.T, cluster *Cluster
 	if err != nil || strings.TrimSpace(out) != "application.argoproj.io/"+preview {
 		t.Errorf("Applications labelled notes, pr-7: %q (err %v), want %s", out, err, preview)
 	}
+
+	// iidp app status lists the preview beside staging (#94): the gate
+	// finds Environments by the same labels, so a preview needs no change
+	// there.
+	testStatusListsPreview(ctx, t, cluster, "notes", "pr-7")
 
 	// The namespace carries the labels every Environment's does, so the
 	// guardrails bind to it, and the tracking annotation that makes it
@@ -153,4 +162,43 @@ func testPreviewEnvironments(ctx context.Context, t *testing.T, cluster *Cluster
 	if err := cluster.WaitForResourceGone(ctx, "namespace", namespace, namespace, 3*time.Minute); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// testStatusListsPreview asks the gate's status endpoint for application,
+// as a developer who can read its repository, until it lists environment.
+func testStatusListsPreview(ctx context.Context, t *testing.T, cluster *Cluster, application, environment string) {
+	t.Helper()
+	var last string
+	err := pollUntil(ctx, 2*time.Minute, 5*time.Second,
+		func() (bool, error) {
+			code, body, err := cluster.CallStatus(ctx, DeveloperToken, application)
+			if err != nil {
+				return false, err
+			}
+			last = fmt.Sprintf("HTTP %d: %s", code, body)
+			if code >= 500 {
+				return false, nil
+			}
+			if code != http.StatusOK {
+				return false, fmt.Errorf("the status of %s: %s", application, last)
+			}
+			var status platformstate.Status
+			if err := json.Unmarshal(body, &status); err != nil {
+				return false, err
+			}
+			for _, env := range status.Environments {
+				if env.Name == environment && env.ArgoCD != nil {
+					return true, nil
+				}
+			}
+			return false, nil
+		},
+		func() error {
+			return fmt.Errorf("iidp app status %s never listed %s: %s", application, environment, last)
+		})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	t.Logf("iidp app status %s: %s", application, last)
 }

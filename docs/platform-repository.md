@@ -511,3 +511,15 @@ So deleting a task from `iidp.yaml` stops it with the next deploy, and promoting
 The chart renders each task as a CronJob `<name>[-staging]-<task>`; see [`chart/application/README.md`](../chart/application/README.md) for its settings.
 
 `platform.yaml`'s `githubApp.id`/`githubApp.installationId` (the table above) stay documentation only. The gate reads the App's id, installation id and key from the Secret cloud-init writes for ArgoCD's own Platform-repository credential.
+
+## How `iidp app status` reads the Platform: the gate's service
+
+The Deploy gate's service also answers one read, `GET https://deploy.<baseDomain>/v1/status/<app>`, for `iidp app status` ([ADR-0007](adr/0007-app-status-reads-through-the-deploy-gate.md), [`docs/implementation-notes/94-app-status.md`](implementation-notes/94-app-status.md)). It is not part of the Deploy gate: it writes nothing and never uses the App key. The caller is a developer, with their own `gh auth` token as `Authorization: Bearer <token>`. The service checks, in order, and refuses at the first failure:
+
+1. A token is sent (HTTP 401), and the name is a valid Application name (HTTP 400).
+2. It clones this repository's `main` with that token. A token GitHub does not accept is HTTP 401; one that may not read this repository is HTTP 403.
+3. The Application has a live Environment here, an `application.yaml` under `prod/` or `staging/` (HTTP 404, "there is no Application").
+4. It is bound (`applications/<name>/repository.yaml`, above) with both ids, to a repository in `Itema-as` (HTTP 403, naming `iidp app bind`).
+5. GitHub, asked with the same token for the bound repository by its id (`GET /repositories/<repositoryId>`), says the user may read it. GitHub answers 404 rather than 403 for a private repository the user cannot see; both are HTTP 403 here, "you cannot read ... Application repository".
+
+Only then does it read the cluster, and it answers with every Environment it finds: each ArgoCD Application in `argocd` labelled `iidp.itema.no/application: <name>` (the label every `application.yaml` carries, above), with the objects in the namespace it names. The Environments this repository has but ArgoCD does not yet are listed too. When the image was deployed is the time of the newest commit here that set the running tag in that Environment's `values.yaml`. The answer's shape is documented in the README ("`app status`").

@@ -14,6 +14,8 @@
 //     (#95) with the same App: an installation token, and a repository's
 //     open pull requests. The generator is pointed here by the fixture
 //     platform.yaml's githubAPI, as it would be at a GitHub Enterprise;
+//   - GET /api/repositories/{id}, the one call a status call makes with a
+//     developer's own token (docs/implementation-notes/94-app-status.md);
 //   - PUT /e2e/pulls/{owner}/{repo}, which only the test calls (through a
 //     port-forward): the repository's pull requests from then on, open
 //     and closed, which is how the test opens, labels and closes them.
@@ -36,6 +38,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +50,20 @@ const (
 	InstallationToken = "e2e-installation-token"
 	AppSlug           = "iidp-deploy"
 	BotUserID         = 41898282
+
+	// DeveloperToken is the gh auth token test/e2e sends to the gate's
+	// status endpoint.
+	DeveloperToken = "e2e-developer-token"
 )
+
+// readableRepositories are the repository ids DeveloperToken may read,
+// with their full names: the fixture's bindings of shop and notes (whose
+// Preview Environment the status test lists). brochure's is not among
+// them, so its status is refused.
+var readableRepositories = map[string]string{
+	"700000002": "Itema-as/shop",
+	"700000003": "Itema-as/notes",
+}
 
 func main() {
 	jwks, err := os.ReadFile(os.Getenv("JWKS_FILE"))
@@ -123,6 +139,24 @@ func main() {
 		pulls.byRepo[r.PathValue("owner")+"/"+r.PathValue("repo")] = list
 		pulls.Unlock()
 		w.WriteHeader(http.StatusNoContent)
+	})
+	// The status endpoint's access check, made with the developer's own
+	// token: DeveloperToken can read readableRepositories (shop's and
+	// notes's) and nothing else, which GitHub answers with 404; any other
+	// token is not a token GitHub knows.
+	mux.HandleFunc("GET /api/repositories/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+DeveloperToken {
+			http.Error(w, `{"message": "Bad credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		fullName, ok := readableRepositories[r.PathValue("id")]
+		if !ok {
+			http.Error(w, `{"message": "Not Found"}`, http.StatusNotFound)
+			return
+		}
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		writeJSON(w, map[string]any{"id": id, "full_name": fullName, "private": true,
+			"permissions": map[string]bool{"pull": true}})
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	log.Print("fakegithub listening on :8080")

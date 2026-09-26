@@ -1,0 +1,76 @@
+# What the gate's service may read for iidp app status, and nothing else
+# (docs/adr/0007-app-status-reads-through-the-deploy-gate.md,
+# docs/implementation-notes/94-app-status.md). Only list: every read is one
+# list call narrowed by label, and nothing is fetched by name or watched.
+# No Secrets, ConfigMaps or pods/log. The deploy path uses none of it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: iidp-deploy-gate
+  labels:
+    {{- include "deploy-gate.labels" . | nindent 4 }}
+# Only the gate's pod mounts the token, and says so itself.
+automountServiceAccountToken: false
+---
+# The Environments' ArgoCD Applications, all in this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: iidp-deploy-gate-status
+  labels:
+    {{- include "deploy-gate.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: iidp-deploy-gate-status
+  labels:
+    {{- include "deploy-gate.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: iidp-deploy-gate-status
+subjects:
+  - kind: ServiceAccount
+    name: iidp-deploy-gate
+    namespace: {{ .Release.Namespace }}
+---
+# The workloads in the Environments' namespaces. Cluster-wide, because
+# those namespaces come and go with Environments (and Preview
+# Environments), and RBAC cannot select namespaces by label; the gate only
+# lists in the namespaces its ArgoCD Applications name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: iidp-deploy-gate-status
+  labels:
+    {{- include "deploy-gate.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: iidp-deploy-gate-status
+  labels:
+    {{- include "deploy-gate.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: iidp-deploy-gate-status
+subjects:
+  - kind: ServiceAccount
+    name: iidp-deploy-gate
+    namespace: {{ .Release.Namespace }}
