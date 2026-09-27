@@ -1,0 +1,1033 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Argus drawn in space instead of as an archipelago, for comparison with
+  prototype-island-three.html, which stays the chosen direction. Same model, states, events, loudness,
+  automatic camera and feed; only the drawing differs.
+
+  ?variant=plexus   A particle network: every Environment is a cloud of linked particles, the Platform a dense
+                    core, each Application joined to the core by one filament and never to each other.
+  ?variant=orrery   A solar system: the Platform is the sun with its components on an inner orbit, Applications
+                    are planets on the islets' fixed orbits, Environments are their moons.
+
+  Left-drag rotates, right-drag pans, scroll zooms. ?do=arrive,burst runs events on load. ?still=1 stops the
+  orrery's orbits. ?cam=x,y,z&look=x,y,z frames a spot. ?idle=ms, ?drive=1 as in the islet prototype.
+  Loads three.js from a CDN, so it needs internet.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PROTOTYPE · Argus as a network</title>
+<style>
+  :root { --panel:#0e1218; --ink:#e6edf3; --muted:#8b98a5; --line:#222b35; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; overflow:hidden; color:var(--ink); background:#03050a;
+    font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  #stage { position:fixed; inset:0 330px 0 0; }
+  body.nopanel #stage { right:0; }
+  #stage canvas { display:block; width:100%; height:100%; }
+  #stage .labels { position:absolute; top:0; left:0; pointer-events:none; }
+  /* Cluster lost: the last known picture, drained of colour. */
+  #stage canvas, #stage .labels { transition:filter 1.2s, opacity 1.2s; }
+  body.lost #stage canvas { filter:grayscale(.85) brightness(.6); }
+  body.lost #stage .labels { opacity:.55; }
+  #panel { position:fixed; top:0; right:0; bottom:0; width:330px; overflow:auto; background:var(--panel);
+    border-left:1px solid var(--line); padding:14px 16px 90px; }
+  body.nopanel #panel { display:none; }
+  h1 { font-size:15px; font-weight:650; margin:0 0 2px; }
+  h2 { font-size:11.5px; font-weight:650; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin:18px 0 8px; }
+  .note { color:var(--muted); font-size:12px; margin:0; }
+  .note a { color:#9ec6ff; }
+  .actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  button { font:inherit; font-size:12.5px; color:var(--ink); background:#18202a; border:1px solid #2a3542;
+    border-radius:4px; padding:7px 8px; text-align:left; cursor:pointer; }
+  button:hover { background:#212c38; }
+  #feed { list-style:none; margin:0; padding:0; font-size:12.5px; }
+  #feed li { padding:3px 0; border-bottom:1px solid #1a222b; }
+  #feed time { color:var(--muted); margin-right:6px; font-variant-numeric:tabular-nums; }
+  #switcher { position:fixed; left:calc((100% - 330px) / 2); bottom:18px; transform:translateX(-50%); display:flex;
+    align-items:center; gap:2px; background:#f0f6fc; color:#0d1117; border:1px solid #d0d7de; border-radius:6px;
+    box-shadow:0 6px 24px rgba(0,0,0,.5); font-size:13px; z-index:10; }
+  body.nopanel #switcher { left:50%; }
+  #switcher button { background:none; border:0; color:inherit; padding:8px 12px; font-size:16px; }
+  #switcher .label { padding:0 10px; min-width:230px; text-align:center; font-weight:600; }
+  #togglePanel { position:fixed; top:12px; right:342px; z-index:10; background:#0d1117ee; }
+  body.nopanel #togglePanel { right:12px; }
+  #tip { position:fixed; pointer-events:none; background:#0d1117f2; color:#e6edf3; border:1px solid #3d444d;
+    border-radius:4px; padding:6px 8px; font-size:12px; white-space:pre; display:none; z-index:20; }
+  #lost { position:fixed; top:14px; left:calc((100% - 330px) / 2); transform:translateX(-50%); background:#2b3137;
+    color:#e6edf3; border:1px solid #57606a; border-radius:4px; padding:7px 12px; font-size:13px; display:none; z-index:10; }
+  #title { position:fixed; top:14px; left:16px; font-size:13px; font-weight:600; z-index:10;
+    background:#0d1117cc; color:#e6edf3; padding:5px 9px; border-radius:4px; }
+  #camChip { position:fixed; top:50px; left:16px; z-index:12; font-size:12.5px; background:#0d1117e6; color:#e6edf3;
+    border:1px solid #3d444d; border-radius:4px; padding:5px 9px; cursor:pointer; user-select:none; }
+  #camChip .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; background:#58d68d; vertical-align:0; }
+  #camChip.paused .dot { background:#ffc233; } #camChip.off .dot { background:#6e7781; }
+  #edges { position:fixed; inset:0 330px 0 0; pointer-events:none; z-index:11; }
+  body.nopanel #edges { right:0; }
+  .edge { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; cursor:pointer; display:flex; align-items:center; gap:6px;
+    background:#0d1117e6; color:#e6edf3; border:1px solid #3d444d; border-radius:4px; padding:3px 8px 3px 5px; font-size:12px; white-space:nowrap; }
+  .edge .arrow { width:0; height:0; border-left:7px solid currentColor; border-top:5px solid transparent; border-bottom:5px solid transparent; }
+  #sceneFeed { position:fixed; left:16px; bottom:18px; width:300px; z-index:11; list-style:none; margin:0; padding:0; font-size:12.5px; }
+  #sceneFeed li { display:flex; gap:8px; align-items:baseline; background:#0a0e14d9; color:#e6edf3; border:1px solid #242d37; border-radius:4px;
+    padding:4px 8px; margin-top:4px; cursor:pointer; }
+  #sceneFeed li:hover { border-color:#5fd3ff; }
+  #sceneFeed li.nowhere { cursor:default; }
+  #sceneFeed .sev { width:8px; height:8px; border-radius:50%; flex:none; transform:translateY(1px); }
+  #sceneFeed .msg { flex:1; }
+  #sceneFeed .age { color:#8b98a5; font-variant-numeric:tabular-nums; }
+  #err { position:fixed; top:45%; left:20%; right:350px; color:#ffb4ab; display:none; }
+  /* Labels in the scene are HTML, so they stay sharp and out of the glow. */
+  .lbl { font:600 11px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; color:#dce8f5; white-space:nowrap; pointer-events:none;
+    text-shadow:0 0 4px #000, 0 0 10px rgba(0,0,0,.9); }
+  .lbl.app { font-size:12.5px; letter-spacing:.16em; text-transform:uppercase; color:#eef5ff; }
+  .lbl.plat { font-size:13px; letter-spacing:.24em; color:#ffe6ae; }
+  .lbl.comp { font-size:11px; font-weight:500; color:#e6d6ad; }
+  .lbl.env { font-size:10.5px; font-weight:500; color:#9fb2c6; }
+  .lbl.chip { font-size:10px; font-weight:650; letter-spacing:.07em; padding:2px 6px; border-radius:3px; border:1px solid; background:rgba(4,7,12,.78); text-shadow:none; }
+  .chip.new { color:#8fe3ff; border-color:#5fd3ff; } .chip.stuck { color:#ffb070; border-color:#ff7a1a; }
+  .chip.bad { color:#ff9a90; border-color:#ff5a4e; } .chip.unknown { color:#b8c0c8; border-color:#6e7781; }
+  .chip.unrel { color:#c9d4dd; border-color:#56626e; border-style:dashed; } .chip.leaving { color:#b8c0c8; border-color:#6e7781; }
+  .chip.warn { color:#ffd866; border-color:#ffcc33; } .chip.domain { color:#a9ccff; border-color:#2f81f7; font-weight:500; letter-spacing:0; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="title">Argus · in space (throwaway)</div>
+<div id="lost">Argus has lost the cluster. Showing the last known state.</div>
+<div id="err">Couldn't start. This prototype loads three.js from a CDN and needs WebGL.</div>
+<button id="togglePanel">Hide panel</button>
+<div id="switcher">
+  <button id="prev" aria-label="Previous variant">‹</button>
+  <div class="label" id="variantLabel"></div>
+  <button id="next" aria-label="Next variant">›</button>
+</div>
+<div id="tip"></div>
+<div id="camChip"><span class="dot"></span><span id="camText"></span></div>
+<div id="edges"></div>
+<ul id="sceneFeed"></ul>
+<aside id="panel">
+  <h1>Push the Platform around</h1>
+  <p class="note">Fake data. Left-drag rotates, right-drag pans, scroll zooms. Hover anything.</p>
+  <p class="note" style="margin-top:6px">Same model and camera as the <a href="prototype-island-three.html">islet prototype</a>. The chip at the top left turns the automatic camera on and off; the feed in the corner is the product, this panel is test controls.</p>
+  <h2>Events</h2>
+  <div class="actions">
+    <button data-act="arrive">An Application arrives</button>
+    <button data-act="firstDeploy">wiki gets its first image</button>
+    <button data-act="deploy">Deploy an Environment</button>
+    <button data-act="stuck">A Deploy gets stuck</button>
+    <button data-act="update">Set a secret (Updating)</button>
+    <button data-act="degrade">An Environment degrades</button>
+    <button data-act="unknown">One Environment goes Unknown</button>
+    <button data-act="warn">A database backup fails</button>
+    <button data-act="preview">Open a preview</button>
+    <button data-act="closePreview">Close a preview</button>
+    <button data-act="deleteApp">Delete an Application</button>
+    <button data-act="deleteTwo">Delete two at once</button>
+    <button data-act="burst">Three things at once</button>
+    <button data-act="bump">Bump cert-manager</button>
+    <button data-act="traefik">Traefik degrades / recovers</button>
+    <button data-act="lose">Lose / regain the cluster</button>
+    <button data-act="settle">Settle everything</button>
+    <button data-act="fit">Fit view</button>
+  </div>
+  <h2>Feed</h2>
+  <ul id="feed"></ul>
+</aside>
+
+<script type="module">
+window.addEventListener('error', () => { document.getElementById('err').style.display = 'block'; });
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+// ================================================================ model and events (same logic as the islets)
+let seq = 0;
+const cap = (kind, o = {}) => ({ kind, cond: 'healthy', warn: false, ...o });
+const mkEnv = (app, name, caps = [], o = {}) => ({ id: ++seq, app, name, cond: 'healthy', activity: null, stuck: false, caps, bornAt: -1e9, ...o });
+const model = { apps: [], comps: [], clusterLost: false, free: [], high: 0, feed: [] };
+const takeSlot = () => { if (model.free.length) { model.free.sort((a, b) => a - b); return model.free.shift(); } return ++model.high; };
+const addApp = (name, envs, o = {}) => { const a = { name, envs, slot: takeSlot(), isNew: false, ...o }; model.apps.push(a); return a; };
+function seed() {
+  const A = (n, f) => addApp(n, f(n));
+  A('shop', n => [mkEnv(n, 'prod', [cap('postgres'), cap('login')]), mkEnv(n, 'staging', [cap('postgres'), cap('login')]), mkEnv(n, 'pr-42', [cap('login')])]);
+  A('iprofil', n => [mkEnv(n, 'prod', [cap('postgres'), cap('domain', { host: 'iprofil.no' })]), mkEnv(n, 'staging', [cap('postgres')])]);
+  A('hello', n => [mkEnv(n, 'prod')]);
+  A('api', n => [mkEnv(n, 'prod', [cap('postgres', { warn: true })], { cond: 'degraded' }), mkEnv(n, 'staging', [cap('postgres')], { activity: 'deploying' })]);
+  A('wiki', n => [mkEnv(n, 'prod', [], { activity: 'unreleased' })]);
+  A('timesheet', n => [mkEnv(n, 'prod', [cap('postgres'), cap('task')]), mkEnv(n, 'staging', [cap('postgres')], { activity: 'deploying', stuck: true, why: 'migration Job failed' })]);
+  A('booking', n => [mkEnv(n, 'prod', [cap('login'), cap('domain', { host: 'booking.itema.no' })], { cond: 'unknown' }), mkEnv(n, 'staging', [cap('login')], { activity: 'updating' })]);
+  const C = (kind, label, o = {}) => model.comps.push({ kind, label, cond: 'healthy', activity: null, stuck: false, ...o });
+  C('argocd', 'ArgoCD'); C('traefik', 'Traefik'); C('deploy-gate', 'Deploy gate'); C('cert-manager', 'cert-manager', { activity: 'updating' });
+  C('external-dns', 'external-dns'); C('cnpg', 'CloudNativePG'); C('oauth2-proxy', 'Itema login'); C('alloy', 'Alloy');
+}
+const actLabel = e => e.activity === null ? 'none' : e.activity[0].toUpperCase() + e.activity.slice(1) + (e.stuck ? ' (stuck)' : '');
+const condLabel = e => e.cond[0].toUpperCase() + e.cond.slice(1);
+function tipEnv(e) {
+  const l = [`${e.app} ${e.name}`, `Condition: ${e.activity === 'unreleased' ? 'n/a' : condLabel(e)}`, `Activity: ${actLabel(e)}`];
+  if (e.stuck && e.why) l.push(`Why stuck: ${e.why}`);
+  if (e.activity === 'leaving' && e.caps.some(c => c.kind === 'postgres')) l.push('Final backup running');
+  for (const c of e.caps) l.push(`  ${c.kind}${c.host ? ' ' + c.host : ''}: ${condLabel(c)}${c.warn ? ' · Warning: backups failing' : ''}`);
+  return l.join('\n');
+}
+const tipComp = c => `${c.label} (Platform component)\nCondition: ${condLabel(c)}\nActivity: ${actLabel(c)}`;
+const tipApp = a => [a.name, ...a.envs.map(e => `  ${e.name}: ${e.activity === 'unreleased' ? 'Unreleased' : condLabel(e)}${e.activity && e.activity !== 'unreleased' ? ' · ' + actLabel(e) : ''}`)].join('\n');
+const comp = k => model.comps.find(c => c.kind === k);
+const anyDeploying = () => model.apps.some(a => a.envs.some(e => e.activity === 'deploying' && !e.stuck));
+const kindOf = e => e.name === 'prod' ? 'prod' : e.name === 'staging' ? 'staging' : 'preview';
+const envLabel = e => e.name.startsWith('pr-') ? '#' + e.name.slice(3) : e.name;
+// The islets' fixed orbits: ring k holds 6k Applications, every other ring offset half a step.
+function ringOf(slot) {
+  let s = slot - 1, k = 1;
+  while (s >= 6 * k) { s -= 6 * k; k++; }
+  const n = 6 * k;
+  return { k, a: (s / n) * Math.PI * 2 + (k % 2 === 0 ? Math.PI / n : 0) + Math.PI / 4 };
+}
+
+// ================================================================ look
+const COL = { prod: '#d4e9ff', staging: '#98bdf8', preview: '#8aa1d4', core: '#ffdf9a', comp: '#eccb82', hub: '#cfe0f5', fil: '#6f93c4',
+  build: '#5fd3ff', work: '#ffc233', stuck: '#ff7a1a', bad: '#ff5146', grey: '#8b949e', unknown: '#6e7781',
+  pg: '#58a6ff', login: '#e5bf57', domain: '#4f9bff', task: '#7ee787', warn: '#ffcc33', backup: '#58a6ff', alloy: '#ff8a80' };
+const SEV = { 3: '#ff6b5e', 2: '#5fd3ff', 1: '#ffc233', 0: '#6e7781' };
+const qs = new URLSearchParams(location.search);
+const STILL = qs.get('still') === '1';
+
+// ================================================================ three.js setup
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+stage.appendChild(renderer.domElement);
+const labelsR = new CSS2DRenderer(); labelsR.domElement.className = 'labels'; stage.appendChild(labelsR.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 4000);
+const DIR0 = new THREE.Vector3(0.6, 0.5, 0.62).normalize();
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+controls.rotateSpeed = 0.6; controls.zoomSpeed = 1.2; controls.minDistance = 5; controls.maxDistance = 420;
+const ambient = new THREE.AmbientLight('#8aa0c8', 0.35); scene.add(ambient);
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 1, 0.5, 0.1);
+composer.addPass(bloom); composer.addPass(new OutputPass());
+// Point sizes are in tenths of a world unit, so particles shrink with distance like everything else.
+const SCALE = { value: 200 };
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false); composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(w, h); labelsR.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  SCALE.value = h * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 0.1;
+}
+addEventListener('resize', resize); resize();
+
+// ================================================================ helpers
+const cache = new Map();
+const C = (k, f) => { if (!cache.has(k)) cache.set(k, f()); return cache.get(k); };
+const col = k => C('c' + k, () => new THREE.Color(k));
+const mat = (color, o = {}) => C('m' + color + JSON.stringify(o), () => new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...o }));
+const glowMat = (color, i = 1.5) => C('g' + color + i, () => new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: i, roughness: 0.4 }));
+const INVIS = new THREE.MeshBasicMaterial({ visible: false });
+const frac = x => x - Math.floor(x);
+const ease = q => q < 0.5 ? 4 * q * q * q : 1 - Math.pow(-2 * q + 2, 3) / 2;
+const clamp01 = q => Math.min(1, Math.max(0, q));
+const hash = s => { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return (h >>> 0) / 4294967295; };
+const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+const ORIGIN = V3();
+function tex(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function mesh(parent, geo, m, x = 0, y = 0, z = 0) { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); parent.add(o); return o; }
+const group = (p, x = 0, y = 0, z = 0) => { const g = new THREE.Group(); g.position.set(x, y, z); p.add(g); return g; };
+const soft = () => C('soft', () => tex(128, 128, (g, w) => {
+  const r = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+  r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.35, 'rgba(255,255,255,0.35)'); r.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = r; g.fillRect(0, 0, w, w);
+}));
+function puff(parent, color, opacity, additive = true, map = soft()) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map, color, transparent: true, opacity, depthWrite: false,
+    blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending }));
+  s.userData.own = true; parent.add(s); return s;
+}
+const cloudTex = i => C('cloud' + i, () => tex(256, 256, g => {
+  let seed = 7 + i * 131; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let k = 0; k < 40; k++) {
+    const a = rnd() * 6.283, d = Math.pow(rnd(), 0.6) * 72, x = 128 + Math.cos(a) * d * 1.3, y = 138 + Math.sin(a) * d * 0.62, r = 24 + rnd() * 34;
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, 'rgba(235,240,245,0.5)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+  }
+}));
+const ringTex = () => C('ringtex', () => tex(256, 256, g => { g.strokeStyle = '#fff'; g.lineWidth = 10; g.beginPath(); g.arc(128, 128, 110, 0, 7); g.stroke(); g.globalAlpha = 0.35; g.lineWidth = 26; g.stroke(); }));
+// Labels are HTML: sharp at any zoom and untouched by the glow. near: fade out beyond that camera distance.
+let nearLabels = [];
+function label(parent, text, cls, x = 0, y = 0, z = 0, near = 0) {
+  const el = document.createElement('div'); el.className = 'lbl ' + cls; el.textContent = text;
+  const o = new CSS2DObject(el); o.position.set(x, y, z); parent.add(o);
+  if (near) { o.userData.near = near; nearLabels.push(o); }
+  return o;
+}
+function circleLine(parent, r, color, opacity, dashed = false, n = 160) {
+  const pts = Array.from({ length: n + 1 }, (_, i) => V3(Math.cos(i / n * Math.PI * 2) * r, 0, Math.sin(i / n * Math.PI * 2) * r));
+  const m = dashed ? new THREE.LineDashedMaterial({ color, transparent: true, opacity, dashSize: 0.22, gapSize: 0.18, depthWrite: false })
+    : new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+  const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), m); if (dashed) l.computeLineDistances();
+  l.userData.own = true; parent.add(l); return l;
+}
+// Soft round particles with per-point colour, alpha and size; lines with per-vertex colour and alpha. Both add light.
+const pointMaterial = () => new THREE.ShaderMaterial({
+  uniforms: { uScale: SCALE }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: `attribute float size; attribute vec4 rgba; uniform float uScale; varying vec4 vC;
+    void main() { vC = rgba; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = clamp(size * uScale / -mv.z, 1.0, 72.0); gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `varying vec4 vC;
+    void main() { float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard; float a = pow(1.0 - r * 2.0, 1.7); float core = smoothstep(0.2, 0.0, r);
+      gl_FragColor = vec4(vC.rgb * (a + core * 0.9), vC.a * a); }`,
+});
+const lineMaterial = () => new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: `attribute vec4 rgba; varying vec4 vC; void main() { vC = rgba; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `varying vec4 vC; void main() { gl_FragColor = vC; }`,
+});
+// A far shell of stars, one per variant.
+function starfield(n, dim, tint) {
+  const g = new THREE.BufferGeometry(), pos = new Float32Array(n * 3), rgba = new Float32Array(n * 4), size = new Float32Array(n);
+  let s = 11; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < n; i++) {
+    const u = rnd() * 2 - 1, a = rnd() * Math.PI * 2, r = 700 + rnd() * 500, q = Math.sqrt(1 - u * u);
+    pos.set([Math.cos(a) * q * r, u * r, Math.sin(a) * q * r], i * 3);
+    const c = col(rnd() < 0.2 ? tint : '#dfe8ff');
+    rgba.set([c.r, c.g, c.b, dim * (0.25 + 0.75 * rnd() ** 2)], i * 4); size[i] = 5 + rnd() * 9;
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('rgba', new THREE.BufferAttribute(rgba, 4)); g.setAttribute('size', new THREE.BufferAttribute(size, 1));
+  const p = new THREE.Points(g, pointMaterial()); p.frustumCulled = false; p.visible = false; scene.add(p); return p;
+}
+
+// ================================================================ animation
+// Everything animated reads its start time from the model, so rebuilding never restarts it.
+let anims = [], picks = [];
+const anim = f => anims.push(f);
+
+// ================================================================ variant A: the particle network
+function plexusVariant() {
+  const MAXP = 9000, MAXL = 32000;
+  const pg = new THREE.BufferGeometry(), pPos = new Float32Array(MAXP * 3), pCol = new Float32Array(MAXP * 4), pSize = new Float32Array(MAXP);
+  pg.setAttribute('position', new THREE.BufferAttribute(pPos, 3).setUsage(THREE.DynamicDrawUsage));
+  pg.setAttribute('rgba', new THREE.BufferAttribute(pCol, 4).setUsage(THREE.DynamicDrawUsage));
+  pg.setAttribute('size', new THREE.BufferAttribute(pSize, 1).setUsage(THREE.DynamicDrawUsage));
+  const points = new THREE.Points(pg, pointMaterial()); points.frustumCulled = false; points.userData.keep = true; points.renderOrder = 2;
+  const lg = new THREE.BufferGeometry(), lPos = new Float32Array(MAXL * 6), lCol = new Float32Array(MAXL * 8);
+  lg.setAttribute('position', new THREE.BufferAttribute(lPos, 3).setUsage(THREE.DynamicDrawUsage));
+  lg.setAttribute('rgba', new THREE.BufferAttribute(lCol, 4).setUsage(THREE.DynamicDrawUsage));
+  const lines = new THREE.LineSegments(lg, lineMaterial()); lines.frustumCulled = false; lines.userData.keep = true; lines.renderOrder = 1;
+  const stars = starfield(1800, 0.55, '#9fc3ff');
+  let np = 0, nl = 0;
+  function P(x, y, z, c, a, s) {
+    if (np >= MAXP) return -1;
+    const i = np++; pPos[i * 3] = x; pPos[i * 3 + 1] = y; pPos[i * 3 + 2] = z;
+    pCol[i * 4] = c.r; pCol[i * 4 + 1] = c.g; pCol[i * 4 + 2] = c.b; pCol[i * 4 + 3] = Math.max(0, a); pSize[i] = s; return i;
+  }
+  function Lk(i, j, a) {
+    if (nl >= MAXL || i < 0 || j < 0 || a <= 0.004) return;
+    const k = nl++;
+    for (let d = 0; d < 3; d++) { lPos[k * 6 + d] = pPos[i * 3 + d]; lPos[k * 6 + 3 + d] = pPos[j * 3 + d]; lCol[k * 8 + d] = pCol[i * 4 + d]; lCol[k * 8 + 4 + d] = pCol[j * 4 + d]; }
+    lCol[k * 8 + 3] = lCol[k * 8 + 7] = a;
+  }
+  // The plexus: link every pair of particles closer than D, fainter the further apart.
+  function web(from, to, D, mul) {
+    const D2 = D * D;
+    for (let i = from; i < to; i++) {
+      const xi = pPos[i * 3], yi = pPos[i * 3 + 1], zi = pPos[i * 3 + 2];
+      for (let j = i + 1; j < to; j++) {
+        const dx = pPos[j * 3] - xi, dy = pPos[j * 3 + 1] - yi, dz = pPos[j * 3 + 2] - zi, d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < D2) Lk(i, j, (1 - Math.sqrt(d2) / D) * Math.min(pCol[i * 4 + 3], pCol[j * 4 + 3]) * mul);
+      }
+    }
+  }
+  // Each cluster keeps smoothed state between frames, so a change of state glides rather than jumps.
+  const nodes = new Map(), tc = new THREE.Color(); let frameNo = 0;
+  function node(key, st) {
+    let n = nodes.get(key);
+    if (!n) { n = { col: new THREE.Color(st.col), alpha: st.alpha ?? 1, rad: st.rad ?? 1, jit: st.jit ?? 0, wave: st.wave ?? 0, seed: hash(key) * 6.283 }; nodes.set(key, n); }
+    n.seen = frameNo;
+    n.col.lerp(tc.set(st.col), 0.05); n.alpha += ((st.alpha ?? 1) - n.alpha) * 0.06; n.rad += ((st.rad ?? 1) - n.rad) * 0.04;
+    n.jit += ((st.jit ?? 0) - n.jit) * 0.05; n.wave += ((st.wave ?? 0) - n.wave) * 0.05;
+    return n;
+  }
+  const dirs = new Map();
+  // Points spread through a ball: particle 0 is the nucleus at the centre, the rest on a Fibonacci spiral at varying depth.
+  function dirsFor(n) {
+    if (!dirs.has(n)) {
+      const out = [];
+      for (let i = 0; i < n; i++) { const y = 1 - (i + 0.5) / n * 2, r = Math.sqrt(1 - y * y), a = i * 2.39996, f = i === 0 ? 0 : 0.42 + 0.58 * frac(i * 0.618 + 0.13); out.push([Math.cos(a) * r * f, y * f, Math.sin(a) * r * f]); }
+      dirs.set(n, out);
+    }
+    return dirs.get(n);
+  }
+  const cA = new THREE.Color(), AMBER = col(COL.work), GREY = col(COL.grey), vP = V3();
+  // One cluster of particles and its web. Returns the index of its nucleus.
+  function cluster(key, cx, cy, cz, n, R, st, t) {
+    const nd = node(key, st), d = dirsFor(n), spin = nd.seed + t * 0.00007, cs = Math.cos(spin), sn = Math.sin(spin);
+    const lost = model.clusterLost, start = np, speed = (st.speed || 1) * 0.0006, amp = (0.1 + nd.jit + (lost ? 0.25 : 0)) * R * 0.32;
+    for (let i = 0; i < n; i++) {
+      const [x0, y0, z0] = d[i], x = x0 * cs - z0 * sn, z = x0 * sn + z0 * cs, ph = nd.seed + i * 1.7;
+      let px = x * R * nd.rad + Math.sin(t * speed * (1 + frac(i * 0.37)) + ph) * amp;
+      let py = y0 * R * nd.rad + Math.sin(t * speed * (1 + frac(i * 0.53)) + ph * 1.3) * amp;
+      let pz = z * R * nd.rad + Math.sin(t * speed * (1 + frac(i * 0.71)) + ph * 0.7) * amp;
+      let a = nd.alpha * (i === 0 ? 0.8 : 1);
+      if (st.sparks && i % 4 === 1) { const k = frac(t / 1300 + i * 0.37), f = 1 + k * 1.1; px *= f; py *= f; pz *= f; a *= 1 - k; }
+      if (st.disperse) { const f = 1 + st.disperse * 3.5; px *= f; py *= f; pz *= f; a *= 1 - st.disperse; }
+      let X = cx + px, Y = cy + py, Z = cz + pz;
+      if (st.arrive) {
+        // Arriving: particles leave the core one by one along the filament, then settle into the new cloud.
+        const ar = st.arrive, q = clamp01((t - ar.bornAt - i * ar.stagger) / ar.dur);
+        if (q <= 0) a = 0;
+        else if (q < 1) {
+          const s = ease(q);
+          if (s < 0.6) { ar.path.getPoint(s / 0.6, vP); X = vP.x + px * 0.15; Y = vP.y + py * 0.15; Z = vP.z + pz * 0.15; }
+          else { const k = (s - 0.6) / 0.4, e = ar.path.v2; X = e.x + (X - e.x) * k; Y = e.y + (Y - e.y) * k; Z = e.z + (Z - e.z) * k; }
+        }
+      }
+      cA.copy(nd.col);
+      if (nd.wave > 0.01) cA.lerp(AMBER, nd.wave * (0.5 + 0.5 * Math.sin(t / 240 - y0 * 4)));
+      if (lost) cA.lerp(GREY, 0.8);
+      P(X, Y, Z, cA, a, (i === 0 ? 2.2 : i % 9 === 0 ? 2.5 : 1.3) * (st.size || 1));
+    }
+    const flicker = st.sparks ? 0.55 + 0.45 * Math.sin(t / 70 + nd.seed) : 1;
+    web(start, np, R * 0.62 * Math.max(1, nd.rad * 0.85), (st.link ?? 1) * (lost ? 0.12 : 1) * 0.55 * flicker);
+    return start;
+  }
+  // A reserved spot: a thin broken ring of particles, nothing inside.
+  function reserved(key, cx, cy, cz, R, alpha, t) {
+    const nd = node(key, { col: '#b8c6d6', alpha }), n = 14, s = np;
+    for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2 + t * 0.0001; P(cx + Math.cos(a) * R, cy, cz + Math.sin(a) * R, nd.col, nd.alpha * 0.55, 1.2); }
+    for (let i = 0; i < n; i += 2) Lk(s + i, s + i + 1, nd.alpha * 0.45);
+    return s;
+  }
+  // Where things sit: the Application's centre on its orbit, its Environments around it, one filament from the core.
+  const DIMS = { prod: { R: 1.9, n: 40 }, staging: { R: 1.5, n: 28 }, preview: { R: 0.95, n: 14 } };
+  const radius = k => 18 + (k - 1) * 14, lay = new WeakMap();
+  function layout(a) {
+    const key = a.slot + ':' + a.envs.map(e => e.id).join(','); let L = lay.get(a);
+    if (L && L.key === key) return L;
+    const { k, a: ang } = ringOf(a.slot), r = radius(k);
+    const Cn = V3(Math.cos(ang) * r, Math.sin(ang * 2 + k) * 2.5, Math.sin(ang) * r);
+    const rd = V3(Cn.x, 0, Cn.z).normalize(), up = V3(0, 1, 0), tg = V3(-rd.z, 0, rd.x);
+    const at = (t, u, r2) => Cn.clone().addScaledVector(tg, t).addScaledVector(up, u).addScaledVector(rd, r2);
+    const envs = [], prod = a.envs.find(e => e.name === 'prod'), st = a.envs.find(e => e.name === 'staging'), prs = a.envs.filter(e => e.name.startsWith('pr-')).slice(0, 3);
+    if (prod) envs.push({ e: prod, E: at(-2.7, 0.9, -0.3), ...DIMS.prod });
+    if (st) envs.push({ e: st, E: at(2.7, -0.2, 0.2), ...DIMS.staging });
+    prs.forEach((e, i) => envs.push({ e, E: at((i - (prs.length - 1) / 2) * 2.3, -1.9, 3.1), ...DIMS.preview }));
+    const s0 = rd.clone().multiplyScalar(3.4).setY(0.3), ctrl = s0.clone().lerp(Cn, 0.5).add(V3(0, 5, 0));
+    L = { key, C: Cn, rd, up, tg, envs, curve: new THREE.QuadraticBezierCurve3(s0, ctrl, Cn.clone()) }; lay.set(a, L); return L;
+  }
+  const RING = { traefik: 25, 'deploy-gate': 75, 'cert-manager': 125, cnpg: 175, 'external-dns': 225, 'oauth2-proxy': 280, alloy: 330 };
+  const compPos = kind => { const a = RING[kind] * Math.PI / 180; return V3(Math.cos(a) * 8.5, 0, Math.sin(a) * 8.5); };
+  const pgPos = (E, R, L) => E.clone().addScaledVector(L.up, -(R + 0.8)).addScaledVector(L.rd, 0.7);
+  const domPos = (E, R, L) => E.clone().addScaledVector(L.up, R + 1.0);
+  function envStyle(e, a, t) {
+    const st = { col: COL[kindOf(e)], alpha: 1, rad: 1, jit: 0, wave: 0, link: 1 };
+    if (e.activity === 'deploying' || e.activity === 'updating') st.wave = 0.85;
+    if (e.cond === 'degraded') Object.assign(st, { col: COL.bad, jit: 0.4, speed: 4, sparks: true, rad: 1.05 });
+    if (e.cond === 'unknown') Object.assign(st, { col: COL.unknown, alpha: 0.42, rad: 1.6, jit: 0.45, link: 0.18, wave: 0 });
+    if (e.stuck) Object.assign(st, { col: COL.stuck, wave: 0 });
+    if (e.activity === 'arriving') { if (!e.stuck) st.col = COL.build; st.arrive = { bornAt: e.bornAt, dur: 3600, stagger: 2600 / DIMS[kindOf(e)].n, path: layout(a).curve }; }
+    if (e.activity === 'leaving') { const q = clamp01((t - (e.leaveAt || t)) / 3500); Object.assign(st, { col: COL.grey, alpha: 1 - 0.55 * q, rad: 1 + 0.3 * q, link: 1 - 0.7 * q, wave: 0 }); }
+    if (e.crumbleAt) st.disperse = clamp01((t - e.crumbleAt) / 1300);
+    if (a.sinkAt) st.alpha *= 1 - clamp01((t - a.sinkAt) / 1600);
+    return st;
+  }
+  const cHub = col(COL.hub), cFil = col(COL.fil), cGold = col(COL.login), cBad = col(COL.bad), cDom = col(COL.domain), cTask = col(COL.task),
+    cWork = col(COL.work), cStuck = col(COL.stuck), cBackup = col(COL.backup), cBuild = col(COL.build), cAlloy = col(COL.alloy);
+  function caps(e, E, R, L, nuc, ea, t) {
+    for (const c of e.caps) {
+      const bad = c.cond === 'degraded';
+      if (c.kind === 'postgres') {
+        const p = pgPos(E, R, L), cc = bad ? COL.bad : c.warn ? (frac(t / 700) < 0.5 ? COL.warn : COL.pg) : COL.pg;
+        Lk(nuc, cluster('pg:' + e.id, p.x, p.y, p.z, 8, 0.45, { col: cc, alpha: ea }, t), 0.4 * ea);
+      }
+      if (c.kind === 'login') {
+        // A slowly turning halo of gold round the Environment.
+        const s = np, n = 14, rr = R * 1.3;
+        for (let i = 0; i < n; i++) {
+          const a = i / n * Math.PI * 2 + t * 0.00035, ca = Math.cos(a), sa = Math.sin(a);
+          P(E.x + (L.tg.x * ca + L.rd.x * sa) * rr, E.y + sa * 0.35, E.z + (L.tg.z * ca + L.rd.z * sa) * rr, bad ? cBad : cGold, 0.6 * ea, 1.0);
+        }
+        for (let i = 0; i < n; i++) Lk(s + i, s + (i + 1) % n, 0.22 * ea);
+      }
+      if (c.kind === 'domain') { const p = domPos(E, R, L); Lk(nuc, P(p.x, p.y, p.z, cDom, ea, 3.4), 0.4 * ea); }
+      if (c.kind === 'task') {
+        // A mote that circles like a clock hand, trailing its last positions.
+        const w = t / 3500 * Math.PI * 2, rr = R + 0.75; let prev = -1;
+        for (let s = 0; s < 7; s++) {
+          const ww = w - s * 0.11, i = P(E.x + L.tg.x * Math.cos(ww) * rr, E.y + Math.sin(ww) * rr, E.z + L.tg.z * Math.cos(ww) * rr, cTask, ea * (1 - s / 7), s ? 1.8 - s * 0.2 : 2.8);
+          if (prev >= 0) Lk(prev, i, 0.45 * ea * (1 - s / 7)); prev = i;
+        }
+      }
+    }
+  }
+  function frame(t) {
+    np = 0; nl = 0; frameNo++;
+    const lost = model.clusterLost, deploying = anyDeploying();
+    // The core: ArgoCD, dense and warm, breathing faster while it works.
+    const argo = comp('argocd'), breathe = 1 + 0.05 * Math.sin(t / (argo.activity ? 160 : 700));
+    const core = cluster('core', 0, 0, 0, 150, 3.0 * breathe, { col: argo.cond === 'degraded' ? COL.bad : COL.core, alpha: 0.5, size: 0.9, wave: argo.activity ? 0.8 : 0,
+      jit: argo.cond === 'degraded' ? 0.5 : 0, speed: argo.cond === 'degraded' ? 4 : 1, sparks: argo.cond === 'degraded' }, t);
+    for (const kind of Object.keys(RING)) {
+      const c = comp(kind), p = compPos(kind), bad = c.cond === 'degraded', gate = kind === 'deploy-gate' && deploying;
+      const st = { col: c.stuck ? COL.stuck : bad ? COL.bad : COL.comp, wave: c.activity && !c.stuck ? 0.85 : 0, jit: bad ? 0.55 : 0, speed: bad ? 4 : 1, sparks: bad, size: gate ? 1.5 : 1 };
+      Lk(core, cluster('comp:' + kind, p.x, p.y, p.z, 16, 0.95, st, t), gate ? 0.75 : 0.16);
+      if (kind === 'alloy') for (let i = 0; i < 3; i++) { const k = frac(t / 2100 + i / 3); P(p.x, p.y + 1 + k * 4, p.z, cAlloy, (1 - k) * 0.8, 2); }
+    }
+    for (const a of model.apps) {
+      const L = layout(a), appA = a.sinkAt ? 1 - clamp01((t - a.sinkAt) / 1600) : 1;
+      const planned = a.isNew || a.envs.every(e => e.activity === 'unreleased');
+      // The filament: the only line out of an Application, and it goes to the core.
+      const m = Math.max(6, Math.round(L.curve.getLength() / 1.4)), fa = (planned ? 0.2 : 0.42) * appA * (lost ? 0.35 : 1), fil = [];
+      for (let i = 1; i < m; i++) { L.curve.getPoint(i / m, vP); fil.push(P(vP.x, vP.y + Math.sin(t / 900 + i) * 0.08, vP.z, lost ? GREY : cFil, fa, 1.0)); }
+      Lk(core, fil[0], fa * 0.5);
+      for (let i = 0; i < fil.length - 1; i++) if (!planned || i % 2 === 0) Lk(fil[i], fil[i + 1], fa * 0.8);
+      const hub = P(L.C.x, L.C.y, L.C.z, lost ? GREY : cHub, 0.85 * appA, 2.6);
+      Lk(fil[fil.length - 1], hub, fa);
+      for (const { e, E, R, n } of L.envs) {
+        const key = 'env:' + e.id;
+        if (e.activity === 'unreleased' || (e.wasUnreleased && e.activity === 'leaving')) {
+          const alpha = appA * (e.crumbleAt ? 1 - clamp01((t - e.crumbleAt) / 900) : e.activity === 'leaving' ? 0.6 : 1);
+          Lk(hub, reserved(key, E.x, E.y, E.z, R, alpha, t), 0.2 * alpha);
+          continue;
+        }
+        const nuc = cluster(key, E.x, E.y, E.z, n, R, envStyle(e, a, t), t), ea = nodes.get(key).alpha;
+        Lk(hub, nuc, 0.35 * ea);
+        if (!e.crumbleAt) caps(e, E, R, L, nuc, ea * (e.activity === 'arriving' ? clamp01((t - e.bornAt - 3000) / 1500) : 1), t);
+        if (e.stuck) { const bl = 0.5 + 0.5 * Math.sin(t / 110); P(E.x, E.y + R + 0.4, E.z, cStuck, 0.5 + 0.5 * bl, 4 + 3 * bl); }
+      }
+      // Deploys travel the filament as bright beads with tails; a stuck one stops and blinks. A leaving database sends its final backup home.
+      a.envs.forEach((e, j) => {
+        if (e.activity === 'deploying' || (e.activity === 'arriving' && e.stuck)) {
+          if (e.stuck) { L.curve.getPoint(0.72, vP); const bl = 0.5 + 0.5 * Math.sin(t / 110); P(vP.x, vP.y, vP.z, cStuck, 0.6 + 0.4 * bl, 5 + 3 * bl); }
+          else for (let i = 0; i < 3; i++) {
+            const k = frac(t / 1650 + i / 3 + j * 0.17);
+            for (let s = 0; s < 6; s++) { const kk = k - s * 0.014; if (kk < 0) break; L.curve.getPoint(kk, vP); P(vP.x, vP.y, vP.z, cWork, (1 - s / 6) * appA, s ? 2.4 - s * 0.3 : 4.2); }
+          }
+        }
+        if (e.activity === 'leaving' && !e.crumbleAt && e.caps.some(c => c.kind === 'postgres'))
+          for (let i = 0; i < 3; i++) { L.curve.getPoint(1 - frac(t / 1500 + i / 3), vP); P(vP.x, vP.y, vP.z, cBackup, 0.9, 3.2); }
+      });
+      // A new Application sends rings of light out across the dark.
+      if (a.isNew) for (const w of [0, 0.5]) {
+        const k = frac(t / 1800 + w), s = np, n = 48, rr = 3 + k * 8;
+        for (let i = 0; i < n; i++) { const an = i / n * Math.PI * 2; P(L.C.x + Math.cos(an) * rr, L.C.y, L.C.z + Math.sin(an) * rr, cBuild, 0.8 * (1 - k), 1.3); }
+        for (let i = 0; i < n; i++) Lk(s + i, s + (i + 1) % n, 0.5 * (1 - k));
+      }
+    }
+    for (const [k, n] of nodes) if (n.seen !== frameNo) nodes.delete(k);
+    pg.setDrawRange(0, np); lg.setDrawRange(0, nl * 2);
+    for (const k of ['position', 'rgba', 'size']) pg.attributes[k].needsUpdate = true;
+    for (const k of ['position', 'rgba']) lg.attributes[k].needsUpdate = true;
+  }
+  function build(root) {
+    root.add(lines, points);
+    const pick = (p, r, tip) => { const m = mesh(root, new THREE.SphereGeometry(r, 10, 8), INVIS, p.x, p.y, p.z); m.userData.tip = tip; picks.push(m); };
+    pick(ORIGIN, 3.2, tipComp(comp('argocd')));
+    label(root, 'PLATFORM', 'plat', 0, 5.6, 0); label(root, 'ArgoCD', 'comp', 0, -3.9, 0, 90);
+    for (const kind of Object.keys(RING)) {
+      const c = comp(kind), p = compPos(kind); pick(p, 1.3, tipComp(c));
+      label(root, c.label, 'comp', p.x, 1.7, p.z, 120);
+      if (c.stuck) label(root, 'STUCK', 'chip stuck', p.x, 2.6, p.z); else if (c.cond === 'degraded') label(root, 'DEGRADED', 'chip bad', p.x, 2.6, p.z);
+    }
+    for (const a of model.apps) {
+      const L = layout(a);
+      label(root, a.name, 'app', L.C.x, L.C.y - 0.9, L.C.z);
+      for (const { e, E, R } of L.envs) {
+        pick(E, R * 1.15, tipEnv(e));
+        label(root, envLabel(e), 'env', E.x, E.y - R - 0.5, E.z, 70);
+        const chip = (s, cls) => label(root, s, 'chip ' + cls, E.x, E.y + R + 1.0 + (e.caps.some(c => c.kind === 'domain') ? 1.9 : 0), E.z);
+        if (e.activity === 'unreleased') chip('UNRELEASED', 'unrel');
+        else if (e.activity === 'leaving') chip('LEAVING', 'leaving');
+        else if (e.stuck) chip('STUCK', 'stuck');
+        else if (e.cond === 'degraded') chip('DEGRADED', 'bad');
+        else if (e.activity === 'arriving' && !e.quiet) chip(e.isNewApp ? 'NEW · SETTING UP' : 'NEW', 'new');
+        else if (e.cond === 'unknown') chip('? UNKNOWN', 'unknown');
+        if (e.activity === 'leaving' || e.activity === 'unreleased') continue;
+        for (const c of e.caps) {
+          if (c.kind === 'domain') { const p = domPos(E, R, L); label(root, c.host, 'chip domain', p.x, p.y + 0.55, p.z, 110); }
+          if (c.kind === 'postgres' && c.warn) { const p = pgPos(E, R, L); label(root, '! BACKUPS', 'chip warn', p.x, p.y - 0.9, p.z); }
+        }
+      }
+    }
+  }
+  return { name: 'Particle network', bg: '#03050a', ambient: 0.35, bloom: [0.8, 0.45, 0.12], stars, build, frame, radius, focus: 30,
+    posOf: a => layout(a).C, markerSize: 17 };
+}
+
+// ================================================================ variant B: the orrery
+function orreryVariant() {
+  const radius = k => 16 + (k - 1) * 12, OMEGA = STILL ? 0 : 0.000026, COMPW = STILL ? 0 : 0.00005;
+  const stars = starfield(2600, 0.8, '#ffd9a8');
+  // Planets keep their islet slots; outer rings turn slower, as orbits do.
+  function planetPos(slot, t, out = V3()) {
+    const { k, a } = ringOf(slot), r = radius(k), ang = a + t * OMEGA * Math.pow(16 / r, 1.5);
+    return out.set(Math.cos(ang) * r, 0, Math.sin(ang) * r);
+  }
+  const HUES = ['#6b8fb8', '#8a7fb5', '#5d9e98', '#b49a6c', '#7f98a8', '#a07f8f', '#6f9f7a', '#9aa3b5'];
+  const bandTex = hue => C('band' + hue, () => tex(256, 128, (g, w, h) => {
+    const base = new THREE.Color(hue), c = new THREE.Color();
+    for (let y = 0; y < h; y++) { c.copy(base).multiplyScalar(0.78 + 0.22 * Math.sin(y * 0.19 + Math.sin(y * 0.047) * 3)); g.fillStyle = '#' + c.getHexString(); g.fillRect(0, y, w, 1); }
+  }));
+  const ghost = r => new THREE.Mesh(new THREE.SphereGeometry(r, 14, 10), C('ghost', () => new THREE.MeshBasicMaterial({ color: '#9fb3c8', wireframe: true, transparent: true, opacity: 0.3 })));
+  const qb = (out, a, c, b, k) => { const u = 1 - k; return out.set(u * u * a.x + 2 * u * k * c.x + k * k * b.x, u * u * a.y + 2 * u * k * c.y + k * k * b.y, u * u * a.z + 2 * u * k * c.z + k * k * b.z); };
+  // What the planet's atmosphere says about all its moons at once, loudest first.
+  function summary(a) {
+    const es = a.envs.filter(e => e.activity !== 'unreleased');
+    if (es.some(e => e.cond === 'degraded' && e.activity !== 'leaving')) return [COL.bad, 0.6, true];
+    if (es.some(e => e.stuck)) return [COL.stuck, 0.55, true];
+    if (es.some(e => e.activity === 'arriving')) return [COL.build, 0.45, false];
+    if (es.some(e => e.activity === 'deploying' || e.activity === 'updating')) return [COL.work, 0.3, false];
+    if (es.some(e => e.cond === 'unknown')) return [COL.unknown, 0.3, false];
+    if (es.length && es.every(e => e.activity === 'leaving')) return [COL.grey, 0.2, false];
+    return ['#7fb4ff', 0.16, false];
+  }
+  function pulseRing(parent, r, stuck) {
+    const m = new THREE.MeshBasicMaterial({ color: stuck ? COL.stuck : COL.work, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending });
+    const ring = mesh(parent, new THREE.TorusGeometry(r * 1.5, 0.035, 8, 48), m); ring.rotation.x = Math.PI / 2; ring.userData.own = true;
+    if (!stuck) anim(t => { const k = frac(t / 1400); ring.scale.setScalar(1 + 0.6 * k); m.opacity = 0.9 * (1 - k); });
+    return ring;
+  }
+  function flare(parent, r) {
+    const glow = puff(parent, COL.bad, 0.6);
+    anim(t => { const k = 0.5 + 0.5 * Math.sin(t / 260); glow.scale.setScalar(r * (4 + 2 * k)); glow.material.opacity = 0.35 + 0.35 * k; });
+    for (let i = 0; i < 6; i++) {
+      const sp = puff(parent, '#ff7a5c', 0.8), a = i * 1.05;
+      anim(t => { const k = frac(t / 1100 + i / 6); sp.position.set(Math.cos(a) * r * (1 + 3 * k), Math.sin(a * 2) * r * 1.5 * k, Math.sin(a) * r * (1 + 3 * k)); sp.scale.setScalar(r * 0.8 * (1 - k)); sp.material.opacity = 0.8 * (1 - k); });
+    }
+  }
+  function haze(parent, r) {
+    for (let i = 0; i < 6; i++) {
+      const c = puff(parent, '#9aa4ae', 0.7, false, cloudTex(i % 3)); c.renderOrder = 5;
+      anim(t => { const a = i * 1.05 + t / 6000; c.position.set(Math.cos(a) * r * 0.9, Math.sin(t / 1700 + i) * r * 0.4, Math.sin(a) * r * 0.9); c.scale.set(r * 5, r * 3, 1); });
+    }
+  }
+  function moon(root, pg, a, { e, r, orbit, period, tilt }) {
+    const piv = group(pg); piv.rotation.x = tilt; piv.rotation.z = tilt * 0.5;
+    const unrel = e.activity === 'unreleased' || e.wasUnreleased;
+    circleLine(piv, orbit, unrel ? '#8796a6' : '#3a5068', unrel ? 0.7 : 0.55, unrel);
+    const arm = group(piv), ph = hash(e.app + e.name) * Math.PI * 2;
+    const turn = t => { arm.rotation.y = ph + (STILL ? 0 : t / period * Math.PI * 2); };
+    anim(turn); turn(performance.now());
+    const m = group(arm, orbit, 0, 0); m.userData.tip = tipEnv(e); picks.push(m);
+    mesh(m, new THREE.SphereGeometry(Math.max(0.55, r * 2.2), 10, 8), INVIS);
+    label(m, envLabel(e), 'env', 0, -(r + 0.42), 0, 60);
+    const chip = (s, cls) => label(m, s, 'chip ' + cls, 0, r + 0.55 + (e.caps.some(c => c.kind === 'domain') ? 0.9 : 0), 0);
+    if (unrel) {
+      const gh = ghost(r); m.add(gh);
+      if (e.activity === 'unreleased') chip('UNRELEASED', 'unrel');
+      if (e.crumbleAt) anim(t => { m.visible = t - e.crumbleAt < 900; });
+      return;
+    }
+    const key = e.activity === 'leaving' ? 'grey' : e.cond === 'degraded' ? 'bad' : e.cond === 'unknown' ? 'unknown' : e.activity === 'arriving' ? 'new' : 'ok';
+    const LOOK = { ok: ['#dfe6ee', '#000000', 0], bad: ['#ff5a4e', '#ff3b2f', 0.9], unknown: ['#7d858e', '#000000', 0], new: ['#c4f0ff', '#5fd3ff', 0.9], grey: ['#9aa2a8', '#000000', 0] }[key];
+    const body = group(m);
+    mesh(body, new THREE.SphereGeometry(r, 32, 20), C('moon' + key, () => new THREE.MeshStandardMaterial({ color: LOOK[0], emissive: LOOK[1], emissiveIntensity: LOOK[2], roughness: 0.85 })));
+    for (const c of e.caps) {
+      const bad = c.cond === 'degraded';
+      if (c.kind === 'postgres') {
+        // A database is a ring, like Saturn's. A failing backup makes it blink yellow.
+        const rm = new THREE.MeshBasicMaterial({ color: bad ? COL.bad : COL.pg, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false });
+        const ring = mesh(body, new THREE.RingGeometry(r * 1.5, r * 2.05, 48), rm); ring.rotation.x = -Math.PI / 2 + 0.35; ring.userData.own = true;
+        if (c.warn) { anim(t => { const on = frac(t / 700) < 0.5; rm.color.set(on ? COL.warn : COL.pg); rm.opacity = on ? 0.95 : 0.6; }); label(m, '! BACKUPS', 'chip warn', r * 2.6, -r * 0.6, 0); }
+      }
+      if (c.kind === 'login') {
+        const halo = mesh(body, new THREE.TorusGeometry(r * 1.32, 0.028, 8, 48), mat(bad ? COL.bad : COL.login, { metalness: 0.6, roughness: 0.3, emissive: COL.login, emissiveIntensity: 0.25 }));
+        anim(t => { halo.rotation.y = t / 1300; });
+      }
+      if (c.kind === 'domain' && e.activity !== 'leaving') label(m, c.host, 'chip domain', 0, r + 0.5, 0, 140);
+      if (c.kind === 'task') {
+        const sat = mesh(body, new THREE.SphereGeometry(0.07, 10, 8), glowMat(COL.task, 2));
+        anim(t => { const w = t / 3000 * Math.PI * 2; sat.position.set(Math.cos(w) * r * 2.4, Math.sin(w) * r * 2.4, 0); });
+      }
+    }
+    if (e.activity === 'arriving') {
+      // Accretion: dust spirals in and the moon grows out of it.
+      const q0 = clamp01((performance.now() - e.bornAt) / 6500); body.scale.setScalar(Math.max(0.02, ease(q0)));
+      anim(t => { body.scale.setScalar(Math.max(0.02, ease(clamp01((t - e.bornAt) / 6500)))); });
+      for (let i = 0; i < 18; i++) {
+        const d = puff(m, COL.build, 0.8);
+        anim(t => { const k = frac(t / 1600 + i / 18), rr = r * (1 + 3.4 * (1 - k)), an = i * 2.4 + k * 5; d.position.set(Math.cos(an) * rr, Math.sin(i) * 0.25 * (1 - k), Math.sin(an) * rr); d.scale.setScalar(0.28); d.material.opacity = Math.min(1, k * (1 - k) * 4); });
+      }
+      if (!e.quiet) chip(e.isNewApp ? 'NEW · SETTING UP' : 'NEW', 'new');
+    }
+    if (e.crumbleAt) {
+      anim(t => { const q = clamp01((t - e.crumbleAt) / 1300); body.scale.setScalar(Math.max(0.01, 1 - q * q)); body.visible = q < 1; });
+      for (let i = 0; i < 9; i++) { const p = puff(m, '#b9b2a0', 0.9, false); anim(t => { const q = clamp01((t - e.crumbleAt - i * 60) / 1400), an = i * 0.7; p.visible = q > 0 && q < 1; p.position.set(Math.cos(an) * r * (1 + 4 * q), Math.sin(an * 3) * r * 2 * q, Math.sin(an) * r * (1 + 4 * q)); p.scale.setScalar(r * (0.6 + 2 * q)); p.material.opacity = 0.9 * (1 - q); }); }
+      return;
+    }
+    if (e.bornAt > 0 && e.activity !== 'arriving') anim(t => { const q = clamp01((t - e.bornAt) / 900); const s = 1 + 2.7 * Math.pow(q - 1, 3) + 1.7 * Math.pow(q - 1, 2); if (q < 1) body.scale.setScalar(Math.max(0.01, s)); });
+    if (e.activity === 'deploying' || e.activity === 'updating' || (e.activity === 'arriving' && e.stuck)) pulseRing(body, r, e.stuck);
+    if (e.stuck) {
+      const g = puff(m, COL.stuck, 0.8); anim(t => { const k = 0.5 + 0.5 * Math.sin(t / 110); g.scale.setScalar(r * (3 + 2.5 * k)); g.material.opacity = 0.3 + 0.6 * k; });
+      chip('STUCK', 'stuck');
+    } else if (e.cond === 'degraded' && e.activity !== 'leaving') { flare(m, r); chip('DEGRADED', 'bad'); }
+    if (e.cond === 'unknown') { haze(m, r); chip('? UNKNOWN', 'unknown'); }
+    if (e.activity === 'leaving') {
+      chip('LEAVING', 'leaving');
+      anim(t => { const q = clamp01((t - (e.leaveAt || t)) / 3500); body.scale.setScalar(1 - 0.35 * q); });
+      for (let i = 0; i < 5; i++) { const p = puff(m, '#a8a294', 0.7, false); anim(t => { const k = frac(t / 1800 + i / 5), an = i * 1.3; p.position.set(Math.cos(an) * r * (1 + 2 * k), -k * r, Math.sin(an) * r * (1 + 2 * k)); p.scale.setScalar(r * (0.4 + k)); p.material.opacity = 0.7 * (1 - k); }); }
+      if (e.caps.some(c => c.kind === 'postgres')) {
+        // The final backup leaves for home: blue packets fall towards the sun.
+        const wp = V3();
+        for (let i = 0; i < 3; i++) {
+          const pk = mesh(root, new THREE.SphereGeometry(0.13, 10, 8), glowMat(COL.backup, 2.2)); puff(pk, COL.backup, 0.6).scale.setScalar(1);
+          anim(t => { m.getWorldPosition(wp); const k = frac(t / 1600 + i / 3); pk.position.copy(wp).lerp(ORIGIN, k); pk.visible = !e.crumbleAt; });
+        }
+      }
+    }
+  }
+  function build(root) {
+    const t0 = performance.now(), lost = model.clusterLost;
+    // The sun: ArgoCD. It flickers faster while it works and turns red if it degrades.
+    const argo = comp('argocd'), sunCol = argo.cond === 'degraded' ? '#ff6a4a' : lost ? '#8c8374' : '#ffd27a';
+    const sun = group(root); sun.userData.tip = tipComp(argo); picks.push(sun);
+    mesh(sun, new THREE.SphereGeometry(3, 48, 32), C('sun' + sunCol, () => new THREE.MeshBasicMaterial({ color: sunCol })));
+    const c1 = puff(sun, sunCol, 0.55), c2 = puff(sun, sunCol, 0.22);
+    anim(t => { const k = 0.5 + 0.5 * Math.sin(t / (argo.activity ? 140 : 900)); c1.scale.setScalar(10 + 1.5 * k); c2.scale.setScalar(18 + 3 * k); c1.material.opacity = lost ? 0.12 : 0.32 + 0.12 * k; c2.material.opacity = lost ? 0.04 : 0.09; });
+    const light = new THREE.PointLight('#fff1d6', lost ? 1 : 6, 0, 0); root.add(light);
+    label(root, 'PLATFORM', 'plat', 0, 5.2, 0); label(root, 'ArgoCD', 'comp', 0, -3.8, 0, 90);
+    for (const k of new Set(model.apps.map(a => ringOf(a.slot).k))) circleLine(root, radius(k), '#2c3e55', 0.75);
+    circleLine(root, 7, '#57492a', 0.8);
+    // The Platform's components ride the inner orbit, each a small station with a gold ring.
+    const RING = { traefik: 25, 'deploy-gate': 75, 'cert-manager': 125, cnpg: 175, 'external-dns': 225, 'oauth2-proxy': 280, alloy: 330 };
+    const cr = group(root); anim(t => { cr.rotation.y = -t * COMPW; }); cr.rotation.y = -t0 * COMPW;
+    for (const [kind, deg] of Object.entries(RING)) {
+      const c = comp(kind), a = deg * Math.PI / 180, cg = group(cr, Math.cos(a) * 7, 0, Math.sin(a) * 7), bad = c.cond === 'degraded';
+      cg.userData.tip = tipComp(c); picks.push(cg);
+      mesh(cg, new THREE.SphereGeometry(0.45, 24, 16), bad ? glowMat(COL.bad, 0.9) : mat('#e8ecf1', { metalness: 0.3, roughness: 0.5 }));
+      mesh(cg, new THREE.SphereGeometry(1.1, 8, 6), INVIS);
+      const ringM = new THREE.MeshStandardMaterial({ color: COL.login, metalness: 0.6, roughness: 0.35, emissive: COL.work, emissiveIntensity: 0 });
+      const ring = mesh(cg, new THREE.TorusGeometry(0.75, 0.05, 8, 40), ringM); ring.rotation.x = Math.PI / 2 + 0.35; ring.userData.own = true;
+      // The Deploy gate's ring lights while a Deploy passes; Alloy sends signals out.
+      if (kind === 'deploy-gate') anim(() => { ringM.emissiveIntensity += ((anyDeploying() ? 2.2 : 0) - ringM.emissiveIntensity) * 0.08; });
+      if (kind === 'alloy') for (let i = 0; i < 3; i++) {
+        const sm = new THREE.MeshBasicMaterial({ color: COL.alloy, transparent: true, opacity: 0.7, depthWrite: false });
+        const s = mesh(cg, new THREE.TorusGeometry(0.4, 0.02, 6, 32), sm); s.rotation.x = Math.PI / 2; s.userData.own = true;
+        anim(t => { const k = frac(t / 2100 + i / 3); s.position.y = 0.6 + k * 1.6; s.scale.setScalar(1 + k * 2.5); sm.opacity = 0.7 * (1 - k); });
+      }
+      label(cg, c.label, 'comp', 0, 1.15, 0, 120);
+      if (c.activity) pulseRing(cg, 0.45, c.stuck);
+      if (c.stuck) label(cg, 'STUCK', 'chip stuck', 0, 1.75, 0); else if (bad) { flare(cg, 0.45); label(cg, 'DEGRADED', 'chip bad', 0, 1.75, 0); }
+    }
+    for (const a of model.apps) {
+      const pg = group(root); planetPos(a.slot, t0, pg.position);
+      anim(t => planetPos(a.slot, t, pg.position));
+      const bare = a.envs.every(v => v.activity === 'unreleased' || v.wasUnreleased);
+      const body = group(pg); body.userData.tip = tipApp(a); picks.push(body);
+      if (bare) body.add(ghost(1.25));
+      else {
+        const hue = HUES[Math.floor(hash(a.name) * HUES.length)];
+        const pl = mesh(body, new THREE.SphereGeometry(1.25, 48, 32), C('planet' + hue, () => new THREE.MeshStandardMaterial({ map: bandTex(hue), roughness: 0.9 })));
+        pl.rotation.z = 0.35; anim(t => { pl.rotation.y = t * 0.0003; });
+      }
+      const [ac, ao, pulse] = summary(a), atmo = puff(pg, ac, ao);
+      atmo.scale.setScalar(6); if (pulse) anim(t => { const k = 0.5 + 0.5 * Math.sin(t / 240); atmo.material.opacity = ao * (0.6 + 0.6 * k); atmo.scale.setScalar(6 + 1.5 * k); });
+      label(pg, a.name, 'app', 0, 2.05, 0);
+      if (a.isNew) for (let i = 0; i < 2; i++) {
+        const sm = new THREE.MeshBasicMaterial({ color: COL.build, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide });
+        const s = mesh(pg, new THREE.RingGeometry(1, 1.025, 96), sm); s.rotation.x = -Math.PI / 2; s.userData.own = true;
+        anim(t => { const k = frac(t / 1800 + i / 2); s.scale.setScalar(2 + k * 9); sm.opacity = 0.7 * (1 - k); });
+      }
+      if (a.sinkAt) anim(t => { const q = clamp01((t - a.sinkAt) / 1600); pg.scale.setScalar(Math.max(0.001, 1 - q * q)); pg.visible = q < 1; });
+      const specs = [], prod = a.envs.find(e => e.name === 'prod'), st = a.envs.find(e => e.name === 'staging'), prs = a.envs.filter(e => e.name.startsWith('pr-')).slice(0, 3);
+      if (prod) specs.push({ e: prod, r: 0.46, orbit: 2.6, period: 26000, tilt: 0.22 });
+      if (st) specs.push({ e: st, r: 0.36, orbit: 3.5, period: 36000, tilt: -0.28 });
+      prs.forEach((e, i) => specs.push({ e, r: 0.24, orbit: 4.3 + i * 0.6, period: 46000 + i * 7000, tilt: 0.12 + i * 0.1 }));
+      for (const s of specs) moon(root, pg, a, s);
+      // Deploys fly from the sun to the planet as comets; a stuck one hangs where it stopped, blinking.
+      a.envs.filter(e => e.activity === 'deploying').forEach((e, j) => {
+        const cc = e.stuck ? COL.stuck : COL.work;
+        for (let i = 0; i < (e.stuck ? 1 : 2); i++) {
+          const head = mesh(root, new THREE.SphereGeometry(0.2, 12, 8), glowMat(cc, 2.6)), halo = puff(head, cc, 0.8); halo.scale.setScalar(1.8);
+          const trail = Array.from({ length: 12 }, (_, s) => { const p = puff(root, cc, 0.55 * (1 - s / 12)); p.scale.setScalar(0.8 * (1 - s / 13)); return p; });
+          const Pp = V3(), s0 = V3(), ctl = V3();
+          anim(t => {
+            planetPos(a.slot, t, Pp); s0.copy(Pp).normalize().multiplyScalar(3.3); ctl.copy(s0).lerp(Pp, 0.5).y += 3.5;
+            const k = e.stuck ? 0.72 : frac(t / 2400 + i / 2 + j * 0.21);
+            qb(head.position, s0, ctl, Pp, k);
+            if (e.stuck) { const b = 0.5 + 0.5 * Math.sin(t / 110); halo.scale.setScalar(1.5 + 2 * b); halo.material.opacity = 0.4 + 0.6 * b; }
+            trail.forEach((p, s) => { const kk = k - (s + 1) * 0.016; p.visible = !e.stuck && kk > 0; if (p.visible) qb(p.position, s0, ctl, Pp, kk); });
+          });
+        }
+      });
+    }
+    // Two faint nebulae far behind, for depth.
+    for (const [x, y, z, c, s] of [[-260, 80, -380, '#3b2a6b', 420], [300, -60, -300, '#173a5c', 360]]) { const n = puff(root, c, 0.35); n.position.set(x, y, z); n.scale.setScalar(s); }
+  }
+  return { name: 'Orrery', bg: '#020308', ambient: 1.7, bloom: [0.85, 0.5, 0.55], stars, build, radius, focus: 22,
+    posOf: a => planetPos(a.slot, performance.now()), markerSize: 12 };
+}
+
+// ================================================================ build, loop, camera
+const VARIANTS = { plexus: plexusVariant(), orrery: orreryVariant() };
+const KEYS = Object.keys(VARIANTS);
+let variant = qs.get('variant'); if (!VARIANTS[variant]) variant = 'plexus';
+const V = () => VARIANTS[variant];
+let root = null;
+function dispose(o) { o.traverse(x => { if (x.isCSS2DObject) x.element.remove(); if (x.userData.keep) return; if (x.geometry) x.geometry.dispose(); if (x.userData.own && x.material) x.material.dispose(); }); }
+function rebuild() {
+  const v = V();
+  scene.background = col(v.bg); ambient.intensity = model.clusterLost ? v.ambient * 0.5 : v.ambient;
+  [bloom.strength, bloom.radius, bloom.threshold] = v.bloom;
+  for (const k of KEYS) VARIANTS[k].stars.visible = k === variant;
+  if (root) { scene.remove(root); dispose(root); }
+  anims = []; picks = []; nearLabels = []; root = new THREE.Group(); scene.add(root);
+  v.build(root);
+  document.getElementById('lost').style.display = model.clusterLost ? 'block' : 'none'; document.body.classList.toggle('lost', model.clusterLost);
+  document.getElementById('variantLabel').textContent = `${KEYS.indexOf(variant) === 0 ? 'A' : 'B'} · ${v.name}`;
+  renderPanel();
+}
+function homeDist() { let r = 10; for (const a of model.apps) r = Math.max(r, V().radius(ringOf(a.slot).k)); return (r + 9) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.68; }
+function fit() { controls.target.set(0, 0, 0); camera.position.copy(DIR0).multiplyScalar(homeDist()); controls.update(); }
+let fly = null;
+function flyTo(p, dist, follow = null) {
+  const off = camera.position.clone().sub(controls.target);
+  fly = { from: controls.target.clone(), to: p.clone(), dir: off.clone().normalize(), d0: off.length(), d1: dist, follow, t0: performance.now() };
+}
+
+// ---- attention: what the automatic camera wants to show (unchanged from the islets)
+const LINGER = { 3: 9000, 2: 7000, 1: 4000 }, EXPIRE = { 3: Infinity, 2: 60000, 1: 20000 };
+const queue = new Map(), recent = [];
+let lastAttention = -1e9;
+function attention(key, name, prio, where) {
+  const old = queue.get(key), t = performance.now();
+  lastAttention = t; recent.push({ key, at: t, where }); while (recent.length > 20) recent.shift();
+  if (!old || prio >= old.prio) queue.set(key, { key, name, prio, at: t, where }); else old.at = t;
+}
+const whereOf = a => () => (model.apps.includes(a) ? V().posOf(a).clone() : null);
+const appOf = e => model.apps.find(a => a.name === e.app);
+
+// ---- the automatic camera (the islets' rules; zoom becomes distance, and a focused planet is followed along its orbit)
+const IDLE_MS = Number(qs.get('idle') || 12000);
+let camOn = true, lastInput = -1e9, mode = 'hover', home = false, current = null, focusUntil = 0, lastWide = -1e9;
+function takeControl() { lastInput = performance.now(); controls.autoRotate = false; fly = null; mode = 'driving'; }
+for (const ev of ['pointerdown', 'wheel']) renderer.domElement.addEventListener(ev, takeControl, { passive: true });
+function hover(speed = 0.22) { controls.autoRotate = true; controls.autoRotateSpeed = speed; }
+function goHome() { flyTo(ORIGIN, homeDist()); home = true; }
+function camera_(t) {
+  for (const [k, q] of queue) if (t - q.at > EXPIRE[q.prio]) queue.delete(k);
+  if (!camOn) { mode = 'off'; controls.autoRotate = false; return; }
+  if (t - lastInput < IDLE_MS) { mode = 'driving'; return; }
+  if (model.clusterLost) { if (mode !== 'lost') { goHome(); hover(0.1); mode = 'lost'; } return; }
+  if (mode === 'driving' || mode === 'off' || mode === 'lost') { mode = 'hover'; hover(); if (!queue.size) goHome(); }
+  if (fly) return;
+  if (t - lastAttention < 700) return;
+  const items = [...queue.values()].sort((a, b) => b.prio - a.prio || a.at - b.at);
+  const burst = [...new Map(recent.filter(r => t - r.at < 3700).map(r => [r.key, r])).values()];
+  if (burst.length >= 3 && t - lastWide > 8000 && mode !== 'wide') {
+    const pts = burst.map(i => i.where()).filter(Boolean), bb = new THREE.Box3().setFromPoints(pts), c = bb.getCenter(V3()), s = bb.getSize(V3());
+    flyTo(c, Math.max(45, (Math.max(s.x, s.z) / 2 + 14) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))));
+    for (const i of burst) { const q = queue.get(i.key); if (q && q.prio < 3) queue.delete(i.key); }
+    mode = 'wide'; home = false; lastWide = t; focusUntil = t + 7500; hover(0.3); current = { prio: 2 };
+    return;
+  }
+  if (mode === 'focus' && items.length && items[0].prio > current.prio) focusUntil = 0;
+  if ((mode === 'focus' || mode === 'wide') && t < focusUntil) return;
+  if (items.length) {
+    const i = items[0], w = i.where(); queue.delete(i.key);
+    if (!w) return;
+    flyTo(w, i.key === 'platform' ? 34 : V().focus, i.where); mode = 'focus'; home = false; current = i; focusUntil = t + 1500 + LINGER[i.prio]; hover(0.45);
+    return;
+  }
+  if (!home) { goHome(); hover(); }
+  mode = 'hover';
+}
+const edgesEl = document.getElementById('edges'), vE = V3();
+let lastEdges = 0;
+function edges(t) {
+  if (t - lastEdges < 100) return; lastEdges = t;
+  const show = camOn && mode === 'driving' ? [...queue.values()].filter(i => i.prio >= 2) : [];
+  const w = edgesEl.clientWidth, h = edgesEl.clientHeight, out = [];
+  for (const i of show) {
+    const p = i.where(); if (!p) continue;
+    vE.set(p.x, p.y + 1, p.z).project(camera);
+    if (vE.z > 1) { vE.x = -vE.x * 10; vE.y = -vE.y * 10; }
+    if (Math.abs(vE.x) < 0.95 && Math.abs(vE.y) < 0.95) continue;
+    const k = 1 / Math.max(Math.abs(vE.x) / 0.86, Math.abs(vE.y) / 0.82), x = vE.x * k, y = Math.max(vE.y * k, -0.55);
+    out.push({ i, left: (x + 1) / 2 * w, top: (1 - y) / 2 * h, rot: Math.atan2(-vE.y, vE.x) });
+  }
+  edgesEl.replaceChildren(...out.map(o => {
+    const d = document.createElement('div'); d.className = 'edge'; d.style.left = o.left + 'px'; d.style.top = o.top + 'px'; d.style.color = SEV[o.i.prio];
+    d.innerHTML = `<span class="arrow" style="transform:rotate(${o.rot}rad)"></span><span style="color:#e6edf3">${o.i.name}</span>`;
+    d.onclick = () => { const p = o.i.where(); if (p) { takeControl(); flyTo(p, V().focus); queue.delete(o.i.key); } };
+    return d;
+  }));
+}
+const chip = document.getElementById('camChip'), chipText = document.getElementById('camText');
+chip.onclick = () => { camOn = !camOn; if (camOn) lastInput = -1e9; else { controls.autoRotate = false; fly = null; } };
+function chipTick(t) {
+  const left = Math.max(0, Math.ceil((IDLE_MS - (t - lastInput)) / 1000));
+  chip.className = !camOn ? 'off' : mode === 'driving' ? 'paused' : '';
+  chipText.textContent = !camOn ? 'Automatic camera off' : mode === 'driving' ? `Automatic camera paused while you look around · back in ${left} s`
+    : mode === 'lost' ? 'Automatic camera · holding back, cluster lost' : mode === 'focus' ? `Automatic camera · showing ${current.name}`
+    : mode === 'wide' ? 'Automatic camera · several changes at once' : 'Automatic camera · watching';
+}
+// Hovering a feed entry rings its place.
+const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTex(), color: '#5fd3ff', transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending }));
+marker.renderOrder = 30; marker.visible = false; scene.add(marker);
+let markerWhere = null;
+const vA = V3(), vF = V3();
+function nearFade() {
+  for (const l of nearLabels) { l.getWorldPosition(vA); const n = l.userData.near; l.element.style.opacity = String(clamp01((n - vA.distanceTo(camera.position)) / (n * 0.25))); }
+}
+renderer.setAnimationLoop(() => {
+  const t = performance.now();
+  for (const f of anims) f(t);
+  if (V().frame) V().frame(t);
+  camera_(t); edges(t); chipTick(t); nearFade();
+  if (marker.visible && markerWhere) { const p = markerWhere(); if (p) marker.position.copy(p); marker.material.opacity = 0.5 + 0.4 * Math.sin(t / 180); }
+  if (fly) {
+    const q = clamp01((t - fly.t0) / 1600), e = ease(q), to = fly.follow ? fly.follow() || fly.to : fly.to;
+    controls.target.lerpVectors(fly.from, to, e); camera.position.copy(controls.target).addScaledVector(fly.dir, THREE.MathUtils.lerp(fly.d0, fly.d1, e));
+    if (q >= 1) fly = null;
+  } else if (mode === 'focus' && current && current.where) {
+    // Planets move: keep the focused one centred.
+    const p = current.where(); if (p) { vF.copy(p).sub(controls.target); controls.target.add(vF); camera.position.add(vF); }
+  }
+  controls.update();
+  composer.render();
+  labelsR.render(scene, camera);
+});
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), tip = document.getElementById('tip');
+renderer.domElement.addEventListener('pointermove', e => {
+  if (e.buttons) { tip.style.display = 'none'; return; }
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  let o = null;
+  for (const h of ray.intersectObjects(picks, true)) { let x = h.object; while (x && !x.userData.tip) x = x.parent; if (x) { o = x; break; } }
+  if (o) { tip.textContent = o.userData.tip; tip.style.display = 'block'; tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px'; }
+  else tip.style.display = 'none';
+});
+renderer.domElement.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+// ================================================================ panel and events
+function renderPanel() {
+  document.getElementById('feed').replaceChildren(...model.feed.slice(0, 14).map(f => { const li = document.createElement('li'); li.innerHTML = `<time>${f.t}</time>`; li.append(f.msg); return li; }));
+  renderSceneFeed();
+}
+function renderSceneFeed() {
+  const now = performance.now();
+  document.getElementById('sceneFeed').replaceChildren(...model.feed.slice(0, 6).reverse().map(f => {
+    const li = document.createElement('li'), w = f.where && f.where();
+    li.className = w ? '' : 'nowhere';
+    li.innerHTML = `<span class="sev" style="background:${SEV[f.prio]}"></span><span class="msg"></span><span class="age">${Math.round((now - f.at) / 1000)} s</span>`;
+    li.querySelector('.msg').textContent = f.msg;
+    if (w) {
+      li.onclick = () => { const p = f.where(); if (p) { takeControl(); flyTo(p, f.key === 'platform' ? 34 : V().focus, f.where); if (f.key) queue.delete(f.key); } };
+      li.onmouseenter = () => { markerWhere = f.where; const s = f.key === 'platform' ? 26 : V().markerSize; marker.scale.set(s, s, 1); marker.visible = true; };
+      li.onmouseleave = () => { marker.visible = false; markerWhere = null; };
+    }
+    return li;
+  }));
+}
+setInterval(renderSceneFeed, 1000);
+function setVariant(v) { variant = v; const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u); rebuild(); if (mode !== 'driving') goHome(); }
+const step = d => setVariant(KEYS[(KEYS.indexOf(variant) + d + KEYS.length) % KEYS.length]);
+document.getElementById('prev').onclick = () => step(-1);
+document.getElementById('next').onclick = () => step(1);
+document.addEventListener('keydown', e => { if (e.target.closest('input, textarea, [contenteditable]')) return; if (e.key === 'ArrowLeft') step(-1); if (e.key === 'ArrowRight') step(1); });
+document.getElementById('togglePanel').onclick = e => { document.body.classList.toggle('nopanel'); resize(); e.target.textContent = document.body.classList.contains('nopanel') ? 'Show panel' : 'Hide panel'; };
+
+const clock = () => new Date().toTimeString().slice(0, 8);
+function note(msg, subject = null, prio = 0) {
+  const key = subject === 'platform' ? 'platform' : subject ? subject.name : null;
+  const where = subject === 'platform' ? () => ORIGIN.clone() : subject ? whereOf(subject) : null;
+  model.feed.unshift({ t: clock(), at: performance.now(), msg, prio, where, key });
+  if (prio > 0 && where) attention(key, subject === 'platform' ? 'the Platform' : subject.name, prio, where);
+}
+const log = msg => note(msg);
+const later = (ms, fn) => setTimeout(() => { fn(); rebuild(); }, ms);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const envs = () => model.apps.flatMap(a => a.envs);
+const idle = () => envs().filter(e => e.activity === null && e.cond !== 'unknown');
+const POOL = ['ledger', 'kantine', 'roomsy', 'fakturo', 'radar', 'intranet', 'onboard', 'crm', 'kudos', 'lunsj'];
+function removeApp(a) {
+  const t0 = performance.now();
+  for (const e of a.envs) { if (e.activity === 'unreleased') e.wasUnreleased = true; e.activity = 'leaving'; e.leaveAt = t0; e.stuck = false; }
+  note(`${a.name} leaving: final backups running`, a, 2);
+  later(3500, () => { const t = performance.now(); a.envs.forEach((e, i) => { e.crumbleAt = t + i * 150; }); });
+  later(5000, () => { a.sinkAt = performance.now(); });
+  later(6700, () => { model.apps = model.apps.filter(x => x !== a); model.free.push(a.slot); note(`${a.name} left`); });
+}
+const deletable = () => model.apps.filter(x => !x.sinkAt && !x.envs.some(e => e.activity === 'leaving'));
+const ACTIONS = {
+  arrive() {
+    const name = POOL.find(n => !model.apps.some(a => a.name === n)) || 'app' + seq, t = performance.now();
+    const list = [mkEnv(name, 'prod', [cap('postgres')], { activity: 'arriving', bornAt: t, isNewApp: true })];
+    if (Math.random() < 0.5) list.push(mkEnv(name, 'staging', [cap('postgres')], { activity: 'arriving', bornAt: t + 300, quiet: true }));
+    const a = addApp(name, list, { isNew: true });
+    note(`${name} arrived, setting up`, a, 2);
+    later(7000, () => { for (const e of a.envs) if (e.activity === 'arriving') e.activity = null; a.isNew = false; note(`${name} is serving`, a); });
+  },
+  firstDeploy() {
+    const e = envs().find(v => v.activity === 'unreleased'); if (!e) return log('no Unreleased Environment left');
+    e.activity = 'arriving'; e.bornAt = performance.now(); note(`${e.app} ${e.name} got its first image, arriving`, appOf(e), 2);
+    later(6500, () => { e.activity = null; note(`${e.app} ${e.name} is serving`, appOf(e)); });
+  },
+  deploy() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; note(`Deploy to ${e.app} ${e.name}`, appOf(e), 1); later(4500, () => { if (e.activity === 'deploying' && !e.stuck) { e.activity = null; note(`${e.app} ${e.name} deployed`, appOf(e)); } }); },
+  stuck() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; note(`Deploy to ${e.app} ${e.name}`, appOf(e), 1); later(2500, () => { e.stuck = true; e.why = 'migration Job failed'; note(`${e.app} ${e.name} Deploy stuck: migration Job failed`, appOf(e), 3); }); },
+  update() { const e = pick(idle()); if (!e) return; e.activity = 'updating'; note(`${e.app} ${e.name} updating (secret set)`, appOf(e), 1); later(4000, () => { if (!e.stuck) { e.activity = null; note(`${e.app} ${e.name} updated`, appOf(e)); } }); },
+  degrade() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'degraded'; note(`${e.app} ${e.name} Degraded: CrashLoopBackOff`, appOf(e), 3); } },
+  unknown() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'unknown'; note(`${e.app} ${e.name} Unknown: pod status Unknown`, appOf(e), 2); } },
+  warn() { const c = pick(envs().flatMap(e => e.caps.filter(k => k.kind === 'postgres' && !k.warn).map(k => [e, k]))); if (c) { c[1].warn = true; note(`${c[0].app} ${c[0].name} database: backups failing`, appOf(c[0]), 1); } },
+  preview() {
+    const a = pick(model.apps.filter(x => !x.sinkAt && x.envs.some(e => e.name === 'staging'))); if (!a) return;
+    const n = 40 + Math.floor(Math.random() * 60), e = mkEnv(a.name, `pr-${n}`, [cap('login')], { activity: 'arriving', bornAt: performance.now() });
+    a.envs.push(e); note(`${a.name} pr-${n} preview arriving`, a, 1); later(6500, () => { e.activity = null; note(`${a.name} pr-${n} preview is serving`, a); });
+  },
+  closePreview() {
+    const e = pick(envs().filter(v => v.name.startsWith('pr-') && v.activity !== 'leaving')); if (!e) return log('no preview open');
+    e.activity = 'leaving'; e.leaveAt = performance.now(); note(`${e.app} ${e.name} leaving`, appOf(e), 1);
+    later(3000, () => { e.crumbleAt = performance.now(); });
+    later(4400, () => { const a = model.apps.find(x => x.name === e.app); if (a) a.envs = a.envs.filter(v => v !== e); note(`${e.app} ${e.name} left`, a); });
+  },
+  deleteApp() { const a = pick(deletable()); if (a) removeApp(a); },
+  deleteTwo() { const a = pick(deletable()); if (!a) return; removeApp(a); setTimeout(() => { const b = pick(deletable()); if (b) { removeApp(b); rebuild(); } }, 1200); },
+  bump() { const c = comp('cert-manager'); c.activity = 'updating'; c.stuck = false; note('cert-manager updating (chart bump)', 'platform', 1); later(4000, () => { c.activity = null; note('cert-manager updated', 'platform'); }); },
+  traefik() { const c = comp('traefik'); c.cond = c.cond === 'healthy' ? 'degraded' : 'healthy'; note(`Traefik ${c.cond === 'healthy' ? 'recovered' : 'Degraded'}`, 'platform', c.cond === 'healthy' ? 0 : 3); },
+  lose() { model.clusterLost = !model.clusterLost; log(model.clusterLost ? 'Argus lost the cluster' : 'Argus reconnected'); },
+  settle() {
+    for (const e of envs()) { if (e.activity !== 'unreleased' && e.activity !== 'leaving') e.activity = null; e.stuck = false; e.cond = 'healthy'; for (const c of e.caps) { c.warn = false; c.cond = 'healthy'; } }
+    for (const c of model.comps) { c.activity = null; c.stuck = false; c.cond = 'healthy'; }
+    model.clusterLost = false; log('everything settled');
+  },
+  burst() {
+    const d = pick(envs().filter(v => v.cond === 'healthy' && v.activity === null)); if (!d) return;
+    d.cond = 'degraded'; note(`${d.app} ${d.name} Degraded: CrashLoopBackOff`, appOf(d), 3); rebuild();
+    ACTIONS.arrive();
+    const e = pick(idle().filter(v => v.app !== d.app)); if (!e) return;
+    e.activity = 'deploying'; e.stuck = true; e.why = 'image pull failing'; note(`${e.app} ${e.name} Deploy stuck: image pull failing`, appOf(e), 3);
+  },
+  fit() { goHome(); },
+};
+document.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => { ACTIONS[b.dataset.act](); rebuild(); }));
+
+seed();
+log('Argus connected (fake data)');
+rebuild(); fit();
+for (const a of (qs.get('do') || '').split(',').filter(Boolean)) { if (ACTIONS[a]) { ACTIONS[a](); rebuild(); } }
+if (qs.get('drive') === '1') { lastInput = performance.now() + 60000; mode = 'driving'; }
+// ?cam=x,y,z&look=x,y,z frames a spot for screenshots.
+if (qs.get('cam')) {
+  const [x, y, z] = qs.get('cam').split(',').map(Number), [lx, ly, lz] = (qs.get('look') || '0,0,0').split(',').map(Number);
+  controls.target.set(lx, ly, lz); camera.position.set(x, y, z); controls.update(); if (qs.get('drive') !== '1') camOn = false;
+}
+if (qs.get('focus') === 'platform') { controls.target.set(0, 0, 0); camera.position.copy(DIR0).multiplyScalar(34); controls.update(); camOn = false; }
+</script>
+</body>
+</html>
