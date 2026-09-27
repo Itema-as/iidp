@@ -6,6 +6,9 @@
 
   ?variant=plexus   A particle network: every Environment is a cloud of linked particles, the Platform a dense
                     core, each Application joined to the core by one filament and never to each other.
+  ?panel=A|B|C      The detail panel you get by clicking something (#113): A a docked sheet, B a card by the
+                    object that also replaces hover tooltips, C a focus drawer along the bottom. The bottom bar
+                    switches them. ?open=env:shop:prod, ?open=comp:deploy-gate or ?open=core opens one on load.
   ?variant=orrery   A solar system: the Platform is the sun with its components on an inner orbit, Applications
                     are planets on the islets' fixed orbits, Environments are their moons.
 
@@ -42,6 +45,52 @@
   button { font:inherit; font-size:12.5px; color:var(--ink); background:#18202a; border:1px solid #2a3542;
     border-radius:4px; padding:7px 8px; text-align:left; cursor:pointer; }
   button:hover { background:#212c38; }
+  /* The detail panel (#113). Three variants share the content and differ in where and how it sits. */
+  #detail { position:fixed; z-index:13; display:none; color:#e6edf3; font-size:12.5px; line-height:1.45; }
+  #detail.pA, #detail.pB, #detail.pC { display:block; }
+  #detail.pA { top:0; bottom:0; right:330px; width:360px; overflow:auto; background:#0a0f16f5; border-left:1px solid #26303a;
+    padding:16px 18px 28px; box-shadow:-14px 0 34px rgba(0,0,0,.5); }
+  body.nopanel #detail.pA { right:0; }
+  #detail.pB { width:310px; background:#0a0f16f2; border:1px solid #2f3a46; border-radius:6px; padding:12px 14px; box-shadow:0 12px 34px rgba(0,0,0,.55); }
+  #detail.pB.peek { pointer-events:none; }
+  #detail.pC { left:0; right:330px; bottom:0; height:292px; background:#0a0f16f5; border-top:1px solid #26303a; padding:16px 20px;
+    display:grid; grid-template-columns:250px 1fr; gap:26px; box-shadow:0 -14px 34px rgba(0,0,0,.5); }
+  body.nopanel #detail.pC { right:0; }
+  body.drawer #sceneFeed { display:none; } body.drawer #switcher { bottom:310px; }
+  body.sheet #switcher { left:calc((100% - 690px) / 2); bottom:auto; top:12px; } body.sheet #togglePanel { right:702px; }
+  body.nopanel.sheet #switcher { left:calc((100% - 360px) / 2); } body.nopanel.sheet #togglePanel { right:372px; }
+  #detail .kind { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:#8b98a5; }
+  #detail h3 { font-size:17px; font-weight:650; margin:2px 30px 8px 0; }
+  #detail h4 { font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:#8b98a5; margin:16px 0 6px; font-weight:650; }
+  #detail .cols h4, #detail.pB h4 { margin-top:10px; }
+  #detail dl { display:grid; grid-template-columns:104px 1fr; gap:4px 10px; margin:0; }
+  #detail dt { color:#8b98a5; } #detail dd { margin:0; overflow-wrap:anywhere; }
+  #detail .close { position:absolute; top:10px; right:10px; background:none; border:0; font-size:19px; line-height:1; color:#8b98a5; padding:4px 8px; }
+  #detail .close:hover { color:#e6edf3; }
+  #detail .st { display:inline-block; font-size:11px; font-weight:600; padding:1px 7px; border-radius:3px; border:1px solid; margin:0 4px 4px 0; }
+  .st.ok { color:#7ee2a8; border-color:#2f8a57; } .st.bad { color:#ff9a90; border-color:#ff5a4e; } .st.warn { color:#ffd866; border-color:#ffcc33; }
+  .st.work { color:#ffd866; border-color:#b88a1c; } .st.stuck { color:#ffb070; border-color:#ff7a1a; } .st.new { color:#8fe3ff; border-color:#5fd3ff; }
+  .st.unknown { color:#b8c0c8; border-color:#6e7781; } .st.unrel { color:#c9d4dd; border-color:#56626e; border-style:dashed; }
+  #detail .hl { outline:2px solid #5fd3ff; outline-offset:2px; border-radius:3px; }
+  #detail .hops { list-style:none; padding:0; margin:12px 0 2px; display:flex; gap:4px; }
+  #detail .hops li { flex:1; font-size:10.5px; padding:6px 2px 0; border-top:3px solid #2a3542; color:#6e7b88; }
+  #detail .hops li.done { border-color:#8a6a1c; color:#c9d4dd; } #detail .hops li.now { border-color:#ffc233; color:#ffd866; font-weight:650; }
+  #detail .hops li.stuckat { border-color:#ff7a1a; color:#ffb070; font-weight:650; }
+  #detail .hopcap { font-size:11px; color:#8b98a5; margin-top:2px; }
+  #detail ul { list-style:none; margin:0; padding:0; }
+  #detail .caps li { padding:5px 0; border-bottom:1px solid #1a222b; }
+  #detail .caps .note, #detail .links .note { color:#8b98a5; }
+  #detail .caps .note { display:block; }
+  #detail a { color:#9ec6ff; text-decoration:none; } #detail a:hover { text-decoration:underline; }
+  #detail .links li { padding:3px 0; } #detail .links .note { margin-left:6px; }
+  #detail .recent li { display:flex; gap:7px; align-items:baseline; padding:2px 0; }
+  #detail .recent time { color:#8b98a5; font-variant-numeric:tabular-nums; } #detail .recent .sev { width:7px; height:7px; border-radius:50%; flex:none; }
+  #detail .linkrow { margin-top:10px; }
+  #detail .more { margin-top:10px; padding:4px 8px; font-size:12px; }
+  #detail .hint { margin-top:8px; color:#8b98a5; font-size:11.5px; }
+  #detail .capchips { margin-top:8px; }
+  #detail.pC .cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:4px 22px; overflow:auto; max-height:196px; }
+  #detail.pC .left { overflow:auto; position:relative; }
   #feed { list-style:none; margin:0; padding:0; font-size:12.5px; }
   #feed li { padding:3px 0; border-bottom:1px solid #1a222b; }
   #feed time { color:var(--muted); margin-right:6px; font-variant-numeric:tabular-nums; }
@@ -109,6 +158,7 @@
   <button id="next" aria-label="Next variant">›</button>
 </div>
 <div id="tip"></div>
+<div id="detail"></div>
 <div id="camChip"><span class="dot"></span><span id="camText"></span></div>
 <div id="edges"></div>
 <ul id="sceneFeed"></ul>
@@ -534,11 +584,11 @@ function plexusVariant() {
   }
   function build(root) {
     root.add(lines, points);
-    const pick = (p, r, tip) => { const m = mesh(root, new THREE.SphereGeometry(r, 10, 8), INVIS, p.x, p.y, p.z); m.userData.tip = tip; picks.push(m); };
-    pick(ORIGIN, 3.2, tipComp(comp('argocd')));
+    const pick = (p, r, tip, sel) => { const m = mesh(root, new THREE.SphereGeometry(r, 10, 8), INVIS, p.x, p.y, p.z); m.userData.tip = tip; m.userData.sel = sel; picks.push(m); };
+    pick(ORIGIN, 3.2, tipComp(comp('argocd')), { kind: 'core' });
     label(root, 'PLATFORM', 'plat', 0, 5.6, 0); label(root, 'ArgoCD', 'comp', 0, -3.9, 0, 90);
     for (const kind of Object.keys(RING)) {
-      const c = comp(kind), p = compPos(kind); pick(p, 1.3, tipComp(c));
+      const c = comp(kind), p = compPos(kind); pick(p, 1.3, tipComp(c), { kind: 'comp', c });
       label(root, c.label, 'comp', p.x, 1.7, p.z, 120);
       if (c.stuck) label(root, 'STUCK', 'chip stuck', p.x, 2.6, p.z); else if (c.cond === 'degraded') label(root, 'DEGRADED', 'chip bad', p.x, 2.6, p.z);
     }
@@ -546,7 +596,11 @@ function plexusVariant() {
       const L = layout(a);
       label(root, a.name, 'app', L.C.x, L.C.y - 0.9, L.C.z);
       for (const { e, E, R } of L.envs) {
-        pick(E, R * 1.15, tipEnv(e));
+        pick(E, R * 1.15, tipEnv(e), { kind: 'env', e });
+        for (const c of e.caps) {
+          if (c.kind === 'postgres') pick(pgPos(E, R, L), 0.7, `postgres\nCondition: ${condLabel(c)}${c.warn ? '\nWarning: backups failing' : ''}`, { kind: 'env', e, cap: 'postgres' });
+          if (c.kind === 'domain') pick(domPos(E, R, L), 0.55, `${c.host}\nCondition: ${condLabel(c)}`, { kind: 'env', e, cap: 'domain' });
+        }
         label(root, envLabel(e), 'env', E.x, E.y - R - 0.5, E.z, 70);
         const chip = (s, cls) => label(root, s, 'chip ' + cls, E.x, E.y + R + 1.0 + (e.caps.some(c => c.kind === 'domain') ? 1.9 : 0), E.z);
         if (e.activity === 'unreleased') chip('UNRELEASED', 'unrel');
@@ -564,7 +618,15 @@ function plexusVariant() {
     }
   }
   return { name: 'Particle network', bg: '#03050a', ambient: 0.35, bloom: [0.8, 0.45, 0.12], stars, build, frame, radius, focus: 30,
-    posOf: a => layout(a).C, markerSize: 17 };
+    posOf: a => layout(a).C, markerSize: 17,
+    // Where a selected thing is, for the camera and the card.
+    selPos: sel => {
+      if (sel.kind === 'core') return ORIGIN.clone();
+      if (sel.kind === 'comp') return compPos(sel.c.kind);
+      const a = model.apps.find(x => x.envs.includes(sel.e)); if (!a) return null;
+      const sp = layout(a).envs.find(x => x.e === sel.e); if (!sp) return null;
+      return sel.cap === 'postgres' ? pgPos(sp.E, sp.R, layout(a)) : sel.cap === 'domain' ? domPos(sp.E, sp.R, layout(a)) : sp.E.clone();
+    } };
 }
 
 // ================================================================ variant B: the orrery
@@ -768,7 +830,7 @@ function orreryVariant() {
     for (const [x, y, z, c, s] of [[-260, 80, -380, '#3b2a6b', 420], [300, -60, -300, '#173a5c', 360]]) { const n = puff(root, c, 0.35); n.position.set(x, y, z); n.scale.setScalar(s); }
   }
   return { name: 'Orrery', bg: '#020308', ambient: 1.7, bloom: [0.85, 0.5, 0.55], stars, build, radius, focus: 22,
-    posOf: a => planetPos(a.slot, performance.now()), markerSize: 12 };
+    posOf: a => planetPos(a.slot, performance.now()), markerSize: 12, selPos: () => null };
 }
 
 // ================================================================ build, loop, camera
@@ -787,7 +849,7 @@ function rebuild() {
   anims = []; picks = []; nearLabels = []; root = new THREE.Group(); scene.add(root);
   v.build(root);
   document.getElementById('lost').style.display = model.clusterLost ? 'block' : 'none'; document.body.classList.toggle('lost', model.clusterLost);
-  document.getElementById('variantLabel').textContent = `${KEYS.indexOf(variant) === 0 ? 'A' : 'B'} · ${v.name}`;
+  document.getElementById('variantLabel').textContent = `Panel ${panel} · ${PANELS[panel]}`;
   renderPanel();
 }
 function homeDist() { let r = 10; for (const a of model.apps) r = Math.max(r, V().radius(ringOf(a.slot).k)); return (r + 9) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.68; }
@@ -820,6 +882,8 @@ function goHome() { flyTo(ORIGIN, homeDist()); home = true; }
 function camera_(t) {
   for (const [k, q] of queue) if (t - q.at > EXPIRE[q.prio]) queue.delete(k);
   if (!camOn) { mode = 'off'; controls.autoRotate = false; return; }
+  // An open panel holds the camera where it is, like someone looking around, until it closes.
+  if (selected) { mode = 'pinned'; controls.autoRotate = false; return; }
   if (t - lastInput < IDLE_MS) { mode = 'driving'; return; }
   if (model.clusterLost) { if (mode !== 'lost') { goHome(); hover(0.1); mode = 'lost'; } return; }
   if (mode === 'driving' || mode === 'off' || mode === 'lost') { mode = 'hover'; hover(); if (!queue.size) goHome(); }
@@ -849,7 +913,7 @@ const edgesEl = document.getElementById('edges'), vE = V3();
 let lastEdges = 0;
 function edges(t) {
   if (t - lastEdges < 100) return; lastEdges = t;
-  const show = camOn && mode === 'driving' ? [...queue.values()].filter(i => i.prio >= 2) : [];
+  const show = camOn && (mode === 'driving' || mode === 'pinned') ? [...queue.values()].filter(i => i.prio >= 2) : [];
   const w = edgesEl.clientWidth, h = edgesEl.clientHeight, out = [];
   for (const i of show) {
     const p = i.where(); if (!p) continue;
@@ -870,8 +934,8 @@ const chip = document.getElementById('camChip'), chipText = document.getElementB
 chip.onclick = () => { camOn = !camOn; if (camOn) lastInput = -1e9; else { controls.autoRotate = false; fly = null; } };
 function chipTick(t) {
   const left = Math.max(0, Math.ceil((IDLE_MS - (t - lastInput)) / 1000));
-  chip.className = !camOn ? 'off' : mode === 'driving' ? 'paused' : '';
-  chipText.textContent = !camOn ? 'Automatic camera off' : mode === 'driving' ? `Automatic camera paused while you look around · back in ${left} s`
+  chip.className = !camOn ? 'off' : mode === 'driving' || mode === 'pinned' ? 'paused' : '';
+  chipText.textContent = !camOn ? 'Automatic camera off' : mode === 'pinned' ? 'Automatic camera paused while a panel is open' : mode === 'driving' ? `Automatic camera paused while you look around · back in ${left} s`
     : mode === 'lost' ? 'Automatic camera · holding back, cluster lost' : mode === 'focus' ? `Automatic camera · showing ${current.name}`
     : mode === 'wide' ? 'Automatic camera · several changes at once' : 'Automatic camera · watching';
 }
@@ -888,6 +952,7 @@ renderer.setAnimationLoop(() => {
   for (const f of anims) f(t);
   if (V().frame) V().frame(t);
   camera_(t); edges(t); chipTick(t); nearFade();
+  selTick(t);
   if (marker.visible && markerWhere) { const p = markerWhere(); if (p) marker.position.copy(p); marker.material.opacity = 0.5 + 0.4 * Math.sin(t / 180); }
   if (fly) {
     const q = clamp01((t - fly.t0) / 1600), e = ease(q), to = fly.follow ? fly.follow() || fly.to : fly.to;
@@ -909,16 +974,206 @@ renderer.domElement.addEventListener('pointermove', e => {
   ray.setFromCamera(ndc, camera);
   let o = null;
   for (const h of ray.intersectObjects(picks, true)) { let x = h.object; while (x && !x.userData.tip) x = x.parent; if (x) { o = x; break; } }
+  if (panel === 'B' && variant === 'plexus') {
+    tip.style.display = 'none';
+    if (!selected) { const s0 = (o && o.userData.sel) || null; if (!sameSel(s0, peek)) { peek = s0; renderDetail(); } }
+    return;
+  }
   if (o) { tip.textContent = o.userData.tip; tip.style.display = 'block'; tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px'; }
   else tip.style.display = 'none';
 });
-renderer.domElement.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+renderer.domElement.addEventListener('pointerleave', () => { tip.style.display = 'none'; if (peek) { peek = null; renderDetail(); } });
 renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+// ================================================================ the detail panel (#113)
+// Clicking an Environment, a Capability, a Platform component or the core opens a panel. The content is the same in all
+// three variants; where it sits and how it opens differ. While a panel is open the automatic camera holds still.
+const PANELS = { A: 'Docked sheet', B: 'Card by the object', C: 'Focus drawer' };
+let panel = qs.get('panel'); if (!PANELS[panel]) panel = 'A';
+let selected = null, peek = null, bMore = false;
+const detailEl = document.getElementById('detail');
+const sameSel = (a, b) => (!a && !b) || (!!a && !!b && a.kind === b.kind && a.e === b.e && a.c === b.c && a.cap === b.cap);
+const BASE = 'iidp.itema.no';
+const esc = v => String(v).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const ago = min => min < 1 ? 'just now' : min < 60 ? `${Math.round(min)} min ago` : min < 1440 ? `${Math.round(min / 60)} h ago` : `${Math.round(min / 1440)} d ago`;
+const shaOf = s => { let x = hash(s), o = ''; for (let i = 0; i < 40; i++) { x = frac(Math.sin(x * 9301 + i * 7.13) * 43758.5453); o += '0123456789abcdef'[Math.floor(x * 16)]; } return o; };
+// The five hops of a Deploy (#106). The prototype fakes the timing; a stuck Deploy says where it stopped.
+const HOPS = ['Accepted', 'Waiting for ArgoCD', 'Applying', 'Rolling out', 'Serving'];
+function hopOf(e) {
+  if (e.activity !== 'deploying') return null;
+  if (e.stuck) return { at: /image pull/.test(e.why || '') ? 3 : 2, stuck: true, why: e.why };
+  const el = (performance.now() - (e.deployAt || -1e9)) / 1000;
+  return { at: el < 0.6 ? 0 : el < 1.2 ? 1 : el < 2.6 ? 2 : 3, stuck: false };
+}
+const CAPNAME = c => ({ postgres: 'Postgres database', login: 'Itema login', domain: `Custom domain ${c.host}`, task: 'Scheduled task' }[c.kind]);
+const CAPNOTE = c => ({ postgres: c.warn ? 'Backups failing since 02:00. The database itself is serving.' : 'Daily backup, kept 30 days',
+  login: 'Only members of itema-developers get in', domain: 'Certificate valid until 12 Dec', task: 'nightly-export · 0 3 * * *' }[c.kind]);
+const recentFor = match => model.feed.filter(f => match(f.msg)).slice(0, 4);
+function condChip(o) { return o.cond === 'healthy' ? { t: 'Healthy', cls: 'ok' } : o.cond === 'degraded' ? { t: 'Degraded', cls: 'bad' } : { t: 'Unknown', cls: 'unknown' }; }
+function actChip(o) {
+  if (!o.activity) return null;
+  return { t: actLabel(o), cls: o.stuck ? 'stuck' : o.activity === 'arriving' ? 'new' : o.activity === 'unreleased' ? 'unrel' : o.activity === 'leaving' ? 'unknown' : 'work' };
+}
+function envFacts(e, cap) {
+  const a = model.apps.find(x => x.envs.includes(e)); if (!a) return null;
+  const k = kindOf(e), sd = hash(e.app + e.name), unrel = e.activity === 'unreleased';
+  const released = k === 'prod' && a.envs.some(x => x.name === 'staging');
+  const version = `1.${Math.floor(sd * 9)}.${Math.floor(frac(sd * 7) * 12)}`, sha = shaOf(e.app + e.name + (e.deployAt || ''));
+  const tag = unrel ? '' : released ? version : sha.slice(0, 7);
+  const deployedMin = e.deployAt ? (performance.now() - e.deployAt) / 60000 : 25 + sd * 2400;
+  const total = k === 'prod' ? 2 : 1;
+  const pods = unrel ? 'none' : e.cond === 'unknown' ? `unknown (last seen ${total} of ${total} ready)` : e.cond === 'degraded'
+    ? `0 of ${total} ready · ${9 + Math.floor(sd * 20)} restarts` : `${total} of ${total} ready · ${Math.floor(sd * 3)} restarts`;
+  const host = k === 'prod' ? `${e.app}.${BASE}` : `${e.app}-${e.name}.${BASE}`;
+  const running = [['Image', unrel ? 'none yet: no Deploy has reached it' : `${e.app}:${tag}`], ['Deployed', unrel ? '–' : ago(deployedMin)], ['Pods', pods],
+    ['Address', unrel ? '–' : [host, ...e.caps.filter(c => c.kind === 'domain').map(c => c.host)].join(', ')]];
+  if (e.stuck && e.why) running.unshift(['Why stuck', e.why]);
+  if (e.cond === 'degraded') running.unshift(['Why degraded', 'CrashLoopBackOff: the container exits with code 1']);
+  const groups = [{ h: 'Running', rows: running }];
+  const pg = e.caps.find(c => c.kind === 'postgres');
+  if (pg && !unrel) groups.push({ h: 'Database', rows: [['Last migration', e.stuck && /migration/.test(e.why || '') ? 'failed just now' : `succeeded ${ago(deployedMin)}`],
+    ['Last backup', pg.warn ? 'failing since 02:00' : `succeeded ${ago(60 + sd * 600)}`]] });
+  if (e.caps.some(c => c.kind === 'task')) groups.push({ h: 'Scheduled tasks', rows: [['nightly-export', `0 3 * * * · last run succeeded ${ago(300 + sd * 200)}`]] });
+  const repo = `https://github.com/Itema-as/${e.app}`, links = [];
+  if (!unrel) links.push({ t: host, href: 'https://' + host, note: 'open it' });
+  links.push({ t: 'ArgoCD', href: `https://argocd.${BASE}/applications/argocd/${e.app}-${e.name}`, note: 'sync and resources' });
+  links.push({ t: 'Grafana', href: `https://itema.grafana.net/explore?app=${e.app}&env=${e.name}`, note: 'logs and metrics' });
+  links.push({ t: 'Application repository', href: repo });
+  if (!unrel) links.push(released ? { t: `Release v${version}`, href: `${repo}/releases/tag/v${version}`, note: 'last Promote' } : { t: `Commit ${sha.slice(0, 7)}`, href: `${repo}/commit/${sha}`, note: 'last Deploy' });
+  return {
+    kind: k === 'preview' ? 'Preview Environment' : 'Environment', title: `${e.app} ${e.name}`,
+    chips: [unrel ? null : condChip(e), actChip(e)].filter(Boolean), hops: hopOf(e), groups,
+    caps: e.caps.map(c => ({ key: c.kind, name: CAPNAME(c), state: c.cond === 'degraded' ? 'Degraded' : c.warn ? 'Warning' : 'Healthy',
+      cls: c.cond === 'degraded' ? 'bad' : c.warn ? 'warn' : 'ok', note: CAPNOTE(c), hl: cap === c.kind })),
+    links, recent: recentFor(m => m.includes(`${e.app} ${e.name}`)),
+  };
+}
+const COMPINFO = { argocd: ['Reconciles every Environment from the Platform repository', '2.13'], traefik: ['Routes requests to Environments and terminates TLS', '3.2 (part of k3s)'],
+  'deploy-gate': ['Checks and records every Deploy and Promote', '0.14.2'], 'cert-manager': ['Issues and renews certificates', '1.16'],
+  'external-dns': ['Keeps DNS records for custom domains', '0.15'], cnpg: ['Runs the Postgres databases and their backups', '1.25'],
+  'oauth2-proxy': ['Itema login in front of the Environments that ask for it', '7.7'], alloy: ['Ships logs and metrics to Grafana Cloud', '1.5'] };
+function compFacts(c) {
+  const [what, version] = COMPINFO[c.kind], rows = [['What it does', what], ['Version', version]];
+  if (c.kind === 'deploy-gate') { const d = model.feed.find(f => /^Deploy to /.test(f.msg)); rows.push(['Last Deploy', d ? `${d.msg.replace('Deploy to ', '')}, at ${d.t}` : 'none since Argus started']); }
+  if (c.stuck) rows.unshift(['Why stuck', 'the new chart version fails to sync']);
+  const links = [];
+  if (c.kind !== 'traefik') links.push({ t: 'ArgoCD', href: `https://argocd.${BASE}/applications/argocd/${c.kind}`, note: 'sync and resources' });
+  links.push({ t: 'Grafana', href: `https://itema.grafana.net/explore?component=${c.kind}`, note: 'logs and metrics' });
+  links.push({ t: 'Platform repository', href: 'https://github.com/Itema-as/iidp/tree/main/bootstrap', note: 'how it is installed' });
+  return { kind: 'Platform component', title: c.label, chips: [condChip(c), actChip(c)].filter(Boolean), hops: null,
+    groups: [{ h: 'Component', rows }], caps: [], links, recent: recentFor(m => m.includes(c.label)) };
+}
+function coreFacts() {
+  const all = model.apps.flatMap(a => a.envs), loud = all.filter(e => e.cond === 'degraded' || e.stuck);
+  const argo = comp('argocd');
+  return { kind: 'Platform', title: 'The Platform', chips: [condChip(argo), actChip(argo)].filter(Boolean), hops: null,
+    groups: [{ h: 'Now', rows: [['Applications', String(model.apps.length)], ['Environments', String(all.length)],
+      ['Needs attention', loud.length ? loud.map(e => `${e.app} ${e.name}`).join(', ') : 'nothing'],
+      ['Deploying', all.filter(e => e.activity === 'deploying').map(e => `${e.app} ${e.name}`).join(', ') || 'nothing']] },
+      { h: 'ArgoCD', rows: [['What it does', COMPINFO.argocd[0]], ['Version', COMPINFO.argocd[1]]] }],
+    caps: [], links: [{ t: 'ArgoCD', href: `https://argocd.${BASE}`, note: 'every Environment' }, { t: 'Grafana', href: 'https://itema.grafana.net', note: 'the Platform dashboard' },
+      { t: 'Platform repository', href: 'https://github.com/Itema-as/iidp-platform', note: 'desired state and its history' }], recent: model.feed.slice(0, 4) };
+}
+const facts = s => s.kind === 'env' ? envFacts(s.e, s.cap) : s.kind === 'comp' ? compFacts(s.c) : coreFacts();
+// ---- pieces the three variants share
+const chipsHtml = f => f.chips.map(c => `<span class="st ${c.cls}">${esc(c.t)}</span>`).join('');
+const headHtml = (f, close) => `<div class="kind">${esc(f.kind)}</div><h3>${esc(f.title)}</h3>${close ? '<button class="close" aria-label="Close">×</button>' : ''}<div>${chipsHtml(f)}</div>`;
+const hopsHtml = h => h ? `<ol class="hops">${HOPS.map((n, i) => `<li class="${i < h.at ? 'done' : i === h.at ? (h.stuck ? 'stuckat' : 'now') : ''}">${n}</li>`).join('')}</ol>
+  <div class="hopcap">${h.stuck ? `Stuck at ${HOPS[h.at]}: ${esc(h.why || '')}` : `Deploying · ${HOPS[h.at]}`}</div>` : '';
+const groupHtml = g => `<h4>${g.h}</h4><dl>${g.rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
+const capsHtml = f => f.caps.length ? `<h4>Capabilities</h4><ul class="caps">${f.caps.map(c => `<li class="${c.hl ? 'hl' : ''}">${esc(c.name)} <span class="st ${c.cls}">${c.state}</span><span class="note">${esc(c.note)}</span></li>`).join('')}</ul>` : '';
+const linksHtml = f => `<h4>Links</h4><ul class="links">${f.links.map(l => `<li><a href="${esc(l.href)}" target="_blank" rel="noopener">${esc(l.t)}</a>${l.note ? `<span class="note">${esc(l.note)}</span>` : ''}</li>`).join('')}</ul>`;
+const recentHtml = f => f.recent.length ? `<h4>Recent</h4><ul class="recent">${f.recent.map(r => `<li><span class="sev" style="background:${SEV[r.prio]}"></span><time>${r.t}</time><span>${esc(r.msg)}</span></li>`).join('')}</ul>` : '';
+const RENDER = {
+  // A: everything, top to bottom, in a sheet docked to the right edge.
+  A: f => `${headHtml(f, true)}${hopsHtml(f.hops)}${f.groups.map(groupHtml).join('')}${capsHtml(f)}${linksHtml(f)}${recentHtml(f)}`,
+  // B: a small card next to the object. Hovering shows a peek; clicking pins it, adds the links and a way to see everything.
+  B: (f, pinned) => `${headHtml(f, pinned)}${hopsHtml(f.hops)}${pinned && bMore ? '' : `<dl style="margin-top:8px">${f.groups[0].rows.slice(0, 3).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`}
+    ${f.caps.length ? `<div class="capchips">${f.caps.map(c => `<span class="st ${c.cls}${c.hl ? ' hl' : ''}">${esc(c.name)}</span>`).join('')}</div>` : ''}
+    ${pinned ? `<div class="linkrow">${f.links.map(l => `<a href="${esc(l.href)}" target="_blank" rel="noopener">${esc(l.t)}</a>`).join(' · ')}</div>
+      <button class="more">${bMore ? 'Fewer details' : 'All details'}</button>${bMore ? f.groups.map(groupHtml).join('') + capsHtml(f) + recentHtml(f) : ''}`
+      : '<div class="hint">Click to pin it and get the links</div>'}`,
+  // C: a drawer across the bottom. The Deploy's hops run along the top, the details sit in columns underneath.
+  C: f => `<div class="left">${headHtml(f, true)}${linksHtml(f)}</div>
+    <div>${f.hops ? hopsHtml(f.hops) : `<div class="hopcap" style="margin-top:4px">${f.kind === 'Environment' || f.kind === 'Preview Environment' ? 'No Deploy in progress' : ''}</div>`}
+    <div class="cols">${f.groups.map(g => `<div>${groupHtml(g)}</div>`).join('')}${f.caps.length ? `<div>${capsHtml(f)}</div>` : ''}${f.recent.length ? `<div>${recentHtml(f)}</div>` : ''}</div></div>`,
+};
+function renderDetail() {
+  const s = selected || (panel === 'B' ? peek : null);
+  document.body.classList.toggle('drawer', !!selected && panel === 'C'); document.body.classList.toggle('sheet', !!selected && panel === 'A');
+  if (!s || variant !== 'plexus') { detailEl.className = ''; detailEl.innerHTML = ''; return; }
+  const f = facts(s);
+  if (!f) { closeSel(); return; }
+  const scroll = detailEl.scrollTop;
+  detailEl.className = 'p' + panel + (selected ? ' pinned' : ' peek');
+  detailEl.innerHTML = RENDER[panel](f, !!selected);
+  detailEl.scrollTop = scroll;
+  const x = detailEl.querySelector('.close'); if (x) x.onclick = closeSel;
+  const m = detailEl.querySelector('.more'); if (m) m.onclick = () => { bMore = !bMore; renderDetail(); };
+  placeCard();
+}
+// Frame the object in the part of the stage the panel leaves free.
+function framed(p, dist) {
+  const right = V3().setFromMatrixColumn(camera.matrixWorld, 0), up = V3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const h = dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), w = h * camera.aspect, out = p.clone();
+  if (panel === 'A') out.addScaledVector(right, w * 0.3);
+  if (panel === 'C') out.addScaledVector(up, -h * 0.38);
+  return out;
+}
+function openSel(s) {
+  selected = s; peek = null; bMore = false;
+  const p = V().selPos && V().selPos(s);
+  if (p) flyTo(framed(p, s.kind === 'core' ? 34 : s.kind === 'comp' ? 16 : 18), s.kind === 'core' ? 34 : s.kind === 'comp' ? 16 : 18);
+  renderDetail();
+}
+function closeSel() {
+  selected = null; peek = null; bMore = false;
+  // Closing counts as having looked around: the automatic camera comes back after the usual pause.
+  lastInput = performance.now(); if (mode === 'pinned') mode = 'driving';
+  renderDetail();
+}
+// Click, not drag: a press that moves less than 5 px opens what's under it; clicking empty space closes.
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY, e.button]; });
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downAt || downAt[2] !== 0 || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || variant !== 'plexus') return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  let s = null;
+  for (const h of ray.intersectObjects(picks, true)) { let x = h.object; while (x && !x.userData.sel) x = x.parent; if (x) { s = x.userData.sel; break; } }
+  if (s) openSel(s); else if (selected) closeSel();
+});
+// A ring round what's selected (or peeked), and the card kept next to it.
+const selRing = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTex(), color: '#9fdcff', transparent: true, depthTest: false, depthWrite: false }));
+selRing.renderOrder = 31; selRing.visible = false; scene.add(selRing);
+const vS = V3();
+function placeCard() {
+  const s = selected || peek;
+  if (panel !== 'B' || !s || !detailEl.className) return;
+  const p = V().selPos(s); if (!p) return;
+  vS.copy(p).project(camera);
+  const r = stage.getBoundingClientRect(), w = detailEl.offsetWidth, h = detailEl.offsetHeight;
+  let x = r.left + (vS.x + 1) / 2 * r.width + 34, y = r.top + (1 - vS.y) / 2 * r.height - 40;
+  if (x + w > r.right - 8) x -= w + 68;
+  y = Math.min(Math.max(y, r.top + 90), r.bottom - h - 70);
+  detailEl.style.left = x + 'px'; detailEl.style.top = y + 'px';
+}
+function selTick(t) {
+  const s = selected || peek, p = s && V().selPos ? V().selPos(s) : null;
+  selRing.visible = !!p;
+  if (p) {
+    const sz = s.kind === 'core' ? 9 : s.kind === 'comp' ? 3.4 : s.cap ? 2 : kindOf(s.e) === 'preview' ? 3.2 : kindOf(s.e) === 'staging' ? 4.6 : 5.6;
+    selRing.position.copy(p); selRing.scale.set(sz, sz, 1); selRing.material.opacity = selected ? 0.3 : 0.18 + 0.08 * Math.sin(t / 200);
+  }
+  placeCard();
+}
 
 // ================================================================ panel and events
 function renderPanel() {
   document.getElementById('feed').replaceChildren(...model.feed.slice(0, 14).map(f => { const li = document.createElement('li'); li.innerHTML = `<time>${f.t}</time>`; li.append(f.msg); return li; }));
   renderSceneFeed();
+  renderDetail();
 }
 function renderSceneFeed() {
   const now = performance.now();
@@ -935,12 +1190,12 @@ function renderSceneFeed() {
     return li;
   }));
 }
-setInterval(renderSceneFeed, 1000);
-function setVariant(v) { variant = v; const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u); rebuild(); if (mode !== 'driving') goHome(); }
-const step = d => setVariant(KEYS[(KEYS.indexOf(variant) + d + KEYS.length) % KEYS.length]);
+setInterval(() => { renderSceneFeed(); renderDetail(); }, 1000);
+function setPanel(v) { panel = v; const u = new URL(location.href); u.searchParams.set('panel', v); history.replaceState(null, '', u); peek = null; bMore = false; rebuild(); if (selected) openSel(selected); }
+const PKEYS = Object.keys(PANELS), step = d => setPanel(PKEYS[(PKEYS.indexOf(panel) + d + PKEYS.length) % PKEYS.length]);
 document.getElementById('prev').onclick = () => step(-1);
 document.getElementById('next').onclick = () => step(1);
-document.addEventListener('keydown', e => { if (e.target.closest('input, textarea, [contenteditable]')) return; if (e.key === 'ArrowLeft') step(-1); if (e.key === 'ArrowRight') step(1); });
+document.addEventListener('keydown', e => { if (e.target.closest('input, textarea, [contenteditable]')) return; if (e.key === 'ArrowLeft') step(-1); if (e.key === 'ArrowRight') step(1); if (e.key === 'Escape' && selected) closeSel(); });
 document.getElementById('togglePanel').onclick = e => { document.body.classList.toggle('nopanel'); resize(); e.target.textContent = document.body.classList.contains('nopanel') ? 'Show panel' : 'Hide panel'; };
 
 const clock = () => new Date().toTimeString().slice(0, 8);
@@ -979,8 +1234,8 @@ const ACTIONS = {
     e.activity = 'arriving'; e.bornAt = performance.now(); note(`${e.app} ${e.name} got its first image, arriving`, appOf(e), 2);
     later(6500, () => { e.activity = null; note(`${e.app} ${e.name} is serving`, appOf(e)); });
   },
-  deploy() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; note(`Deploy to ${e.app} ${e.name}`, appOf(e), 1); later(4500, () => { if (e.activity === 'deploying' && !e.stuck) { e.activity = null; note(`${e.app} ${e.name} deployed`, appOf(e)); } }); },
-  stuck() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; note(`Deploy to ${e.app} ${e.name}`, appOf(e), 1); later(2500, () => { e.stuck = true; e.why = 'migration Job failed'; note(`${e.app} ${e.name} Deploy stuck: migration Job failed`, appOf(e), 3); }); },
+  deploy() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; e.deployAt = performance.now(); note(`Deploy to ${e.app} ${e.name}`, appOf(e), 1); later(4500, () => { if (e.activity === 'deploying' && !e.stuck) { e.activity = null; note(`${e.app} ${e.name} deployed`, appOf(e)); } }); },
+  stuck() { const e = pick(idle()); if (!e) return; e.activity = 'deploying'; e.deployAt = performance.now(); note(`Deploy to ${e.app} ${e.name}`, appOf(e), 1); later(2500, () => { e.stuck = true; e.why = 'migration Job failed'; note(`${e.app} ${e.name} Deploy stuck: migration Job failed`, appOf(e), 3); }); },
   update() { const e = pick(idle()); if (!e) return; e.activity = 'updating'; note(`${e.app} ${e.name} updating (secret set)`, appOf(e), 1); later(4000, () => { if (!e.stuck) { e.activity = null; note(`${e.app} ${e.name} updated`, appOf(e)); } }); },
   degrade() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'degraded'; note(`${e.app} ${e.name} Degraded: CrashLoopBackOff`, appOf(e), 3); } },
   unknown() { const e = pick(envs().filter(v => v.cond === 'healthy' && v.activity !== 'unreleased')); if (e) { e.cond = 'unknown'; note(`${e.app} ${e.name} Unknown: pod status Unknown`, appOf(e), 2); } },
@@ -1011,7 +1266,7 @@ const ACTIONS = {
     d.cond = 'degraded'; note(`${d.app} ${d.name} Degraded: CrashLoopBackOff`, appOf(d), 3); rebuild();
     ACTIONS.arrive();
     const e = pick(idle().filter(v => v.app !== d.app)); if (!e) return;
-    e.activity = 'deploying'; e.stuck = true; e.why = 'image pull failing'; note(`${e.app} ${e.name} Deploy stuck: image pull failing`, appOf(e), 3);
+    e.activity = 'deploying'; e.deployAt = performance.now(); e.stuck = true; e.why = 'image pull failing'; note(`${e.app} ${e.name} Deploy stuck: image pull failing`, appOf(e), 3);
   },
   fit() { goHome(); },
 };
@@ -1026,6 +1281,11 @@ if (qs.get('drive') === '1') { lastInput = performance.now() + 60000; mode = 'dr
 if (qs.get('cam')) {
   const [x, y, z] = qs.get('cam').split(',').map(Number), [lx, ly, lz] = (qs.get('look') || '0,0,0').split(',').map(Number);
   controls.target.set(lx, ly, lz); camera.position.set(x, y, z); controls.update(); if (qs.get('drive') !== '1') camOn = false;
+}
+if (qs.get('open')) {
+  const [k, x, y] = qs.get('open').split(':');
+  const e = k === 'env' ? envs().find(v => v.app === x && v.name === y) : null, c = k === 'comp' ? comp(x) : null;
+  if (k === 'core' || e || c) setTimeout(() => openSel(k === 'core' ? { kind: 'core' } : e ? { kind: 'env', e } : { kind: 'comp', c }), 300);
 }
 if (qs.get('focus') === 'platform') { controls.target.set(0, 0, 0); camera.position.copy(DIR0).multiplyScalar(34); controls.update(); camOn = false; }
 </script>
