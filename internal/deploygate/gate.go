@@ -26,7 +26,9 @@
 //
 // It answers 200 with what it wrote, or an error status with
 // {"error": "<what was refused and why>"}, which iidp ci set-image prints
-// for the developer.
+// for the developer. After a commit, it asks ArgoCD to refresh the
+// Environment's ArgoCD Application (refresh.go), its one write in the
+// cluster.
 //
 // The same service also answers one read, GET /v1/status/<app>, for iidp
 // app status (status.go). That call is a developer's, authorised by their
@@ -182,7 +184,12 @@ type Gate struct {
 	// (status.go). Nil answers every status call with 503; deploys do not
 	// need it.
 	Cluster platformstate.Lister
-	// Log receives one line per call; nil discards.
+	// ArgoCD patches the Environment's ArgoCD Application after each
+	// Deploy or Promote commit, asking ArgoCD to refresh it (refresh.go).
+	// Nil skips the refresh: ArgoCD's poll still picks the commit up.
+	ArgoCD Patcher
+	// Log receives one line per call, and a warning when an ArgoCD
+	// refresh fails; nil discards.
 	Log *slog.Logger
 	// BeforePush, when set, runs between the commit and each push. Tests
 	// use it to move main.
@@ -250,6 +257,9 @@ func (g *Gate) serveDeploy(w http.ResponseWriter, r *http.Request) {
 		g.log().Warn("deploy refused", append(attrs, "status", status, "error", err.Error())...)
 		writeJSON(w, status, ErrorResponse{Error: err.Error()})
 		return
+	}
+	if !res.Unchanged {
+		g.requestRefresh(r.Context(), res.Application, res.Environment, res.Commit)
 	}
 	g.log().Info("deployed", append(attrs, "resolved", res.Environment, "commit", res.Commit, "unchanged", res.Unchanged)...)
 	writeJSON(w, http.StatusOK, res)
