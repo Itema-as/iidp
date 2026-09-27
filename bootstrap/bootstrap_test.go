@@ -472,7 +472,8 @@ func TestDeployGateComponentRendersTheGate(t *testing.T) {
 // no verb beyond get, list and watch (in fact only list), only the five
 // kinds status reads, the ArgoCD Applications only in the gate's own
 // namespace, and bound to no one but the gate
-// (docs/implementation-notes/94-app-status.md).
+// (docs/implementation-notes/94-app-status.md). Its one write, the ArgoCD
+// refresh, is its own Role (TestDeployGateOnlyWritesTheArgoCDRefresh).
 func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
 	objects := parseObjects(t, helmTemplate(t, "components/deploy-gate",
 		"--namespace", "argocd", "--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
@@ -485,6 +486,9 @@ func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
 		switch kind {
 		case "Role", "ClusterRole":
 			rbac = append(rbac, key)
+			if key == "Role/iidp-deploy-gate-refresh" {
+				continue
+			}
 			for _, r := range get[[]any](t, obj, "rules") {
 				rule := r.(object)
 				if _, ok := rule["nonResourceURLs"]; ok {
@@ -537,11 +541,66 @@ func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
 		t.Errorf("the gate may list %v, want exactly %v", granted, want)
 	}
 	sort.Strings(rbac)
-	if got := strings.Join(rbac, " "); got != "ClusterRole/iidp-deploy-gate-status ClusterRoleBinding/iidp-deploy-gate-status Role/iidp-deploy-gate-status RoleBinding/iidp-deploy-gate-status" {
+	if got := strings.Join(rbac, " "); got != "ClusterRole/iidp-deploy-gate-status ClusterRoleBinding/iidp-deploy-gate-status Role/iidp-deploy-gate-refresh Role/iidp-deploy-gate-status RoleBinding/iidp-deploy-gate-refresh RoleBinding/iidp-deploy-gate-status" {
 		t.Errorf("RBAC objects = %s", got)
 	}
 	if _, ok := objects["ServiceAccount/iidp-deploy-gate"]; !ok {
 		t.Errorf("no ServiceAccount/iidp-deploy-gate in %v", keys(objects))
+	}
+}
+
+// The gate's only write in the cluster is the refresh it asks ArgoCD for
+// after a Deploy or Promote commit: patch, on ArgoCD Applications, in a
+// Role in the gate's own namespace (argocd). Every other grant any of its
+// roles holds is list (docs/implementation-notes/114-argocd-refresh.md).
+func TestDeployGateOnlyWritesTheArgoCDRefresh(t *testing.T) {
+	objects := parseObjects(t, helmTemplate(t, "components/deploy-gate",
+		"--namespace", "argocd", "--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
+
+	var writes []string // kind/name: group/resource verb
+	for key, obj := range objects {
+		if kind := obj["kind"].(string); kind != "Role" && kind != "ClusterRole" {
+			continue
+		}
+		for _, r := range get[[]any](t, obj, "rules") {
+			rule := r.(object)
+			if _, ok := rule["resourceNames"]; ok {
+				t.Errorf("%s narrows by resourceNames: %v; the Environments' names are not known here", key, rule)
+			}
+			for _, v := range rule["verbs"].([]any) {
+				if v == "list" {
+					continue
+				}
+				for _, g := range rule["apiGroups"].([]any) {
+					for _, res := range rule["resources"].([]any) {
+						writes = append(writes, fmt.Sprintf("%s: %s/%s %s", key, g, res, v))
+					}
+				}
+			}
+		}
+	}
+	sort.Strings(writes)
+	if got, want := strings.Join(writes, "; "), "Role/iidp-deploy-gate-refresh: argoproj.io/applications patch"; got != want {
+		t.Errorf("the gate may do, beyond list: %s\nwant only: %s", got, want)
+	}
+
+	role, ok := objects["Role/iidp-deploy-gate-refresh"]
+	if !ok {
+		t.Fatalf("no Role/iidp-deploy-gate-refresh in %v", keys(objects))
+	}
+	if got, want := fmt.Sprint(get[[]any](t, role, "rules")), fmt.Sprint([]any{object{"apiGroups": []any{"argoproj.io"}, "resources": []any{"applications"}, "verbs": []any{"patch"}}}); got != want {
+		t.Errorf("Role/iidp-deploy-gate-refresh rules = %s, want only %s", got, want)
+	}
+	binding, ok := objects["RoleBinding/iidp-deploy-gate-refresh"]
+	if !ok {
+		t.Fatalf("no RoleBinding/iidp-deploy-gate-refresh in %v", keys(objects))
+	}
+	if get[string](t, binding, "roleRef", "kind") != "Role" || get[string](t, binding, "roleRef", "name") != "iidp-deploy-gate-refresh" {
+		t.Errorf("RoleBinding/iidp-deploy-gate-refresh refers to %v", binding["roleRef"])
+	}
+	subjects := get[[]any](t, binding, "subjects")
+	if len(subjects) != 1 || fmt.Sprint(subjects[0]) != fmt.Sprint(object{"kind": "ServiceAccount", "name": "iidp-deploy-gate", "namespace": "argocd"}) {
+		t.Errorf("RoleBinding/iidp-deploy-gate-refresh binds %v, want only argocd/iidp-deploy-gate", subjects)
 	}
 }
 
