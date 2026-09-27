@@ -29,8 +29,10 @@ type Lister interface {
 // has an ArgoCD Application for: one list of ArgoCD Applications by label,
 // then, in each Environment's namespace, its Deployments, their pods, its
 // Jobs and its CronJobs. The Environments come back in SortEnvironments
-// order.
+// order, interpreted as of now. It lists no Events, so a Deploy is found
+// by its tag, from Applying on.
 func Read(ctx context.Context, cluster Lister, application string) ([]Environment, error) {
+	now := time.Now()
 	var apps []ArgoCDApplication
 	if err := cluster.List(ctx, "/apis/argoproj.io/v1alpha1/namespaces/"+ArgoCDNamespace+"/applications", ApplicationLabel+"="+application, &apps); err != nil {
 		return nil, err
@@ -57,7 +59,7 @@ func Read(ctx context.Context, cluster Lister, application string) ([]Environmen
 				return nil, err
 			}
 		}
-		envs = append(envs, EnvironmentOf(application, o))
+		envs = append(envs, EnvironmentOf(application, o, now))
 	}
 	SortEnvironments(envs)
 	return envs, nil

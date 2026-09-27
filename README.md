@@ -239,6 +239,7 @@ iidp app status shop --json
 shop (Itema-as/shop)
 
 prod
+  Condition: Healthy
   Status:    Synced, Healthy, last sync Succeeded 2026-09-21 10:03 UTC
   Image:     ghcr.io/itema-as/shop:1.0.1, deployed 2026-09-21 10:00 UTC
   Pods:      1/1 ready, 0 restarts
@@ -249,7 +250,22 @@ prod
   Logs:      https://itema.grafana.net/explore?...
 ```
 
-One block per Environment, `prod`, then `staging`, then any others by name. For each: ArgoCD's sync status and health and its last sync (with ArgoCD's message when it failed); the image the Deployment runs and when the Platform repository's commit that set that tag was made; the pods ready, in total and their restarts; the last migration Job; each Scheduled task's schedule and last run; the addresses; and links to the Environment in ArgoCD and to its logs in Grafana Cloud. Times are in UTC. It shows no logs. An Environment the Platform repository has but ArgoCD has not picked up yet says so, and one with no image yet says nothing has been deployed.
+One block per Environment, `prod`, then `staging`, then any others by name. For each: its Condition and Activity (below); ArgoCD's sync status and health and its last sync (with ArgoCD's message when it failed); the image the Deployment runs and when the Platform repository's commit that set that tag was made; the pods ready, in total and their restarts; the last migration Job; each Scheduled task's schedule and last run; the addresses; and links to the Environment in ArgoCD and to its logs in Grafana Cloud. Times are in UTC. It shows no logs. An Environment the Platform repository has but ArgoCD has not picked up yet says so, and one with no image yet says nothing has been deployed.
+
+**Condition** is whether the Environment is serving, judged on its own pods:
+
+- `Healthy`.
+- `Degraded`, with why: fewer pods ready than it should have for over a minute, or at once when one is in `CrashLoopBackOff`, was `OOMKilled` or is `Unschedulable`. A new version's pods that fail while the old one still serves are not Degraded: that is a stuck Deploy.
+- `Unknown`: a pod's state is unknown (its node is lost), or ArgoCD reports its health as `Unknown`.
+
+**Activity** is what is changing, on a line of its own when something is, such as `Activity:  Deploying 1.0.2 (Promote), rolling out` or `Activity:  Deploying 1.0.2, stuck at Applying: the migration failed`:
+
+- `Arriving`, from ArgoCD picking the Environment up until its first image serves, and `Unreleased` once it has had no image for 30 minutes.
+- `Deploying <tag>`, a new image on its way, a Promote marked `(Promote)`, with the hop it is at: `accepted` by the Deploy gate, `waiting for ArgoCD`, `applying` (ArgoCD syncing, the migration included), `rolling out`, until it serves.
+- `Updating`: any other change, such as a Capability, a secret or a size.
+- `Leaving`: the Environment is being deleted, its final backup included.
+
+A change that is not landing is **stuck**, with why and, for a Deploy, the hop it stopped at: a failed migration, a failed sync, an image that cannot be pulled, a chart ArgoCD cannot render or a deletion ArgoCD cannot finish, at once; a rollout past Kubernetes' progress deadline, or ArgoCD OutOfSync for over 5 minutes with no sync started. Stuck is not Degraded: the previous version still serves. `iidp app status` finds a Deploy by its image tag, so it shows one from `applying` on. The rules are in [`docs/implementation-notes/116-condition-and-activity.md`](docs/implementation-notes/116-condition-and-activity.md).
 
 It asks the Deploy gate's service at `https://deploy.<baseDomain>` (from `platform.yaml`; if the Platform repository cannot be read it says so on stderr and asks `https://deploy.app.itma.no`), sending your `gh auth` token. The service shows the status only to someone GitHub lets read the Application's repository, the one it is bound to; nothing on your machine talks to Kubernetes ([ADR-0007](docs/adr/0007-app-status-reads-through-the-deploy-gate.md)). It fails, with the service's reason, when you cannot read that repository ("no access"), when the Application is not bound to one (run `iidp app bind`), when there is no such Application ("unknown Application"), and when the service cannot be reached or cannot read the cluster ("unavailable").
 
@@ -271,7 +287,9 @@ It asks the Deploy gate's service at `https://deploy.<baseDomain>` (from `platfo
       "tasks": [{"name": "nightly-cleanup", "schedule": "0 3 * * *", "lastScheduleTime": "...",
                  "lastRun": {"result": "succeeded", "startedAt": "...", "finishedAt": "..."}}],
       "addresses": ["https://shop.app.itma.no"],
-      "links": {"argocd": "https://argocd.platform.itma.no/applications/argocd/shop-prod", "grafana": "https://itema.grafana.net/explore?..."}
+      "links": {"argocd": "https://argocd.platform.itma.no/applications/argocd/shop-prod", "grafana": "https://itema.grafana.net/explore?..."},
+      "condition": {"state": "Healthy"},
+      "activity": null
     }
   ]
 }
@@ -281,6 +299,8 @@ It asks the Deploy gate's service at `https://deploy.<baseDomain>` (from `platfo
 - `image` is `null` before the first deploy. `deployedAt` is absent when no commit in the Platform repository set the tag, as for a Preview Environment.
 - `migration` is `null` when no migration Job has run; `tasks` is `[]` without Scheduled tasks; a task's `lastRun` is `null` before its first run. A `result` is `succeeded`, `failed` or `running`.
 - `links` is absent when `platform.yaml` names neither `argocdURL` nor `grafanaURL`, and each link when its URL is not set.
+- `condition` is absent for an Environment ArgoCD has not picked up yet. Its `state` is `Healthy`, `Degraded` or `Unknown`, and `reason` says why it is not Healthy.
+- `activity` is `null` when nothing is changing. Its `state` is `Arriving`, `Unreleased`, `Deploying`, `Updating` or `Leaving`; `stuck` says whether the change is stuck and `reason` why. For example `{"state": "Deploying", "stuck": false, "deploy": {"tag": "1.0.2", "promote": true, "hop": "RollingOut"}}`. `deploy` is there for a Deploy under way: its `tag`, `commit` (the Platform repository's, when known), `promote` and `preview` when true, `at` (when the Deploy gate accepted it, when known), `hop` (`Accepted`, `WaitingForArgoCD`, `Applying`, `RollingOut` or `Serving`), and `stuck` and `reason`.
 - Times are RFC 3339, in UTC.
 
 See [`docs/implementation-notes/94-app-status.md`](docs/implementation-notes/94-app-status.md).

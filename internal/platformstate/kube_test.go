@@ -54,6 +54,45 @@ func TestKubeListsWithTheTokenAndTheSelector(t *testing.T) {
 	}
 }
 
+// Read, the List path iidp app status takes, interprets what it lists:
+// an Environment ArgoCD has had for years with nothing deployed is
+// Unreleased, and one crash-looping is Degraded.
+func TestReadInterpretsEachEnvironment(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications":
+			_, _ = w.Write([]byte(`{"items":[
+				{"metadata":{"name":"shop-prod","creationTimestamp":"2020-01-01T00:00:00Z","labels":{"iidp.itema.no/application":"shop","iidp.itema.no/environment":"prod"}},
+				 "spec":{"destination":{"namespace":"shop-prod"}},"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}},
+				{"metadata":{"name":"shop-staging","creationTimestamp":"2020-01-01T00:00:00Z","labels":{"iidp.itema.no/application":"shop","iidp.itema.no/environment":"staging"}},
+				 "spec":{"destination":{"namespace":"shop-staging"}},"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}]}`))
+		case "/apis/apps/v1/namespaces/shop-prod/deployments":
+			_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"shop","generation":2},"spec":{"selector":{"matchLabels":{"app":"shop"}},
+				"template":{"spec":{"containers":[{"name":"shop","image":"ghcr.io/itema-as/shop:1.0.0"}]}}},
+				"status":{"observedGeneration":2,"replicas":1,"updatedReplicas":1,"conditions":[{"type":"Progressing","status":"True","reason":"NewReplicaSetAvailable"}]}}]}`))
+		case "/api/v1/namespaces/shop-prod/pods":
+			_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"shop-a","labels":{"app":"shop"}},"spec":{"containers":[{"name":"shop","image":"ghcr.io/itema-as/shop:1.0.0"}]},
+				"status":{"phase":"Running","conditions":[{"type":"Ready","status":"False"}],
+				"containerStatuses":[{"name":"shop","ready":false,"restartCount":5,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		}
+	}))
+	defer api.Close()
+
+	envs, err := platformstate.Read(context.Background(), &platformstate.Kube{BaseURL: api.URL}, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prod, staging := envs[0], envs[1]
+	if prod.Condition == nil || prod.Condition.State != platformstate.Degraded || prod.Activity != nil {
+		t.Errorf("prod = %+v, %+v; want Degraded with nothing changing", prod.Condition, prod.Activity)
+	}
+	if staging.Condition == nil || staging.Condition.State != platformstate.Healthy || staging.Activity == nil || staging.Activity.State != platformstate.Unreleased {
+		t.Errorf("staging = %+v, %+v; want Healthy and Unreleased", staging.Condition, staging.Activity)
+	}
+}
+
 func TestEnvironmentsAreSortedProdStagingThenPreviewsByNumber(t *testing.T) {
 	envs := []platformstate.Environment{{Name: "pr-10"}, {Name: "staging"}, {Name: "pr-9"}, {Name: "prod"}, {Name: "pr-9a"}}
 	platformstate.SortEnvironments(envs)

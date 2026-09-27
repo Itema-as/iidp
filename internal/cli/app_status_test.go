@@ -98,6 +98,9 @@ func shopStatus() platformstate.Status {
 				},
 				Addresses: []string{"https://shop.app.example.test", "https://www.shop.example"},
 				Links:     &platformstate.Links{ArgoCD: "https://argocd.example.test/applications/argocd/shop-prod", Grafana: "https://itema.grafana.net/explore?x"},
+				Condition: &platformstate.Condition{State: "Healthy"},
+				Activity: &platformstate.Activity{State: "Deploying", Deploy: &platformstate.Deploy{
+					Tag: "1.0.2", Commit: "c0ffee1", Promote: true, At: tp("2026-09-27T12:00:00Z"), Hop: platformstate.HopRollingOut}},
 			},
 			{
 				Name: "staging", Namespace: "shop-staging",
@@ -106,8 +109,12 @@ func shopStatus() platformstate.Status {
 				Pods:      platformstate.Pods{Ready: 0, Total: 1, Restarts: 7},
 				Tasks:     []platformstate.Task{},
 				Addresses: []string{"https://shop-staging.app.example.test"},
+				Condition: &platformstate.Condition{State: "Degraded", Reason: "shop-staging-a is in CrashLoopBackOff"},
+				Activity: &platformstate.Activity{State: "Deploying", Stuck: true, Reason: "the migration failed",
+					Deploy: &platformstate.Deploy{Tag: "sha-2", Hop: platformstate.HopApplying, Stuck: true, Reason: "the migration failed"}},
 			},
-			{Name: "pr-7", Namespace: "shop-pr-7", ArgoCD: &platformstate.ArgoCD{Application: "shop-pr-7", Sync: "Synced", Health: "Healthy"}, Tasks: []platformstate.Task{}, Addresses: []string{}},
+			{Name: "pr-7", Namespace: "shop-pr-7", ArgoCD: &platformstate.ArgoCD{Application: "shop-pr-7", Sync: "Synced", Health: "Healthy"}, Tasks: []platformstate.Task{}, Addresses: []string{},
+				Condition: &platformstate.Condition{State: "Healthy"}, Activity: &platformstate.Activity{State: "Unreleased"}},
 			{Name: "later", Tasks: []platformstate.Task{}, Addresses: []string{}},
 		},
 	}
@@ -137,6 +144,8 @@ func TestAppStatusPrintsEveryEnvironment(t *testing.T) {
 	want := `shop (Itema-as/shop)
 
 prod
+  Condition: Healthy
+  Activity:  Deploying 1.0.2 (Promote), rolling out
   Status:    Synced, Healthy, last sync Succeeded 2026-09-21 10:03 UTC
   Image:     ghcr.io/itema-as/shop:1.0.1, deployed 2026-09-21 10:00 UTC
   Pods:      1/1 ready, 1 restart
@@ -149,12 +158,16 @@ prod
   Logs:      https://itema.grafana.net/explore?x
 
 staging
+  Condition: Degraded: shop-staging-a is in CrashLoopBackOff
+  Activity:  Deploying sha-2, stuck at Applying: the migration failed
   Status:    OutOfSync, Degraded, last sync Failed 2026-09-23 10:00 UTC: one or more objects failed to apply
   Image:     ghcr.io/itema-as/shop:sha-1
   Pods:      0/1 ready, 7 restarts
   Addresses: https://shop-staging.app.example.test
 
 pr-7
+  Condition: Healthy
+  Activity:  Unreleased
   Status:    Synced, Healthy
   Image:     none yet: nothing has been deployed
 
@@ -184,10 +197,73 @@ func TestAppStatusJSONIsTheGatesAnswer(t *testing.T) {
 		t.Errorf("--json = %s\nwant %s", again, want)
 	}
 	// The documented keys, spelled as README.md spells them.
-	for _, key := range []string{`"application": "shop"`, `"repository"`, `"environments"`, `"argocd"`, `"sync": "Synced"`, `"health"`, `"operation"`, `"image"`, `"deployedAt": "2026-09-21T10:00:00Z"`, `"pods"`, `"ready"`, `"restarts"`, `"migration"`, `"tasks"`, `"lastRun"`, `"addresses"`, `"links"`, `"grafana"`} {
+	for _, key := range []string{`"application": "shop"`, `"repository"`, `"environments"`, `"argocd"`, `"sync": "Synced"`, `"health"`, `"operation"`, `"image"`, `"deployedAt": "2026-09-21T10:00:00Z"`, `"pods"`, `"ready"`, `"restarts"`, `"migration"`, `"tasks"`, `"lastRun"`, `"addresses"`, `"links"`, `"grafana"`,
+		`"condition": {`, `"state": "Degraded"`, `"reason": "shop-staging-a is in CrashLoopBackOff"`, `"activity": {`, `"stuck": true`,
+		`"deploy": {`, `"hop": "RollingOut"`, `"promote": true`, `"tag": "sha-2"`, `"activity": null`} {
 		if !strings.Contains(stdout, key) {
 			t.Errorf("--json lacks %s", key)
 		}
+	}
+}
+
+// Each Activity in words, and an Environment from a Deploy gate older than
+// Condition and Activity, which sends neither.
+func TestAppStatusPrintsConditionAndActivity(t *testing.T) {
+	envs := []platformstate.Environment{
+		{Name: "prod", Condition: &platformstate.Condition{State: "Healthy"},
+			Activity: &platformstate.Activity{State: "Updating", Stuck: true, Reason: "OutOfSync for over 5 minutes with no sync started"}},
+		{Name: "staging", Condition: &platformstate.Condition{State: "Unknown", Reason: "the state of shop-a is unknown"},
+			Activity: &platformstate.Activity{State: "Arriving", Deploy: &platformstate.Deploy{Tag: "sha-1", Hop: platformstate.HopWaitingForArgoCD}}},
+		{Name: "pr-3", Condition: &platformstate.Condition{State: "Healthy"}, Activity: &platformstate.Activity{State: "Leaving", Stuck: true, Reason: "the final backup failed"}},
+		{Name: "pr-4", Condition: &platformstate.Condition{State: "Healthy"},
+			Activity: &platformstate.Activity{State: "Deploying", Stuck: true, Reason: "the image ghcr.io/itema-as/shop:sha-9 cannot be pulled (ImagePullBackOff)",
+				Deploy: &platformstate.Deploy{Tag: "sha-9", Preview: true, Hop: platformstate.HopRollingOut, Stuck: true}}},
+		{Name: "pr-5"},
+	}
+	for i := range envs {
+		envs[i].ArgoCD = &platformstate.ArgoCD{Application: "shop-" + envs[i].Name, Sync: "Synced", Health: "Healthy"}
+		envs[i].Tasks, envs[i].Addresses = []platformstate.Task{}, []string{}
+	}
+	repo := newPlatformRepository(t, statusPlatformYAML)
+	route := newFakeStatusGate(t, func(w http.ResponseWriter, _ string) {
+		_ = json.NewEncoder(w).Encode(platformstate.Status{Application: "shop", Repository: platform.Org + "/shop", Environments: envs})
+	})
+	stdout, stderr, code := appStatus(t, repo, route, fakeTokenSource{token: "gho_dev"}, "shop")
+	if code != 0 {
+		t.Fatalf("exit code = %d\nstderr: %s", code, stderr)
+	}
+	want := `shop (Itema-as/shop)
+
+prod
+  Condition: Healthy
+  Activity:  Updating, stuck: OutOfSync for over 5 minutes with no sync started
+  Status:    Synced, Healthy
+  Image:     none yet: nothing has been deployed
+
+staging
+  Condition: Unknown: the state of shop-a is unknown
+  Activity:  Arriving sha-1, waiting for ArgoCD
+  Status:    Synced, Healthy
+  Image:     none yet: nothing has been deployed
+
+pr-3
+  Condition: Healthy
+  Activity:  Leaving, stuck: the final backup failed
+  Status:    Synced, Healthy
+  Image:     none yet: nothing has been deployed
+
+pr-4
+  Condition: Healthy
+  Activity:  Deploying sha-9, stuck at Rolling out: the image ghcr.io/itema-as/shop:sha-9 cannot be pulled (ImagePullBackOff)
+  Status:    Synced, Healthy
+  Image:     none yet: nothing has been deployed
+
+pr-5
+  Status:    Synced, Healthy
+  Image:     none yet: nothing has been deployed
+`
+	if stdout != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", stdout, want)
 	}
 }
 

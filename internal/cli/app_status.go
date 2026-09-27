@@ -30,10 +30,12 @@ func newAppStatusCommand(deps Dependencies) *cobra.Command {
 		Use:   "status <name>",
 		Short: "Show the live state of every Environment of an Application",
 		Long: "Show, for every Environment of an Application (Preview Environments\n" +
-			"included): ArgoCD's sync and health and its last sync, the image running and\n" +
-			"when it was deployed, the pods ready and their restarts, the last migration,\n" +
-			"the last run of each Scheduled task, the addresses, and links to ArgoCD and\n" +
-			"to the logs in Grafana Cloud. It shows no logs.\n\n" +
+			"included): whether it is serving (Healthy, Degraded or Unknown), what is\n" +
+			"changing (Arriving, Unreleased, Deploying, Updating or Leaving), and whether\n" +
+			"that change is stuck and why; ArgoCD's sync and health and its last sync, the\n" +
+			"image running and when it was deployed, the pods ready and their restarts,\n" +
+			"the last migration, the last run of each Scheduled task, the addresses, and\n" +
+			"links to ArgoCD and to the logs in Grafana Cloud. It shows no logs.\n\n" +
 			"It asks the Deploy gate's service at https://deploy.<baseDomain> (baseDomain\n" +
 			"from the Platform repository's platform.yaml), sending your gh auth token.\n" +
 			"The service shows the status only to someone who can read the Application's\n" +
@@ -150,6 +152,17 @@ func printStatus(out io.Writer, status platformstate.Status) {
 			line("Status", "not on the Platform yet: ArgoCD picks a new Environment up within a few minutes")
 			continue
 		}
+		// A Deploy gate older than Condition and Activity sends neither.
+		if c := env.Condition; c != nil {
+			text := c.State
+			if c.Reason != "" {
+				text += ": " + c.Reason
+			}
+			line("Condition", text)
+		}
+		if env.Activity != nil {
+			line("Activity", activityText(*env.Activity))
+		}
 		state := env.ArgoCD.Sync + ", " + env.ArgoCD.Health
 		if op := env.ArgoCD.Operation; op != nil {
 			state += ", last sync " + op.Phase
@@ -201,6 +214,45 @@ func printStatus(out io.Writer, status platformstate.Status) {
 			line("Logs", env.Links.Grafana)
 		}
 	}
+}
+
+// hopText is a Deploy's hop in words.
+var hopText = map[string]string{
+	platformstate.HopAccepted:         "accepted",
+	platformstate.HopWaitingForArgoCD: "waiting for ArgoCD",
+	platformstate.HopApplying:         "applying",
+	platformstate.HopRollingOut:       "rolling out",
+	platformstate.HopServing:          "serving",
+}
+
+// activityText is an Activity in words: what is changing, the Deploy's
+// tag and hop, and why it is stuck.
+func activityText(a platformstate.Activity) string {
+	text := a.State
+	hop := ""
+	if d := a.Deploy; d != nil {
+		text += " " + d.Tag
+		if d.Promote {
+			text += " (Promote)"
+		}
+		hop = hopText[d.Hop]
+		if hop == "" {
+			hop = d.Hop
+		}
+	}
+	switch {
+	case a.Stuck && hop != "":
+		// The hop's name, as the five hops are named: "Rolling out".
+		text += ", stuck at " + strings.ToUpper(hop[:1]) + hop[1:]
+	case a.Stuck:
+		text += ", stuck"
+	case hop != "":
+		text += ", " + hop
+	}
+	if a.Stuck && a.Reason != "" {
+		text += ": " + a.Reason
+	}
+	return text
 }
 
 func runText(run platformstate.Run) string {
