@@ -1,0 +1,58 @@
+# Argus (cmd/iidp-argus): one replica, because every browser's stream is
+# served from that process's memory (docs/implementation-notes/118-argus-backend.md).
+# It reads the cluster as its own service account, with get, list and
+# watch only (rbac.yaml), and writes nothing. It mounts no Secret and needs
+# no disk: the frontend is embedded in the binary.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iidp-argus
+  labels:
+    {{- include "argus.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: iidp-argus
+  template:
+    metadata:
+      labels:
+        {{- include "argus.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: iidp-argus
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: argus
+          image: {{ printf "%s:%s" .Values.image.repository (include "argus.tag" .) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: GOMEMLIMIT
+              value: {{ .Values.memoryTarget | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # Ready once its first look at the cluster is complete; alive as
+          # long as it serves, even when it has lost the cluster, since it
+          # then shows the last it saw and says so.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

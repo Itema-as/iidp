@@ -1,0 +1,33 @@
+# Set by the argus Application in bootstrap/templates from the Platform
+# repository's platform.yaml; the defaults are placeholders.
+
+# Argus is served at https://argus.<baseDomain>, under the Platform's
+# wildcard certificate.
+baseDomain: app.itma.no
+
+image:
+  repository: ghcr.io/itema-as/iidp-argus
+  # Empty: the version of the bootstrap release this chart is rendered from,
+  # bootstrapRevision without its leading v, so bumping the bootstrap pin
+  # bumps Argus with it.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# The bootstrap revision the Platform repository pins (a v* release tag).
+bootstrapRevision: ""
+
+# Argus aims to stay within 64 MiB (#101). The limit leaves headroom, so a
+# spike restarts Argus rather than squeezing Applications on the node; the
+# request is what it needs steadily. No CPU limit: it is idle between
+# changes, and throttling would only slow its first look at the cluster.
+# docs/implementation-notes/118-argus-backend.md has the measurements.
+resources:
+  requests:
+    cpu: 10m
+    memory: 48Mi
+  limits:
+    memory: 96Mi
+
+# The Go runtime's soft memory limit (GOMEMLIMIT): the garbage collector
+# works harder as the heap nears it, well before the container's limit.
+memoryTarget: 48MiB

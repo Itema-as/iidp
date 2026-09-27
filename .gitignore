@@ -20,6 +20,7 @@ Thumbs.db
 # Build output
 dist/
 /iidp
+/iidp-argus
 
 # OpenTofu
 infra/**/.terraform/

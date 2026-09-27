@@ -126,6 +126,7 @@ func TestCapabilitiesInOrder(t *testing.T) {
 	}
 	f.cronJobs = []obj{task("report"), task("cleanup")}
 	f.cronJobs[1]["metadata"].(obj)["deletionTimestamp"] = ago(time.Second)
+	f.ingresses = []obj{ingress("shop", "oauth2-proxy-itema-login-auth@kubernetescrd")}
 	var got []string
 	for _, c := range f.state(t).Capabilities {
 		s := c.Type + ":" + c.Name + ":" + c.Condition.State
@@ -134,8 +135,121 @@ func TestCapabilitiesInOrder(t *testing.T) {
 		}
 		got = append(got, s)
 	}
-	if strings.Join(got, " ") != "postgres:shop-db:Healthy custom-domain:www.shop.example:Healthy:Arriving scheduled-task:cleanup:Healthy:Leaving scheduled-task:report:Healthy" {
+	if strings.Join(got, " ") != "postgres:shop-db:Healthy itema-login:itema-login:Healthy custom-domain:www.shop.example:Healthy:Arriving scheduled-task:cleanup:Healthy:Leaving scheduled-task:report:Healthy" {
 		t.Errorf("Capabilities = %v", got)
+	}
+}
+
+// ingress is one of the chart's Ingresses of shop prod, with Traefik's
+// middlewares annotation when middlewares is not empty.
+func ingress(name, middlewares string) obj {
+	metadata := obj{"name": name, "namespace": "shop-prod", "creationTimestamp": ago(time.Hour),
+		"labels": obj{"iidp.itema.no/application": "shop", "iidp.itema.no/environment": "prod"}}
+	if middlewares != "" {
+		metadata["annotations"] = obj{
+			"traefik.ingress.kubernetes.io/router.entrypoints": "websecure",
+			"traefik.ingress.kubernetes.io/router.middlewares": middlewares,
+		}
+	}
+	return obj{"apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "metadata": metadata,
+		"spec": obj{"rules": []any{obj{"host": "shop.app.itma.no"}}}}
+}
+
+// Itema login is modelled from the Environment's Ingresses: the
+// application chart's annotation names the shared ForwardAuth middleware,
+// or the Environment's own copy with sign-in groups (#92). It has no state
+// of its own, and it never touches the Environment's.
+func TestItemaLoginFromIngresses(t *testing.T) {
+	leavingIngress := ingress("shop", "oauth2-proxy-itema-login-auth@kubernetescrd")
+	leavingIngress["metadata"].(obj)["deletionTimestamp"] = ago(time.Second)
+	for _, tc := range []struct {
+		name      string
+		ingresses []obj
+		want      string // "" for no Itema login; else its Activity, or "none"
+	}{
+		{"no Ingress", nil, ""},
+		{"an Ingress without middlewares", []obj{ingress("shop", "")}, ""},
+		{"another middleware only", []obj{ingress("shop", "kube-system-redirect@kubernetescrd")}, ""},
+		{"a middleware merely called itema-login", []obj{ingress("shop", "-itema-login@kubernetescrd")}, ""},
+		{"the shared middleware", []obj{ingress("shop", "oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
+		{"the Environment's own, with sign-in groups", []obj{ingress("shop", "shop-prod-shop-itema-login@kubernetescrd")}, "none"},
+		{"among other middlewares", []obj{ingress("shop", "kube-system-headers@kubernetescrd, oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
+		{"on the custom domains' Ingress too: one Capability", []obj{ingress("shop", "oauth2-proxy-itema-login-auth@kubernetescrd"), ingress("shop-http01", "oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
+		{"its only Ingress being deleted", []obj{leavingIngress}, platformstate.Leaving},
+		{"one of two being deleted", []obj{leavingIngress, ingress("shop-http01", "oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := env()
+			f.ingresses = tc.ingresses
+			got := f.state(t)
+			var logins []platformstate.Capability
+			for _, c := range got.Capabilities {
+				if c.Type == platformstate.CapabilityItemaLogin {
+					logins = append(logins, c)
+				}
+			}
+			switch {
+			case tc.want == "" && len(logins) != 0:
+				t.Fatalf("Capabilities = %+v, want no Itema login", got.Capabilities)
+			case tc.want == "":
+			case len(logins) != 1:
+				t.Fatalf("Capabilities = %+v, want one Itema login", got.Capabilities)
+			case logins[0].Name != "itema-login" || logins[0].Condition != (platformstate.Condition{State: platformstate.Healthy}):
+				t.Errorf("Itema login = %+v, want Healthy with nothing to warn of", logins[0])
+			case tc.want == "none" && logins[0].Activity != nil:
+				t.Errorf("Itema login Activity = %+v, want none", logins[0].Activity)
+			case tc.want != "none" && (logins[0].Activity == nil || logins[0].Activity.State != tc.want):
+				t.Errorf("Itema login Activity = %+v, want %s", logins[0].Activity, tc.want)
+			}
+			want{condition: "Healthy"}.check(t, got)
+		})
+	}
+}
+
+// A Scheduled task whose last run failed has the Warning flag, like
+// failing backups: never Degraded, and the Environment stays as it is.
+// The last run is the newest of its Jobs, the one iidp app status shows.
+func TestFailedScheduledTaskRunIsAWarning(t *testing.T) {
+	cronJob := obj{"metadata": obj{"name": "shop-report", "namespace": "shop-prod", "creationTimestamp": ago(24 * time.Hour),
+		"labels": obj{"app.kubernetes.io/component": "scheduled-task", "iidp.itema.no/task": "report", "iidp.itema.no/application": "shop"}},
+		"spec": obj{"schedule": "0 3 * * *"}}
+	run := func(name string, d time.Duration, condition string) obj {
+		j := job("scheduled-task", "1.0.0", d, condition)
+		j["metadata"].(obj)["name"] = name
+		j["metadata"].(obj)["labels"].(obj)["iidp.itema.no/task"] = "report"
+		return j
+	}
+	for _, tc := range []struct {
+		name    string
+		jobs    []obj
+		warning string
+	}{
+		{"no run yet", nil, ""},
+		{"the last run succeeded", []obj{run("shop-report-1", time.Hour, "Complete")}, ""},
+		{"the last run failed", []obj{run("shop-report-1", time.Hour, "Complete"), run("shop-report-2", 10*time.Minute, "Failed")}, "the last run failed at 2026-09-27 11:50 UTC"},
+		{"a failed run, then one that succeeded", []obj{run("shop-report-1", time.Hour, "Failed"), run("shop-report-2", 10*time.Minute, "Complete")}, ""},
+		{"a failed run, then one still running", []obj{run("shop-report-1", time.Hour, "Failed"), run("shop-report-2", time.Minute, "")}, ""},
+		{"another task's failed run", []obj{func() obj {
+			j := run("shop-other-1", time.Minute, "Failed")
+			j["metadata"].(obj)["labels"].(obj)["iidp.itema.no/task"] = "other"
+			return j
+		}()}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := env()
+			f.cronJobs = []obj{cronJob}
+			f.jobs = tc.jobs
+			got := f.state(t)
+			task := capability(t, got, platformstate.CapabilityScheduledTask)
+			if task.Name != "report" || task.Condition.State != platformstate.Healthy || task.Condition.Warning != tc.warning || task.Activity != nil {
+				t.Errorf("Scheduled task = %+v, want Healthy with Warning %q", task, tc.warning)
+			}
+			// The Environment is untouched, and its Tasks agree on the run.
+			want{condition: "Healthy"}.check(t, got)
+			if len(got.Tasks) != 1 || (tc.warning != "") != (got.Tasks[0].LastRun != nil && got.Tasks[0].LastRun.Result == platformstate.RunFailed) {
+				t.Errorf("Tasks = %+v, want the last run failed exactly when the Warning is up", got.Tasks)
+			}
+		})
 	}
 }
 
@@ -153,8 +267,16 @@ func TestPlatformComponents(t *testing.T) {
 	decodeInto(t, notReadyPod("argocd-application-controller-0", "v3.5.3", 2*time.Minute), &statefulNotReady)
 	statefulNotReady.Metadata.Labels = map[string]string{"app.kubernetes.io/name": "argocd-application-controller"}
 
-	var outOfSync, failed platformstate.ArgoCDApplication
+	var outOfSync, failed, degraded platformstate.ArgoCDApplication
 	decodeInto(t, argoApp("argocd", "OutOfSync", "Healthy"), &outOfSync)
+	decodeInto(t, argoApp("cert-manager", "Synced", "Degraded"), &degraded)
+	node := func(status string, d time.Duration) platformstate.Node {
+		var n platformstate.Node
+		decodeInto(t, obj{"metadata": obj{"name": "iidp", "creationTimestamp": ago(30 * 24 * time.Hour)},
+			"status": obj{"conditions": []any{cond("MemoryPressure", "False", "KubeletHasSufficientMemory", "", time.Hour),
+				cond("Ready", status, "KubeletNotReady", "container runtime is down", d)}}}, &n)
+		return n
+	}
 	aMinuteAgo := now.Add(-time.Minute)
 	failedObj := argoApp("argocd", "OutOfSync", "Healthy")
 	syncing(failedObj, c2, "Failed", "ComparisonError", time.Minute)
@@ -176,6 +298,14 @@ func TestPlatformComponents(t *testing.T) {
 		{"a StatefulSet's pod not ready for 2 minutes: Degraded", platformstate.ComponentObjects{Name: "argocd", ArgoCD: &app, Deployments: []platformstate.Deployment{served}, Pods: []platformstate.Pod{ready, statefulNotReady}}, platformstate.Degraded, "", false},
 		{"Traefik, rolling out: a Condition only", platformstate.ComponentObjects{Name: "traefik", Deployments: []platformstate.Deployment{rolling}, Pods: []platformstate.Pod{ready}}, platformstate.Healthy, "", false},
 		{"Traefik, crash-looping: Degraded", platformstate.ComponentObjects{Name: "traefik", Deployments: []platformstate.Deployment{served}, Pods: []platformstate.Pod{crashing}}, platformstate.Degraded, "", false},
+		{"k3s, its node ready", platformstate.ComponentObjects{Name: "k3s", Nodes: []platformstate.Node{node("True", time.Hour)}, Deployments: []platformstate.Deployment{served}, Pods: []platformstate.Pod{ready}}, platformstate.Healthy, "", false},
+		{"k3s, its node not ready for 30 s", platformstate.ComponentObjects{Name: "k3s", Nodes: []platformstate.Node{node("False", 30*time.Second)}}, platformstate.Healthy, "", false},
+		{"k3s, its node not ready for 2 minutes: Degraded", platformstate.ComponentObjects{Name: "k3s", Nodes: []platformstate.Node{node("False", 2*time.Minute)}}, platformstate.Degraded, "", false},
+		{"k3s, its node no longer reporting: Unknown", platformstate.ComponentObjects{Name: "k3s", Nodes: []platformstate.Node{node("Unknown", time.Minute)}}, platformstate.Unknown, "", false},
+		{"k3s, a pod crash-looping on a ready node: Degraded", platformstate.ComponentObjects{Name: "k3s", Nodes: []platformstate.Node{node("True", time.Hour)}, Deployments: []platformstate.Deployment{served}, Pods: []platformstate.Pod{crashing}}, platformstate.Degraded, "", false},
+		{"managed by ArgoCD, none of its workload in view, ArgoCD says Degraded", platformstate.ComponentObjects{Name: "cert-manager", ArgoCD: &degraded}, platformstate.Degraded, "", false},
+		{"managed by ArgoCD, its pods in view and ready, ArgoCD says Degraded: its pods decide", platformstate.ComponentObjects{Name: "cert-manager", ArgoCD: &degraded, Deployments: []platformstate.Deployment{served}, Pods: []platformstate.Pod{ready}}, platformstate.Healthy, "", false},
+		{"managed by ArgoCD, none of its workload in view, ArgoCD says Healthy", platformstate.ComponentObjects{Name: "cert-manager", ArgoCD: &app}, platformstate.Healthy, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := platformstate.ComponentOf(tc.o, now)
@@ -243,5 +373,25 @@ func TestObjectsDecodeTheAPIsJSON(t *testing.T) {
 	}
 	if c := certs[0]; c.Spec.DNSNames[0] != "www.shop.example" || c.Status.NotAfter == nil || c.Status.LastFailureTime == nil || c.Status.Conditions[0].Status != "True" {
 		t.Errorf("certificate = %+v", c)
+	}
+
+	var ingresses []platformstate.Ingress
+	if err := json.Unmarshal([]byte(`[{"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"name":"shop","namespace":"shop-prod",
+		"annotations":{"traefik.ingress.kubernetes.io/router.middlewares":"oauth2-proxy-itema-login-auth@kubernetescrd"}},
+		"spec":{"rules":[{"host":"shop.app.itma.no"}]}}]`), &ingresses); err != nil {
+		t.Fatal(err)
+	}
+	if a := ingresses[0].Metadata.Annotations[platformstate.MiddlewaresAnnotation]; a != "oauth2-proxy-itema-login-auth@kubernetescrd" {
+		t.Errorf("Ingress middlewares = %q", a)
+	}
+
+	var nodes []platformstate.Node
+	if err := json.Unmarshal([]byte(`[{"apiVersion":"v1","kind":"Node","metadata":{"name":"iidp"},
+		"status":{"conditions":[{"type":"Ready","status":"True","reason":"KubeletReady","lastHeartbeatTime":"2026-09-27T11:59:00Z","lastTransitionTime":"2026-09-01T00:00:00Z"}],
+		"nodeInfo":{"kubeletVersion":"v1.36.4+k3s1"}}}]`), &nodes); err != nil {
+		t.Fatal(err)
+	}
+	if n := nodes[0]; n.Metadata.Name != "iidp" || n.Status.Conditions[0].Type != "Ready" || n.Status.Conditions[0].Status != "True" {
+		t.Errorf("node = %+v", n)
 	}
 }

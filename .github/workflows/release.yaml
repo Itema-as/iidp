@@ -16,8 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # The Deploy gate's image, ghcr.io/<owner>/iidp-deploy-gate
-      # (.goreleaser.yaml, dockers_v2).
+      # The Deploy gate's and Argus's images, ghcr.io/<owner>/iidp-deploy-gate
+      # and ghcr.io/<owner>/iidp-argus (.goreleaser.yaml, dockers_v2).
       packages: write
     steps:
       - uses: actions/checkout@v7
@@ -45,6 +45,8 @@ jobs:
           # Turns on the Deploy gate's image in .goreleaser.yaml, now that
           # this job can push it (docs/implementation-notes/60-deploy-gate.md).
           IIDP_PUBLISH_DEPLOY_GATE: "true"
+          # And Argus's (docs/implementation-notes/118-argus-backend.md).
+          IIDP_PUBLISH_ARGUS: "true"
 
   # Publishes chart/application to GHCR as an OCI artifact with the tag's
   # version, so the Platform repository can pin the same version the CLI

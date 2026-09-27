@@ -1,0 +1,5 @@
+apiVersion: v2
+name: argus
+description: Argus - the live, read-only view of the Platform, served at argus.<baseDomain> behind Itema login. Rendered by the argus Application of the bootstrap when argus.enabled is true.
+type: application
+version: 0.1.0

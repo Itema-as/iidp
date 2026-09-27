@@ -178,10 +178,12 @@ type Objects struct {
 	Pods        []Pod
 	Jobs        []Job
 	CronJobs    []CronJob
-	// PostgresClusters and Certificates are its Capabilities' objects:
-	// the CNPG Cluster and its custom domains' certificates.
+	// PostgresClusters, Certificates and Ingresses are its Capabilities'
+	// objects: the CNPG Cluster, its custom domains' certificates, and
+	// the Ingresses whose annotation puts it behind Itema login.
 	PostgresClusters []PostgresCluster
 	Certificates     []Certificate
+	Ingresses        []Ingress
 	// Events are Events about its ArgoCD Application: the Deploy gate's
 	// DeployAccepted and DeployRefused among them. Without them a Deploy
 	// is found by its tag, from Applying on.
@@ -229,26 +231,18 @@ func environmentOf(application string, o Objects, now time.Time) (Environment, [
 	}
 
 	var migrations []Job
-	byTask := map[string][]Job{}
 	for _, job := range o.Jobs {
-		switch job.Metadata.Labels[ComponentLabel] {
-		case ComponentMigration:
+		if job.Metadata.Labels[ComponentLabel] == ComponentMigration {
 			migrations = append(migrations, job)
-		case ComponentScheduledTask:
-			if name := job.Metadata.Labels[TaskLabel]; name != "" {
-				byTask[name] = append(byTask[name], job)
-			}
 		}
 	}
 	env.Migration = newestRun(migrations)
 
+	byTask := jobsByTask(o.Jobs)
 	for _, cronJob := range o.CronJobs {
-		if cronJob.Metadata.Labels[ComponentLabel] != ComponentScheduledTask {
+		name, ok := taskName(cronJob)
+		if !ok {
 			continue
-		}
-		name := cronJob.Metadata.Labels[TaskLabel]
-		if name == "" {
-			name = cronJob.Metadata.Name
 		}
 		env.Tasks = append(env.Tasks, Task{
 			Name:             name,
@@ -262,6 +256,33 @@ func environmentOf(application string, o Objects, now time.Time) (Environment, [
 	condition, activity, deploys := environmentState(env.Name, o, now)
 	env.Condition, env.Activity = &condition, activity
 	return env, deploys
+}
+
+// jobsByTask are the chart's Scheduled task Jobs by the task's name.
+func jobsByTask(jobs []Job) map[string][]Job {
+	out := map[string][]Job{}
+	for _, job := range jobs {
+		if job.Metadata.Labels[ComponentLabel] != ComponentScheduledTask {
+			continue
+		}
+		if name := job.Metadata.Labels[TaskLabel]; name != "" {
+			out[name] = append(out[name], job)
+		}
+	}
+	return out
+}
+
+// taskName is the name of the Scheduled task a CronJob runs: its task
+// label, or else its own name. It is false for a CronJob that is not a
+// Scheduled task's.
+func taskName(cronJob CronJob) (string, bool) {
+	if cronJob.Metadata.Labels[ComponentLabel] != ComponentScheduledTask {
+		return "", false
+	}
+	if name := cronJob.Metadata.Labels[TaskLabel]; name != "" {
+		return name, true
+	}
+	return cronJob.Metadata.Name, true
 }
 
 // SortEnvironments orders Environments prod, staging, then the rest by

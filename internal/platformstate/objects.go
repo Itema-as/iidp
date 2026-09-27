@@ -5,9 +5,10 @@ import "time"
 // The Kubernetes objects platformstate reads, cut down to the fields it
 // uses. The JSON names are the API's own (argoproj.io/v1alpha1
 // Application, apps/v1 Deployment, v1 Pod, batch/v1 Job and CronJob,
-// postgresql.cnpg.io/v1 Cluster, cert-manager.io/v1 Certificate and
-// events.k8s.io/v1 Event), so the same structs decode a list response
-// from the API server or an unstructured object's content.
+// postgresql.cnpg.io/v1 Cluster, cert-manager.io/v1 Certificate,
+// networking.k8s.io/v1 Ingress, v1 Node and events.k8s.io/v1 Event), so
+// the same structs decode a list response from the API server or an
+// unstructured object's content.
 
 // ObjectMeta is the part of metadata used here.
 type ObjectMeta struct {
@@ -236,6 +237,22 @@ type Certificate struct {
 		NotAfter *time.Time `json:"notAfter"`
 		// LastFailureTime is set while the latest issuance has failed.
 		LastFailureTime *time.Time `json:"lastFailureTime"`
+	} `json:"status"`
+}
+
+// Ingress is a networking.k8s.io/v1 Ingress. Only its metadata is read:
+// the annotation that puts it behind Itema login.
+type Ingress struct {
+	Metadata ObjectMeta `json:"metadata"`
+}
+
+// Node is a v1 Node, which k3s runs everything on.
+type Node struct {
+	Metadata ObjectMeta `json:"metadata"`
+	Status   struct {
+		// Conditions include Ready, which the kubelet keeps; Unknown when
+		// it has stopped reporting.
+		Conditions []KubeCondition `json:"conditions"`
 	} `json:"status"`
 }
 
