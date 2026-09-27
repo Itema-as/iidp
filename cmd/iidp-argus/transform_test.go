@@ -144,10 +144,10 @@ func TestTransformsKeepOnlyWhatTheModelReads(t *testing.T) {
 		// timestamps.
 		{"events-warnings", fat(obj{"apiVersion": "v1", "kind": "Event",
 			"metadata": obj{"name": "shop-a.17f", "namespace": "shop-prod", "creationTimestamp": "2026-09-28T09:00:00Z"},
-			"reason": "BackOff", "message": "Back-off restarting failed container shop", "type": "Warning", "count": 12,
+			"reason":   "BackOff", "message": "Back-off restarting failed container shop", "type": "Warning", "count": 12,
 			"eventTime": nil, "firstTimestamp": "2026-09-28T08:00:00Z", "lastTimestamp": "2026-09-28T09:00:00Z",
 			"involvedObject": obj{"apiVersion": "v1", "kind": "Pod", "namespace": "shop-prod", "name": "shop-a", "fieldPath": "spec.containers{shop}"},
-			"source": obj{"component": "kubelet", "host": "iidp"}}),
+			"source":         obj{"component": "kubelet", "host": "iidp"}}),
 			platformstate.Event{}, `"note":"Back-off restarting failed container shop","type":"Warning","eventTime":null,"deprecatedLastTimestamp":"2026-09-28T09:00:00Z","regarding":{"kind":"Pod","namespace":"shop-prod","name":"shop-a"}`,
 			[]string{"firstTimestamp", "count", "fieldPath", "kubelet", "last-applied", "managedFields"}},
 		{"nodes", fat(obj{"apiVersion": "v1", "kind": "Node",
