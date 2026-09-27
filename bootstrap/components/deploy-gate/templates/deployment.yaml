@@ -3,9 +3,12 @@
 # mounts that Secret as a volume: a pod can only mount a Secret of its own
 # namespace, and a volume needs no Kubernetes API access
 # (docs/implementation-notes/60-deploy-gate.md). Its service account token
-# is for iidp app status alone, which lists ArgoCD Applications and the
-# Environments' workloads and nothing else (rbac.yaml,
-# docs/implementation-notes/94-app-status.md). It mounts the GHCR pull
+# is for iidp app status, which lists ArgoCD Applications and the
+# Environments' workloads (docs/implementation-notes/94-app-status.md), and
+# for the gate's two writes in argocd: the ArgoCD refresh after each commit
+# (docs/implementation-notes/114-argocd-refresh.md) and an Event for each
+# Deploy (docs/implementation-notes/117-deploy-events.md). Nothing else
+# (rbac.yaml). It mounts the GHCR pull
 # token's Secret the same way, to check that an image tag exists before
 # committing it (docs/implementation-notes/61-image-check.md). The files are
 # read on every call, so a rotated key or token is picked up without a

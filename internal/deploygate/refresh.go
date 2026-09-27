@@ -19,8 +19,9 @@ import (
 // its 3-minute poll of the Platform repository. It sets the annotation
 // argocd.argoproj.io/refresh: normal, as ArgoCD's own webhook handler
 // does; ArgoCD's controller then compares against the branch's newest
-// commit and removes the annotation. This is the gate's one write in the
-// cluster (docs/adr/0007-app-status-reads-through-the-deploy-gate.md,
+// commit and removes the annotation. This is one of the gate's two writes
+// in the cluster; the other is its Deploy Events (events.go)
+// (docs/adr/0007-app-status-reads-through-the-deploy-gate.md,
 // docs/implementation-notes/114-argocd-refresh.md).
 
 // RefreshAnnotation is the annotation that asks ArgoCD to refresh an

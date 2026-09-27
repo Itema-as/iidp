@@ -472,8 +472,9 @@ func TestDeployGateComponentRendersTheGate(t *testing.T) {
 // no verb beyond get, list and watch (in fact only list), only the five
 // kinds status reads, the ArgoCD Applications only in the gate's own
 // namespace, and bound to no one but the gate
-// (docs/implementation-notes/94-app-status.md). Its one write, the ArgoCD
-// refresh, is its own Role (TestDeployGateOnlyWritesTheArgoCDRefresh).
+// (docs/implementation-notes/94-app-status.md). Its two writes, the ArgoCD
+// refresh and the Deploy Events, are Roles of their own
+// (TestDeployGateOnlyWritesTheRefreshAndEventsInArgoCD).
 func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
 	objects := parseObjects(t, helmTemplate(t, "components/deploy-gate",
 		"--namespace", "argocd", "--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
@@ -486,8 +487,8 @@ func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
 		switch kind {
 		case "Role", "ClusterRole":
 			rbac = append(rbac, key)
-			if key == "Role/iidp-deploy-gate-refresh" {
-				continue
+			if key == "Role/iidp-deploy-gate-refresh" || key == "Role/iidp-deploy-gate-events" {
+				continue // TestDeployGateOnlyWritesTheRefreshAndEventsInArgoCD
 			}
 			for _, r := range get[[]any](t, obj, "rules") {
 				rule := r.(object)
@@ -541,7 +542,7 @@ func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
 		t.Errorf("the gate may list %v, want exactly %v", granted, want)
 	}
 	sort.Strings(rbac)
-	if got := strings.Join(rbac, " "); got != "ClusterRole/iidp-deploy-gate-status ClusterRoleBinding/iidp-deploy-gate-status Role/iidp-deploy-gate-refresh Role/iidp-deploy-gate-status RoleBinding/iidp-deploy-gate-refresh RoleBinding/iidp-deploy-gate-status" {
+	if got := strings.Join(rbac, " "); got != "ClusterRole/iidp-deploy-gate-status ClusterRoleBinding/iidp-deploy-gate-status Role/iidp-deploy-gate-events Role/iidp-deploy-gate-refresh Role/iidp-deploy-gate-status RoleBinding/iidp-deploy-gate-events RoleBinding/iidp-deploy-gate-refresh RoleBinding/iidp-deploy-gate-status" {
 		t.Errorf("RBAC objects = %s", got)
 	}
 	if _, ok := objects["ServiceAccount/iidp-deploy-gate"]; !ok {
@@ -549,23 +550,36 @@ func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
 	}
 }
 
-// The gate's only write in the cluster is the refresh it asks ArgoCD for
-// after a Deploy or Promote commit: patch, on ArgoCD Applications, in a
-// Role in the gate's own namespace (argocd). Every other grant any of its
-// roles holds is list (docs/implementation-notes/114-argocd-refresh.md).
-func TestDeployGateOnlyWritesTheArgoCDRefresh(t *testing.T) {
+// The gate's two writes in the cluster, and nothing else beyond list: the
+// refresh it asks ArgoCD for after a Deploy or Promote commit (patch on
+// ArgoCD Applications, docs/implementation-notes/114-argocd-refresh.md),
+// and an Event for each Deploy or Promote it accepts or refuses (create on
+// events.k8s.io events, docs/implementation-notes/117-deploy-events.md).
+// Each is a Role of its own in the gate's namespace, argocd, bound to the
+// gate's service account alone.
+func TestDeployGateOnlyWritesTheRefreshAndEventsInArgoCD(t *testing.T) {
 	objects := parseObjects(t, helmTemplate(t, "components/deploy-gate",
 		"--namespace", "argocd", "--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
 
-	var writes []string // kind/name: group/resource verb
+	var writes []string // kind/name in namespace: group/resource verb
 	for key, obj := range objects {
-		if kind := obj["kind"].(string); kind != "Role" && kind != "ClusterRole" {
+		kind := obj["kind"].(string)
+		if kind != "Role" && kind != "ClusterRole" {
 			continue
+		}
+		// A Role with no namespace of its own is in the release's, argocd;
+		// a ClusterRole's grants are everywhere.
+		namespace, _ := get[object](t, obj, "metadata")["namespace"].(string)
+		switch {
+		case kind == "ClusterRole":
+			namespace = "every namespace"
+		case namespace == "":
+			namespace = "argocd"
 		}
 		for _, r := range get[[]any](t, obj, "rules") {
 			rule := r.(object)
 			if _, ok := rule["resourceNames"]; ok {
-				t.Errorf("%s narrows by resourceNames: %v; the Environments' names are not known here", key, rule)
+				t.Errorf("%s narrows by resourceNames: %v; the Environments' names are not known here, and create cannot use them", key, rule)
 			}
 			for _, v := range rule["verbs"].([]any) {
 				if v == "list" {
@@ -573,34 +587,43 @@ func TestDeployGateOnlyWritesTheArgoCDRefresh(t *testing.T) {
 				}
 				for _, g := range rule["apiGroups"].([]any) {
 					for _, res := range rule["resources"].([]any) {
-						writes = append(writes, fmt.Sprintf("%s: %s/%s %s", key, g, res, v))
+						writes = append(writes, fmt.Sprintf("%s in %s: %s/%s %s", key, namespace, g, res, v))
 					}
 				}
 			}
 		}
 	}
 	sort.Strings(writes)
-	if got, want := strings.Join(writes, "; "), "Role/iidp-deploy-gate-refresh: argoproj.io/applications patch"; got != want {
+	want := "Role/iidp-deploy-gate-events in argocd: events.k8s.io/events create; Role/iidp-deploy-gate-refresh in argocd: argoproj.io/applications patch"
+	if got := strings.Join(writes, "; "); got != want {
 		t.Errorf("the gate may do, beyond list: %s\nwant only: %s", got, want)
 	}
 
-	role, ok := objects["Role/iidp-deploy-gate-refresh"]
-	if !ok {
-		t.Fatalf("no Role/iidp-deploy-gate-refresh in %v", keys(objects))
-	}
-	if got, want := fmt.Sprint(get[[]any](t, role, "rules")), fmt.Sprint([]any{object{"apiGroups": []any{"argoproj.io"}, "resources": []any{"applications"}, "verbs": []any{"patch"}}}); got != want {
-		t.Errorf("Role/iidp-deploy-gate-refresh rules = %s, want only %s", got, want)
-	}
-	binding, ok := objects["RoleBinding/iidp-deploy-gate-refresh"]
-	if !ok {
-		t.Fatalf("no RoleBinding/iidp-deploy-gate-refresh in %v", keys(objects))
-	}
-	if get[string](t, binding, "roleRef", "kind") != "Role" || get[string](t, binding, "roleRef", "name") != "iidp-deploy-gate-refresh" {
-		t.Errorf("RoleBinding/iidp-deploy-gate-refresh refers to %v", binding["roleRef"])
-	}
-	subjects := get[[]any](t, binding, "subjects")
-	if len(subjects) != 1 || fmt.Sprint(subjects[0]) != fmt.Sprint(object{"kind": "ServiceAccount", "name": "iidp-deploy-gate", "namespace": "argocd"}) {
-		t.Errorf("RoleBinding/iidp-deploy-gate-refresh binds %v, want only argocd/iidp-deploy-gate", subjects)
+	for name, rule := range map[string]object{
+		"iidp-deploy-gate-refresh": {"apiGroups": []any{"argoproj.io"}, "resources": []any{"applications"}, "verbs": []any{"patch"}},
+		"iidp-deploy-gate-events":  {"apiGroups": []any{"events.k8s.io"}, "resources": []any{"events"}, "verbs": []any{"create"}},
+	} {
+		role, ok := objects["Role/"+name]
+		if !ok {
+			t.Fatalf("no Role/%s in %v", name, keys(objects))
+		}
+		if got, want := fmt.Sprint(get[[]any](t, role, "rules")), fmt.Sprint([]any{rule}); got != want {
+			t.Errorf("Role/%s rules = %s, want only %s", name, got, want)
+		}
+		binding, ok := objects["RoleBinding/"+name]
+		if !ok {
+			t.Fatalf("no RoleBinding/%s in %v", name, keys(objects))
+		}
+		if ns, _ := get[object](t, binding, "metadata")["namespace"].(string); ns != "" && ns != "argocd" {
+			t.Errorf("RoleBinding/%s is in %q, want argocd", name, ns)
+		}
+		if get[string](t, binding, "roleRef", "kind") != "Role" || get[string](t, binding, "roleRef", "name") != name {
+			t.Errorf("RoleBinding/%s refers to %v", name, binding["roleRef"])
+		}
+		subjects := get[[]any](t, binding, "subjects")
+		if len(subjects) != 1 || fmt.Sprint(subjects[0]) != fmt.Sprint(object{"kind": "ServiceAccount", "name": "iidp-deploy-gate", "namespace": "argocd"}) {
+			t.Errorf("RoleBinding/%s binds %v, want only argocd/iidp-deploy-gate", name, subjects)
+		}
 	}
 }
 
