@@ -26,9 +26,11 @@
 //
 // It answers 200 with what it wrote, or an error status with
 // {"error": "<what was refused and why>"}, which iidp ci set-image prints
-// for the developer. After a commit, it asks ArgoCD to refresh the
-// Environment's ArgoCD Application (refresh.go), its one write in the
-// cluster.
+// for the developer. It makes two writes in the cluster: after a commit,
+// it asks ArgoCD to refresh the Environment's ArgoCD Application
+// (refresh.go); and every Deploy or Promote it accepts, and every one it
+// refuses once it knows which Environment it was for, is recorded as a
+// Kubernetes Event (events.go).
 //
 // The same service also answers one read, GET /v1/status/<app>, for iidp
 // app status (status.go). That call is a developer's, authorised by their
@@ -188,8 +190,11 @@ type Gate struct {
 	// Deploy or Promote commit, asking ArgoCD to refresh it (refresh.go).
 	// Nil skips the refresh: ArgoCD's poll still picks the commit up.
 	ArgoCD Patcher
-	// Log receives one line per call, and a warning when an ArgoCD
-	// refresh fails; nil discards.
+	// Events records each accepted or refused Deploy as a Kubernetes Event
+	// (events.go). Nil records nothing; deploys do not need it.
+	Events EventSink
+	// Log receives one line per call, a warning when an ArgoCD refresh
+	// fails, and one when an Event cannot be recorded; nil discards.
 	Log *slog.Logger
 	// BeforePush, when set, runs between the commit and each push. Tests
 	// use it to move main.
@@ -201,6 +206,8 @@ type Gate struct {
 	// botMu guards bot, the App's commit identity, looked up once.
 	botMu sync.Mutex
 	bot   git.Identity
+	// events counts the Events being recorded in the background.
+	events sync.WaitGroup
 }
 
 // Handler serves the gate's routes.
@@ -236,7 +243,8 @@ func (g *Gate) log() *slog.Logger {
 
 func (g *Gate) serveDeploy(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	res, claims, req, err := g.deploy(r)
+	var environment string
+	res, claims, req, err := g.deploy(r, &environment)
 	attrs := []any{
 		"repository", claims.Repository, "repository_id", claims.RepositoryID.String(),
 		"ref", claims.Ref, "actor", claims.Actor,
@@ -256,6 +264,7 @@ func (g *Gate) serveDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 		g.log().Warn("deploy refused", append(attrs, "status", status, "error", err.Error())...)
 		writeJSON(w, status, ErrorResponse{Error: err.Error()})
+		g.recordRefused(claims, req, environment, status, err)
 		return
 	}
 	if !res.Unchanged {
@@ -263,12 +272,17 @@ func (g *Gate) serveDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	g.log().Info("deployed", append(attrs, "resolved", res.Environment, "commit", res.Commit, "unchanged", res.Unchanged)...)
 	writeJSON(w, http.StatusOK, res)
+	g.recordAccepted(claims, req, res)
 }
 
 // tagPattern is the grammar of an OCI image tag.
 var tagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 
-func (g *Gate) deploy(r *http.Request) (Response, oidc.Claims, Request, error) {
+// deploy sets environment to the Environment the call is for once the
+// caller is known to be the Application's own repository and the
+// Environment is decided, so a refusal after that can be recorded against
+// it.
+func (g *Gate) deploy(r *http.Request, environment *string) (Response, oidc.Claims, Request, error) {
 	var req Request
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || strings.TrimSpace(token) == "" {
@@ -356,11 +370,13 @@ func (g *Gate) deploy(r *http.Request) (Response, oidc.Claims, Request, error) {
 		Tasks:            req.Tasks,
 		Body:             body,
 		Environment: func(dir string) (string, error) {
-			environment, err := g.authorize(dir, claims, req, promote)
+			*environment = ""
+			target, err := g.authorize(dir, claims, req, promote)
 			if err != nil {
 				return "", err
 			}
-			return environment, g.checkImage(r.Context(), dir, req.Application, environment, req.Tag)
+			*environment = target
+			return target, g.checkImage(r.Context(), dir, req.Application, target, req.Tag)
 		},
 	})
 	if err != nil {

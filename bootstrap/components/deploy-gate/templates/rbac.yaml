@@ -2,8 +2,10 @@
 # (docs/adr/0007-app-status-reads-through-the-deploy-gate.md,
 # docs/implementation-notes/94-app-status.md). Only list: every read is one
 # list call narrowed by label, and nothing is fetched by name or watched.
-# No Secrets, ConfigMaps or pods/log. The deploy path uses none of it; its
-# one grant, the ArgoCD refresh, is the separate -refresh Role below.
+# No Secrets, ConfigMaps or pods/log. The deploy path uses none of it. Its
+# two writes, both in argocd, are separate Roles below: the ArgoCD refresh
+# (iidp-deploy-gate-refresh, patch on applications) and the Deploy Events
+# (iidp-deploy-gate-events, create on events.k8s.io events).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -40,7 +42,7 @@ subjects:
     name: iidp-deploy-gate
     namespace: {{ .Release.Namespace }}
 ---
-# The gate's one write in the cluster: after a Deploy or Promote commit it
+# The gate's first write in the cluster: after a Deploy or Promote commit it
 # sets argocd.argoproj.io/refresh on the Environment's ArgoCD Application,
 # so ArgoCD looks at the new commit now rather than at its next poll
 # (docs/implementation-notes/114-argocd-refresh.md). Only patch, only
@@ -102,6 +104,39 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: iidp-deploy-gate-status
+subjects:
+  - kind: ServiceAccount
+    name: iidp-deploy-gate
+    namespace: {{ .Release.Namespace }}
+---
+# The gate's second write: an Event for each Deploy or Promote it accepts
+# or refuses (internal/deploygate/events.go,
+# docs/implementation-notes/117-deploy-events.md). An Event lives in the
+# namespace of the object it points at, the Environment's ArgoCD
+# Application, so this is create on events.k8s.io events in this
+# namespace, argocd, only: no get, update, patch or delete, and no core v1
+# events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: iidp-deploy-gate-events
+  labels:
+    {{- include "deploy-gate.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: iidp-deploy-gate-events
+  labels:
+    {{- include "deploy-gate.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: iidp-deploy-gate-events
 subjects:
   - kind: ServiceAccount
     name: iidp-deploy-gate

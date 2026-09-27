@@ -4,7 +4,8 @@
 // reading the cluster as the pod's service account
 // (internal/platformstate). As the same service account, it asks ArgoCD to
 // refresh an Environment's ArgoCD Application after each Deploy or
-// Promote commit. The bootstrap chart runs it
+// Promote commit, and records each Deploy it accepts or refuses as a
+// Kubernetes Event. The bootstrap chart runs it
 // (bootstrap/components/deploy-gate); it is configured entirely from the
 // environment:
 //
@@ -105,14 +106,16 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	// The read endpoint for iidp app status reads the cluster as the pod's
-	// service account, and a deploy asks ArgoCD to refresh as it. Without
-	// one, deploys still work but wait for ArgoCD's poll, and status calls
-	// are answered 503.
+	// service account, a deploy asks ArgoCD to refresh as it, and deploys
+	// are recorded as Events with it. Without one, deploys still work, but
+	// wait for ArgoCD's poll and go unrecorded, and status calls are
+	// answered 503.
 	if cluster, err := platformstate.InCluster(); err != nil {
-		log.Warn("iidp app status is unavailable and deploys wait for ArgoCD's poll: the gate cannot reach the cluster", "error", err.Error())
+		log.Warn("iidp app status is unavailable, deploys wait for ArgoCD's poll and are not recorded as Events: the gate cannot reach the cluster", "error", err.Error())
 	} else {
 		gate.Cluster = cluster
 		gate.ArgoCD = deploygate.KubePatcher{Kube: cluster}
+		gate.Events = &deploygate.KubeEvents{Kube: cluster}
 	}
 
 	server := &http.Server{
@@ -141,5 +144,7 @@ func run(log *slog.Logger) error {
 	if err := server.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// The last answers' Events, each bounded by its own timeout.
+	gate.WaitForEvents()
 	return nil
 }

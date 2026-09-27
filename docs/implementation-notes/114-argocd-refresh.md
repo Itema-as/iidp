@@ -47,7 +47,7 @@ A merge patch sets the one annotation and leaves every other one alone. It carri
 
 What a misused grant allows is patching any ArgoCD Application in `argocd`, the Platform's own included, which could change what it deploys. The gate's code only ever sends the refresh annotation. The gate also already holds the App key, which can rewrite the Platform repository those Applications come from, so the grant adds little to what a compromised gate could already do. ADR-0007's note records the change: the service is no longer read-only in the cluster.
 
-`TestDeployGateOnlyWritesTheArgoCDRefresh` renders the component. It fails if any Role or ClusterRole grants anything beyond `list` other than this one `patch`, if the refresh Role holds any rule but that one (a `list` included), if anything narrows by `resourceNames`, or if the refresh binding names another role or subject. `TestDeployGateReadsTheClusterWithListOnly` still holds the status roles to `list` on their five kinds, and now expects the two new RBAC objects.
+`TestDeployGateOnlyWritesTheRefreshAndEventsInArgoCD` renders the component. It fails if any Role or ClusterRole grants anything beyond `list` other than this one `patch` and #117's `create` on `events.k8s.io` events, if the refresh Role holds any rule but that one (a `list` included), if anything narrows by `resourceNames`, or if the refresh binding names another role or subject. `TestDeployGateReadsTheClusterWithListOnly` still holds the status roles to `list` on their five kinds, and now expects the two new RBAC objects.
 
 ## A refresh asked for during another one
 

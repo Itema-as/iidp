@@ -444,6 +444,7 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 	}
 
 	// Refused calls committed nothing; the deploy committed one change.
+	var head string
 	err := cluster.ReadRepository(ctx, "iidp-platform", func(dir string) error {
 		git := func(args ...string) string {
 			out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
@@ -464,11 +465,13 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 		if got := git("show", "--stat", "--format=", "HEAD"); !strings.Contains(got, "applications/brochure/prod/values.yaml") || !strings.Contains(got, "1 file changed") {
 			t.Errorf("the deploy changed:\n%s\nwant only brochure's prod values.yaml", got)
 		}
+		head = git("rev-parse", "HEAD")
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkDeployEvents(ctx, t, cluster, head)
 
 	// brochure-prod syncs the new image. A refresh saves waiting out
 	// ArgoCD's three-minute poll; this is a plain sync, not the deletion
@@ -481,6 +484,70 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 	}
 	if err := cluster.WaitForApplications(ctx, map[string]Expectation{"brochure-prod": Healthy}, 3*time.Minute); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// checkDeployEvents proves #117 against a real API server: its validation of
+// the gate's Events, and the gate's RBAC to create them in argocd. Of
+// testDeployGate's four calls, the missing tag and the deploy have
+// brochure-prod behind them and are recorded; the other repository's call
+// and the feature branch's are not.
+func checkDeployEvents(ctx context.Context, t *testing.T, cluster *Cluster, commit string) {
+	t.Helper()
+	type event struct {
+		Metadata struct {
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+		Reason              string `json:"reason"`
+		ReportingController string `json:"reportingController"`
+		Regarding           struct {
+			Name string `json:"name"`
+		} `json:"regarding"`
+		Note string `json:"note"`
+	}
+	var events []event
+	err := pollUntil(ctx, 30*time.Second, 2*time.Second, func() (bool, error) {
+		// ArgoCD records Events on its Applications too; only the gate's
+		// count.
+		out, err := cluster.Kubectl(ctx, "get", "events.events.k8s.io", "-n", "argocd", "-o", "json")
+		if err != nil {
+			return false, fmt.Errorf("listing the Events in argocd: %w\n%s", err, out)
+		}
+		var list struct {
+			Items []event `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(out), &list); err != nil {
+			return false, err
+		}
+		events = nil
+		for _, e := range list.Items {
+			if e.ReportingController == "iidp.itema.no/deploy-gate" {
+				events = append(events, e)
+			}
+		}
+		return len(events) >= 2, nil
+	}, func() error {
+		return fmt.Errorf("the Deploy gate recorded %d Events in argocd, want 2: %+v; its logs say why (kubectl -n argocd logs deploy/iidp-deploy-gate)", len(events), events)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := map[string]event{}
+	for _, e := range events {
+		if e.Regarding.Name != "brochure-prod" {
+			t.Errorf("an Event regards %q, want only brochure-prod: %+v", e.Regarding.Name, e)
+		}
+		if _, dup := reasons[e.Reason]; dup {
+			t.Errorf("more than one %s Event: %+v", e.Reason, events)
+		}
+		reasons[e.Reason] = e
+	}
+	refused, accepted := reasons["DeployRefused"], reasons["DeployAccepted"]
+	if refused.Metadata.Annotations["iidp.itema.no/refusal"] != "422" || !strings.Contains(refused.Note, "iidp-e2e-no-such-tag does not exist") {
+		t.Errorf("the refused Deploy's Event = %+v, want DeployRefused with 422 and the reason", refused)
+	}
+	if accepted.Metadata.Annotations["iidp.itema.no/commit"] != commit || accepted.Metadata.Annotations["iidp.itema.no/tag"] != "1.30-alpine" || accepted.Note != "Deploy brochure prod 1.30-alpine accepted" {
+		t.Errorf("the Deploy's Event = %+v, want DeployAccepted naming commit %s", accepted, commit)
 	}
 }
 
