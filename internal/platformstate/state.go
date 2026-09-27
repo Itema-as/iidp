@@ -4,9 +4,15 @@
 // of each Scheduled task, and the addresses. The Deploy gate's service
 // answers iidp app status with it
 // (docs/adr/0007-app-status-reads-through-the-deploy-gate.md,
-// docs/implementation-notes/94-app-status.md), and Argus (#97) is meant to
-// build on the same types, so the two never disagree about what the
-// cluster says.
+// docs/implementation-notes/94-app-status.md), and Argus (#97) builds on
+// the same types, so the two never disagree about what the cluster says.
+//
+// On top of what the cluster says, it interprets it (condition.go,
+// deploy.go, capability.go): each Environment's Condition and Activity,
+// where a Deploy is among its five hops, the Capabilities' own Condition
+// and Warning flag, and the Platform components'. That layer is pure: it
+// takes objects and the time now and returns domain objects
+// (docs/implementation-notes/116-condition-and-activity.md).
 //
 // Environments are found by label, not from a fixed list: every ArgoCD
 // Application in the argocd namespace labelled
@@ -34,11 +40,13 @@ const (
 	TaskLabel        = "iidp.itema.no/task"
 	ComponentLabel   = "app.kubernetes.io/component"
 
-	// ComponentMigration and ComponentScheduledTask are the chart's
-	// component labels for the migration Job and the Scheduled task
-	// CronJobs and their Jobs.
+	// ComponentMigration, ComponentScheduledTask and ComponentFinalBackup
+	// are the chart's component labels for the migration Job, the
+	// Scheduled task CronJobs and their Jobs, and the final backup's
+	// PreDelete Job.
 	ComponentMigration     = "migration"
 	ComponentScheduledTask = "scheduled-task"
+	ComponentFinalBackup   = "final-backup"
 
 	// ArgoCDNamespace is where every ArgoCD Application lives.
 	ArgoCDNamespace = "argocd"
@@ -80,6 +88,13 @@ type Environment struct {
 	// Links are where to look further: ArgoCD and the logs in Grafana
 	// Cloud. Absent when platform.yaml names neither.
 	Links *Links `json:"links,omitempty"`
+	// Condition is whether it is serving: Healthy, Degraded or Unknown,
+	// judged on its own workload. Absent when ArgoCD has no Application
+	// for it yet, and from a Deploy gate older than this field.
+	Condition *Condition `json:"condition,omitempty"`
+	// Activity is what is changing: Arriving, Unreleased, Deploying,
+	// Updating or Leaving, progressing or stuck. Null when nothing is.
+	Activity *Activity `json:"activity"`
 }
 
 // ArgoCD is an Environment's ArgoCD Application.
@@ -163,6 +178,17 @@ type Objects struct {
 	Pods        []Pod
 	Jobs        []Job
 	CronJobs    []CronJob
+	// PostgresClusters and Certificates are its Capabilities' objects:
+	// the CNPG Cluster and its custom domains' certificates.
+	PostgresClusters []PostgresCluster
+	Certificates     []Certificate
+	// Events are Events about its ArgoCD Application: the Deploy gate's
+	// DeployAccepted and DeployRefused among them. Without them a Deploy
+	// is found by its tag, from Applying on.
+	Events []Event
+	// OutOfSyncSince is when the caller saw its ArgoCD Application turn
+	// OutOfSync. A watch knows it; a List does not, and leaves it nil.
+	OutOfSyncSince *time.Time
 }
 
 // EnvironmentName is the Environment an ArgoCD Application of application
@@ -179,8 +205,14 @@ func EnvironmentName(application string, app ArgoCDApplication) string {
 }
 
 // EnvironmentOf is the state of one Environment of application from its
-// objects. It reads nothing itself.
-func EnvironmentOf(application string, o Objects) Environment {
+// objects at now, its Condition and Activity included. It reads nothing
+// itself.
+func EnvironmentOf(application string, o Objects, now time.Time) Environment {
+	env, _ := environmentOf(application, o, now)
+	return env
+}
+
+func environmentOf(application string, o Objects, now time.Time) (Environment, []Deploy) {
 	env := Environment{
 		Name:      EnvironmentName(application, o.ArgoCD),
 		Namespace: o.ArgoCD.Spec.Destination.Namespace,
@@ -226,12 +258,20 @@ func EnvironmentOf(application string, o Objects) Environment {
 		})
 	}
 	sort.Slice(env.Tasks, func(i, j int) bool { return env.Tasks[i].Name < env.Tasks[j].Name })
-	return env
+
+	condition, activity, deploys := environmentState(env.Name, o, now)
+	env.Condition, env.Activity = &condition, activity
+	return env, deploys
 }
 
 // SortEnvironments orders Environments prod, staging, then the rest by
 // name, with a number in a name compared as a number (pr-9 before pr-10).
 func SortEnvironments(envs []Environment) {
+	sort.SliceStable(envs, func(i, j int) bool { return environmentLess(envs[i].Name, envs[j].Name) })
+}
+
+// environmentLess orders Environment names as SortEnvironments does.
+func environmentLess(a, b string) bool {
 	rank := func(name string) int {
 		switch name {
 		case "prod":
@@ -241,13 +281,10 @@ func SortEnvironments(envs []Environment) {
 		}
 		return 2
 	}
-	sort.SliceStable(envs, func(i, j int) bool {
-		a, b := envs[i].Name, envs[j].Name
-		if rank(a) != rank(b) {
-			return rank(a) < rank(b)
-		}
-		return naturalLess(a, b)
-	})
+	if rank(a) != rank(b) {
+		return rank(a) < rank(b)
+	}
+	return naturalLess(a, b)
 }
 
 func naturalLess(a, b string) bool {
