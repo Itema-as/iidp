@@ -56,8 +56,10 @@ type Snapshot struct {
 	RestartedAt time.Time `json:"restartedAt"`
 	// Ready is false until the first look at the cluster is complete;
 	// until then the snapshot may be missing objects.
-	Ready        bool                        `json:"ready"`
-	Cluster      ClusterState                `json:"cluster"`
+	Ready   bool         `json:"ready"`
+	Cluster ClusterState `json:"cluster"`
+	// Platform is where the card links out to.
+	Platform     Platform                    `json:"platform"`
 	Applications []platformstate.Application `json:"applications"`
 	Components   []platformstate.Component   `json:"components"`
 	// Feed is the recent notes, oldest first.
@@ -79,6 +81,11 @@ type Store struct {
 	// outOfSyncSince is when an ArgoCD Application (namespace/name) was
 	// seen turning OutOfSync.
 	outOfSyncSince map[string]time.Time
+	// deployedAt is when each Environment's image was deployed, as far
+	// as this run has seen it (platform.go).
+	deployedAt map[string]time.Time
+	// platform is where the card links out to.
+	platform Platform
 
 	apps          map[string]platformstate.Application
 	appJSON       map[string][]byte
@@ -108,6 +115,7 @@ func NewStore(now func() time.Time, log *slog.Logger) *Store {
 		log:            log,
 		objects:        map[string]map[string]any{},
 		outOfSyncSince: map[string]time.Time{},
+		deployedAt:     map[string]time.Time{},
 		apps:           map[string]platformstate.Application{},
 		appJSON:        map[string][]byte{},
 		components:     map[string]platformstate.Component{},
@@ -183,6 +191,15 @@ func (s *Store) poke() {
 	}
 }
 
+// SetPlatform sets where the card links out to. Every snapshot carries
+// it, and every Environment gets its links from it.
+func (s *Store) SetPlatform(p Platform) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.platform = p
+	s.poke()
+}
+
 // SetReachable records whether the API server answered the probe.
 func (s *Store) SetReachable(ok bool) {
 	s.mu.Lock()
@@ -226,7 +243,7 @@ func (s *Store) Recompute() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	apps, components := build(gather(s.objects), s.outOfSyncSince, now)
+	apps, components := build(gather(s.objects), s.outOfSyncSince, s.platform, s.deployedAt, now)
 	quiet := !s.seeded
 	var frames [][]byte
 	var notes []Note
@@ -366,7 +383,7 @@ func (s *Store) Snapshot() Snapshot {
 func (s *Store) snapshotLocked() Snapshot {
 	now := s.now()
 	snap := Snapshot{
-		At: now, RestartedAt: s.restartedAt, Ready: s.seeded, Cluster: s.cluster,
+		At: now, RestartedAt: s.restartedAt, Ready: s.seeded, Cluster: s.cluster, Platform: s.platform,
 		Applications: []platformstate.Application{}, Components: []platformstate.Component{},
 		Feed: s.feed.list(now),
 	}

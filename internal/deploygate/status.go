@@ -2,11 +2,8 @@ package deploygate
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -126,7 +123,7 @@ func (g *Gate) status(ctx context.Context, r *http.Request, application string) 
 	}
 	if cfg, err := platformrepo.LoadConfig(dir); err == nil {
 		for i := range envs {
-			envs[i].Links = links(cfg, envs[i])
+			envs[i].Links = platformstate.LinksOf(cfg.ArgoCDURL, cfg.GrafanaURL, envs[i])
 		}
 	}
 	return platformstate.Status{Application: application, Repository: readable.FullName, Environments: envs}, binding.RepositoryID, nil
@@ -187,30 +184,4 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// grafanaLogsDatasource is the uid Grafana Cloud gives a stack's own Loki
-// data source.
-const grafanaLogsDatasource = "grafanacloud-logs"
-
-// links are where to look at env: its ArgoCD Application, and its logs in
-// Grafana Cloud's Explore, by namespace.
-func links(cfg platformrepo.Config, env platformstate.Environment) *platformstate.Links {
-	var l platformstate.Links
-	if cfg.ArgoCDURL != "" && env.ArgoCD != nil {
-		l.ArgoCD = strings.TrimSuffix(cfg.ArgoCDURL, "/") + "/applications/" + platformstate.ArgoCDNamespace + "/" + url.PathEscape(env.ArgoCD.Application)
-	}
-	if cfg.GrafanaURL != "" && env.Namespace != "" {
-		datasource := map[string]string{"type": "loki", "uid": grafanaLogsDatasource}
-		panes, _ := json.Marshal(map[string]any{"logs": map[string]any{
-			"datasource": grafanaLogsDatasource,
-			"queries":    []any{map[string]any{"refId": "A", "expr": fmt.Sprintf("{namespace=%q}", env.Namespace), "datasource": datasource}},
-			"range":      map[string]string{"from": "now-1h", "to": "now"},
-		}})
-		l.Grafana = strings.TrimSuffix(cfg.GrafanaURL, "/") + "/explore?schemaVersion=1&panes=" + url.QueryEscape(string(panes))
-	}
-	if l == (platformstate.Links{}) {
-		return nil
-	}
-	return &l
 }

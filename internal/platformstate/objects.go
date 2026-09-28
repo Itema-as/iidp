@@ -253,6 +253,11 @@ type Node struct {
 		// Conditions include Ready, which the kubelet keeps; Unknown when
 		// it has stopped reporting.
 		Conditions []KubeCondition `json:"conditions"`
+		NodeInfo   struct {
+			// KubeletVersion is the node's Kubernetes, such as
+			// v1.36.4+k3s1: k3s's version.
+			KubeletVersion string `json:"kubeletVersion"`
+		} `json:"nodeInfo"`
 	} `json:"status"`
 }
 

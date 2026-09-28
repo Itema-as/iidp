@@ -1,8 +1,12 @@
 package argus
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"io/fs"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -43,12 +47,46 @@ func (s *Server) Handler() http.Handler {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	files := http.FileServerFS(s.Web)
+	csp := ContentSecurityPolicy(s.Web)
 	mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", csp)
 		files.ServeHTTP(w, r)
 	}))
 	return mux
+}
+
+// importMap finds index.html's inline import maps: the only inline
+// scripts the page has.
+var importMap = regexp.MustCompile(`(?s)<script type="importmap">(.*?)</script>`)
+
+// ContentSecurityPolicy is the policy the web directory is served with.
+// The page loads nothing from outside Argus (#119): scripts, styles,
+// images, fonts and the stream all come from Argus itself, and the
+// browser refuses anything else. Its one inline script, the import map,
+// is allowed by its hash, read from web's index.html. The card's links
+// are navigations, which the policy does not govern.
+func ContentSecurityPolicy(web fs.FS) string {
+	scripts := []string{"'self'"}
+	if index, err := fs.ReadFile(web, "index.html"); err == nil {
+		for _, m := range importMap.FindAllSubmatch(index, -1) {
+			sum := sha256.Sum256(m[1])
+			scripts = append(scripts, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+		}
+	}
+	return strings.Join([]string{
+		"default-src 'self'",
+		"script-src " + strings.Join(scripts, " "),
+		"style-src 'self'",
+		"img-src 'self'",
+		"font-src 'self'",
+		"connect-src 'self'",
+		"object-src 'none'",
+		"base-uri 'none'",
+		"form-action 'none'",
+		"frame-ancestors 'none'",
+	}, "; ")
 }
 
 // events is the stream: the snapshot, then every message as it happens,

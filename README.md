@@ -305,6 +305,39 @@ It asks the Deploy gate's service at `https://deploy.<baseDomain>` (from `platfo
 
 See [`docs/implementation-notes/94-app-status.md`](docs/implementation-notes/94-app-status.md).
 
+### Argus
+
+Argus is the Platform, live, in the browser: every Application, Environment and Capability, what each is doing, and each Deploy on its way. Open `https://argus.<baseDomain>` (`https://argus.app.itma.no` on Itema's Platform) and sign in with Itema login; anyone in the tenant can. It is read-only: nothing on the page changes the Platform, and it shows no logs and no environment variables.
+
+**The map** is a particle network. The Platform is the bright core in the middle (ArgoCD), with its components on a ring round it. Each Application sits on an orbit of its own, joined to the core by one filament, with its Environments as clouds round its hub: `prod`, `staging`, and up to three Preview Environments, with the rest counted. Capabilities sit on their Environment: Postgres a small blue cluster, Itema login a turning gold halo, a custom domain a blue point with its host, a Scheduled task a mote circling like a clock hand. Left-drag rotates, right-drag pans, and scrolling zooms.
+
+What each look means, with the same Condition and Activity as `iidp app status` (above):
+
+| Look | Meaning |
+|---|---|
+| A calm cloud | Healthy, nothing changing |
+| An amber wave through the cloud | Deploying or Updating |
+| Particles streaming out of the core into a new cloud, tagged `+ NEW` | Arriving; rings spread from a whole new Application, tagged `+ NEW · SETTING UP` |
+| A thin broken ring with nothing inside, tagged `UNRELEASED` | An Environment that has had no image for 30 minutes |
+| Orange, frozen behind a hard ring, tagged `■ STUCK` | A change that is not landing: stuck at a hop, or a failed sync |
+| Red, broken into pieces throwing sparks, tagged `✕ DEGRADED` | Degraded: users are affected |
+| A dotted outline with the last known cloud faint inside, tagged `? UNKNOWN` | Unknown |
+| Grey, fading and dispersing, tagged `LEAVING` | Being deleted; a database's final backup travels home along the filament as blue beads |
+| A blinking amber flag such as `! BACKUPS` | A Capability's Warning: backups or archiving failing, a certificate expiring, a Scheduled task's last run failed |
+| The whole map grey and dim under a banner | Argus has lost the cluster, or the page has lost Argus: this is the last known state, not a live one |
+
+The loud looks have a shape and a marked tag as well as a colour, so they can be told apart without colour.
+
+**Deploys** travel the filaments as beads, one hop at a time: out of the Deploy gate into the core (accepted), pulsing at the core's edge (waiting for ArgoCD), along the filament to the hub, holding there through a migration (applying), into the cloud (rolling out), and one flash when it serves. A stuck Deploy freezes orange where it stopped. A refused Deploy is a red bead that fizzles out at the core. A Promote lifts off the staging cloud into the core and then out to prod. A Deploy overtaken by the next one dims and merges into it.
+
+**The camera** follows changes on its own while nobody touches the map: loudest first (Degraded and stuck, then arrivals, departures, Unknown and Promotes, then Deploys and the rest), lingering on each, with one wide shot when several happen at once. It holds still the moment you drag, scroll or pin a card, and comes back 12 seconds later; meanwhile loud and normal changes off screen show as markers at the edge, which fly there when clicked. The chip at the top left says what the camera is doing, and a click turns it off or on. It starts off for someone whose system asks for reduced motion, and particles then move less.
+
+**The feed** in the corner lists the latest six changes, newest at the bottom, with a dot for how loud each was (red, cyan, amber, and grey for something that finished) and its age. Clicking one flies there; pointing at one rings its place on the map.
+
+**The card**: pointing at an Environment, a Capability, a component or the core shows a peek with its state, the Deploy's hops and three key facts. Clicking pins it, with links to the address, ArgoCD, Grafana and, for a Deploy, its commit in the Platform repository; "All details" adds the image and when it was deployed, pods, addresses, the last migration and backups, Scheduled tasks, ArgoCD's sync, the Capabilities and the latest feed entries. A Capability opens its Environment's card with the Capability outlined. Esc, the close button or a click on empty space closes it.
+
+When the Itema login session expires, the page reloads itself to sign in again, at most once a minute (backing off). `?fps=1` shows the frame rate. How it is built, and how it was checked, is in [`docs/implementation-notes/119-argus-frontend.md`](docs/implementation-notes/119-argus-frontend.md).
+
 ## Repository layout
 
 The layout follows [`docs/design.md`](docs/design.md). Not every directory exists yet; each ticket adds its part (this skeleton adds `cmd/iidp` and `internal/cli`, `internal/platform`, `internal/version`):
@@ -312,6 +345,7 @@ The layout follows [`docs/design.md`](docs/design.md). Not every directory exist
 ```
 cmd/iidp/            CLI entrypoint
 cmd/iidp-deploy-gate/  the Deploy gate, the service CI deploys through (image only)
+cmd/iidp-argus/      Argus, the live view of the Platform (image only); web/ is its page
 internal/            wizard, github, platformrepo, render, deploygate, oidc
 chart/application/   the generic Helm chart
 infra/               OpenTofu for the node, cloud-init for k3s
@@ -335,6 +369,14 @@ go test ./...
 ```
 
 CI runs the same on every pull request and on pushes to `main`, and validates `.goreleaser.yaml`.
+
+Argus's page is plain ES modules with no build step. To look at it without a cluster, serve it from a synthetic Platform that changes on a script, then open `http://127.0.0.1:8090`:
+
+```sh
+IIDP_ARGUS_DEMO=127.0.0.1:8090 go test ./cmd/iidp-argus -run TestDemo -timeout 0
+```
+
+`IIDP_ARGUS_DEMO_SCENARIO=still` shows every state without moving, `thirty` has 30 Environments for measuring the frame rate with `?fps=1`, and `IIDP_ARGUS_DEMO_WEB=$PWD/cmd/iidp-argus/web` serves the page from disk, so an edit needs only a reload. The logic modules have tests that run with Node 22.12 or later, which CI does not install: `node --test cmd/iidp-argus/webtest`.
 
 ## Releasing
 

@@ -34,6 +34,17 @@ spec:
           env:
             - name: GOMEMLIMIT
               value: {{ .Values.memoryTarget | quote }}
+            # Where the detail card links out to; each may be empty.
+            - name: IIDP_ARGUS_ARGOCD_URL
+              value: {{ .Values.links.argocdURL | quote }}
+            - name: IIDP_ARGUS_GRAFANA_URL
+              value: {{ .Values.links.grafanaURL | quote }}
+            - name: IIDP_ARGUS_PLATFORM_REPOSITORY
+              value: {{ .Values.links.platformRepository | quote }}
+            - name: IIDP_ARGUS_BOOTSTRAP_REPOSITORY
+              value: {{ .Values.links.bootstrapRepository | quote }}
+            - name: IIDP_ARGUS_BOOTSTRAP_REVISION
+              value: {{ .Values.bootstrapRevision | quote }}
           ports:
             - name: http
               containerPort: 8080

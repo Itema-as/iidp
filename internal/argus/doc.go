@@ -44,6 +44,8 @@
 //	  "ready": true,                         false until the first look
 //	                                         at the cluster is complete
 //	  "cluster": {"state": "connected"},     ClusterState, below
+//	  "platform": Platform,                  where the card links out
+//	                                         to, below
 //	  "applications": [Application...],      by name
 //	  "components": [Component...],          by name
 //	  "feed": [Note...]                      oldest first
@@ -70,6 +72,8 @@
 //	      "tasks": [{"name": "report", "schedule": "0 3 * * *",
 //	                 "lastScheduleTime": ..., "lastRun": {...}}],
 //	      "addresses": ["https://shop.app.itma.no"],
+//	      "links": {"argocd": "https://argocd.../applications/argocd/shop-prod",
+//	                "grafana": "https://itema.grafana.net/explore?..."},
 //	      "condition": {"state": "Healthy"},
 //	      "activity": null,
 //	      "capabilities": [Capability...],
@@ -80,8 +84,13 @@
 //
 // image, migration and a task's lastRun are null when there is none;
 // argocd is never null here, since Argus knows an Environment only by its
-// ArgoCD Application. image.deployedAt and links, which iidp app status
-// reads from the Platform repository, are absent: Argus does not read it.
+// ArgoCD Application. links are iidp app status's (platformstate.LinksOf),
+// from the Platform's argocdURL and grafanaURL; absent when neither is
+// set. image.deployedAt, which iidp app status reads from the Platform
+// repository, Argus cannot read there: it is when ArgoCD synced the
+// Deploy that brought the tag (the history entry of the Deploy gate's
+// commit, else the gate's acceptance), as far as this run of Argus has
+// seen it, and absent otherwise (platform.go).
 //
 // condition is whether it serves:
 //
@@ -144,13 +153,27 @@
 // platformstate.Component, one Platform component:
 //
 //	{"name": "argocd",
+//	 "version": "v3.1.8",               absent when it cannot be told
 //	 "condition": {"state": "Healthy" | "Degraded" | "Unknown", ...},
 //	 "activity": {"state": "Updating", "stuck": ...} | null}
 //
 // The components are the ArgoCD Applications platform-components manages
 // (argocd, cert-manager, deploy-gate, oauth2-proxy, argus and the rest),
 // plus traefik and k3s, which ArgoCD does not manage and so never have an
-// Activity. k3s is the node and whatever else runs in kube-system.
+// Activity. k3s is the node and whatever else runs in kube-system. The
+// version is k3s's kubelet version, or the tag of the image named after
+// the component, or the one tag all its images share.
+//
+// # Platform
+//
+// Where the browser's detail card links out to, from the bootstrap's
+// values; each field is absent when not set:
+//
+//	{"argocdURL": "https://argocd.app.itma.no",
+//	 "grafanaURL": "https://itema.grafana.net",
+//	 "platformRepository": "https://github.com/Itema-as/iidp-platform",
+//	 "bootstrapRepository": "https://github.com/Itema-as/iidp",
+//	 "bootstrapRevision": "v1.2.3"}
 //
 // # Note
 //
