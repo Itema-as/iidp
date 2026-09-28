@@ -60,6 +60,10 @@ _Avoid_: release, ship, roll out
 Deploying to `prod` the image `staging` already runs, triggered by a `v*` tag on the Application repository. Nothing is rebuilt.
 _Avoid_: release, publish
 
+**Argus**:
+The live view of the Platform in the browser: every Application, Environment and Capability, what each is doing, and each Deploy on its way. It only reads.
+_Avoid_: dashboard, Platform map
+
 **Deploy gate**:
 The part of the Platform through which an Application repository's CI deploys and promotes. It checks that the caller is that Application's own repository and may deploy that Environment, then records the new image in the Platform repository. It is the only way an Application repository's CI can change the Platform.
 _Avoid_: deploy service, deploy API, write-back

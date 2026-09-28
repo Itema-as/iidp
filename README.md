@@ -336,7 +336,7 @@ The loud looks have a shape and a marked tag as well as a colour, so they can be
 
 **The card**: pointing at an Environment, a Capability, a component or the core shows a peek with its state, the Deploy's hops and three key facts. Clicking pins it, with links to the address, ArgoCD, Grafana and, for a Deploy, its commit in the Platform repository; "All details" adds the image and when it was deployed, pods, addresses, the last migration and backups, Scheduled tasks, ArgoCD's sync, the Capabilities and the latest feed entries. A Capability opens its Environment's card with the Capability outlined. Esc, the close button or a click on empty space closes it.
 
-When the Itema login session expires, the page reloads itself to sign in again, at most once a minute (backing off). `?fps=1` shows the frame rate. How it is built, and how it was checked, is in [`docs/implementation-notes/119-argus-frontend.md`](docs/implementation-notes/119-argus-frontend.md).
+When the Itema login session expires, the page reloads itself to sign in again, at most once a minute (backing off). `?fps=1` shows the frame rate. How it is built, and how it was checked, is in [`docs/implementation-notes/119-argus-frontend.md`](docs/implementation-notes/119-argus-frontend.md). Why it is a component of its own that watches Kubernetes with client-go is [ADR-0008](docs/adr/0008-argus-watches-kubernetes-with-client-go.md).
 
 ## Repository layout
 
