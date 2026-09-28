@@ -5,7 +5,7 @@
 # bootstrap reads is listed so the file doubles as documentation.
 #
 # platform.yaml also carries fields only the CLI reads (chartVersion,
-# githubApp, agePublicKey, grafanaURL, backupsBucket). Helm ignores them.
+# githubApp, agePublicKey, backupsBucket). Helm ignores them.
 
 # The domain Applications are served under: <application>.<baseDomain>. The
 # wildcard certificate covers *.<baseDomain> and <baseDomain>.
@@ -20,6 +20,11 @@ cloudflareZone: itma.no
 # Where ArgoCD is served. Its host must be covered by the wildcard
 # certificate, so keep it under baseDomain.
 argocdURL: https://argocd.app.itma.no
+
+# The Grafana Cloud stack, such as https://itema.grafana.net. The CLI
+# prints it; Argus's detail card links an Environment's logs there. Empty
+# leaves those links out.
+grafanaURL: ""
 
 # ACME registration for the wildcard certificate. The email is optional for
 # Let's Encrypt but is where expiry warnings go. Point server at

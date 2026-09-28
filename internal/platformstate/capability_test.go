@@ -322,6 +322,42 @@ func TestPlatformComponents(t *testing.T) {
 	}
 }
 
+// A component's version is the tag of the image named after it, else the
+// one tag all its images share; k3s's is the node's.
+func TestComponentVersion(t *testing.T) {
+	withImages := func(images ...string) *platformstate.ArgoCDApplication {
+		var app platformstate.ArgoCDApplication
+		app.Status.Summary.Images = images
+		return &app
+	}
+	var node platformstate.Node
+	node.Status.NodeInfo.KubeletVersion = "v1.36.4+k3s1"
+	var traefik platformstate.Deployment
+	decodeInto(t, obj{"spec": obj{"template": obj{"spec": obj{"containers": []any{
+		obj{"name": "traefik", "image": "rancher/mirrored-library-traefik:3.3.6"}}}}}}, &traefik)
+
+	for _, tc := range []struct {
+		name string
+		o    platformstate.ComponentObjects
+		want string
+	}{
+		{"ArgoCD's own image among others", platformstate.ComponentObjects{Name: "argocd", ArgoCD: withImages("redis:7.4.2-alpine", "quay.io/argoproj/argocd:v3.1.8", "ghcr.io/dexidp/dex:v2.43.0")}, "v3.1.8"},
+		{"the Deploy gate, by its iidp- name, pinned by digest too", platformstate.ComponentObjects{Name: "deploy-gate", ArgoCD: withImages("ghcr.io/itema-as/iidp-deploy-gate:1.4.0@sha256:0123")}, "1.4.0"},
+		{"cert-manager's three images", platformstate.ComponentObjects{Name: "cert-manager", ArgoCD: withImages("quay.io/jetstack/cert-manager-cainjector:v1.18.2", "quay.io/jetstack/cert-manager-controller:v1.18.2")}, "v1.18.2"},
+		{"none named after it, one tag between them", platformstate.ComponentObjects{Name: "cnpg-barman-cloud", ArgoCD: withImages("ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.6.0", "ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.6.0")}, "v0.6.0"},
+		{"none named after it, several tags: unknown", platformstate.ComponentObjects{Name: "monitoring", ArgoCD: withImages("grafana/alloy:v1.10.0", "ghcr.io/jimmidyson/configmap-reload:v0.15.0")}, ""},
+		{"no images at all", platformstate.ComponentObjects{Name: "guardrails", ArgoCD: withImages()}, ""},
+		{"Traefik, from its Deployment", platformstate.ComponentObjects{Name: "traefik", Deployments: []platformstate.Deployment{traefik}}, "3.3.6"},
+		{"k3s, from the node", platformstate.ComponentObjects{Name: "k3s", Nodes: []platformstate.Node{node}, Deployments: []platformstate.Deployment{traefik}}, "v1.36.4+k3s1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := platformstate.ComponentOf(tc.o, now).Version; got != tc.want {
+				t.Errorf("Version = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // The new cut-down structs decode the API's own JSON, as a list response
 // or an unstructured object's content would give it.
 func TestObjectsDecodeTheAPIsJSON(t *testing.T) {

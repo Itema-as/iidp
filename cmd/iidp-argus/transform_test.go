@@ -154,10 +154,10 @@ func TestTransformsKeepOnlyWhatTheModelReads(t *testing.T) {
 			"metadata": obj{"name": "iidp", "labels": obj{"node-role.kubernetes.io/control-plane": "true"}},
 			"spec":     obj{"podCIDR": "10.42.0.0/24", "providerID": "k3s://iidp"},
 			"status": obj{"capacity": obj{"cpu": "4"}, "images": []any{obj{"names": []any{"ghcr.io/itema-as/shop:1.0.0"}, "sizeBytes": 1}},
-				"nodeInfo":   obj{"kubeletVersion": "v1.36.4+k3s1"},
+				"nodeInfo":   obj{"kubeletVersion": "v1.36.4+k3s1", "osImage": "Ubuntu 24.04", "containerRuntimeVersion": "containerd://2.0"},
 				"conditions": []any{obj{"type": "Ready", "status": "True", "lastHeartbeatTime": "2026-09-28T09:00:00Z", "lastTransitionTime": "2026-09-01T00:00:00Z"}}}}),
-			platformstate.Node{}, `"conditions":[{"type":"Ready","status":"True","reason":"","message":"","lastTransitionTime":"2026-09-01T00:00:00Z"}]`,
-			[]string{"podCIDR", "providerID", "capacity", "images", "nodeInfo", "lastHeartbeatTime", "last-applied", "managedFields"}},
+			platformstate.Node{}, `"conditions":[{"type":"Ready","status":"True","reason":"","message":"","lastTransitionTime":"2026-09-01T00:00:00Z"}],"nodeInfo":{"kubeletVersion":"v1.36.4+k3s1"}`,
+			[]string{"podCIDR", "providerID", "capacity", "images", "osImage", "containerRuntimeVersion", "lastHeartbeatTime", "last-applied", "managedFields"}},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			src := sourceNamed(t, tc.source)

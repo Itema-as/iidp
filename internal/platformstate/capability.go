@@ -1,6 +1,7 @@
 package platformstate
 
 import (
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -220,14 +221,18 @@ type ComponentObjects struct {
 // Component is one Platform component: a Condition, plus Updating for one
 // ArgoCD manages. It never Arrives or Leaves: it is part of the Platform.
 type Component struct {
-	Name      string    `json:"name"`
+	Name string `json:"name"`
+	// Version is what it runs, when that can be told: k3s's from the
+	// node, and otherwise the tag of the image named after it
+	// (componentVersion).
+	Version   string    `json:"version,omitempty"`
 	Condition Condition `json:"condition"`
 	Activity  *Activity `json:"activity"`
 }
 
 // ComponentOf is the state of one Platform component from its objects.
 func ComponentOf(o ComponentObjects, now time.Time) Component {
-	out := Component{Name: o.Name, Condition: Condition{State: Healthy}}
+	out := Component{Name: o.Name, Version: componentVersion(o), Condition: Condition{State: Healthy}}
 	var all []facts
 	owned := map[string]bool{}
 	for _, d := range o.Deployments {
@@ -280,6 +285,59 @@ func ComponentOf(o ComponentObjects, now time.Time) Component {
 		out.Activity = &Activity{State: Updating, Stuck: stuck != "", Reason: stuck}
 	}
 	return out
+}
+
+// componentVersion is the version a Platform component runs. For k3s it
+// is the node's kubelet version. For the others it is the tag of the
+// image whose name holds the component's (argocd's quay.io/argoproj/
+// argocd, the Deploy gate's iidp-deploy-gate, cert-manager's
+// cert-manager-controller), among the images ArgoCD lists for it and
+// those of its Deployments in view; failing that, the one tag all of its
+// images share. Empty when neither tells: a component with several
+// images and none named after it, or with none at all.
+func componentVersion(o ComponentObjects) string {
+	for _, n := range o.Nodes {
+		if v := n.Status.NodeInfo.KubeletVersion; v != "" {
+			return v
+		}
+	}
+	var images []string
+	if o.ArgoCD != nil {
+		images = append(images, o.ArgoCD.Status.Summary.Images...)
+	}
+	for _, d := range o.Deployments {
+		for _, c := range d.Spec.Template.Spec.Containers {
+			images = append(images, c.Image)
+		}
+	}
+	tags := map[string]bool{}
+	for _, image := range images {
+		repository, tag := imageTag(image)
+		if tag == "" {
+			continue
+		}
+		tags[tag] = true
+		if strings.Contains(path.Base(repository), o.Name) {
+			return tag
+		}
+	}
+	if len(tags) == 1 {
+		for tag := range tags {
+			return tag
+		}
+	}
+	return ""
+}
+
+// imageTag is an image reference's repository and tag, with any digest
+// dropped; the tag is empty when it names none.
+func imageTag(image string) (repository, tag string) {
+	image, _, _ = strings.Cut(image, "@")
+	slash := strings.LastIndex(image, "/")
+	if colon := strings.LastIndex(image, ":"); colon > slash {
+		return image[:colon], image[colon+1:]
+	}
+	return image, ""
 }
 
 // worse is the worse of two Conditions: Degraded, then Unknown, then

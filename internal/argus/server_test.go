@@ -123,6 +123,14 @@ func serve(t *testing.T, s *Store, keepalive time.Duration) *httptest.Server {
 	return srv
 }
 
+// serveWeb serves s with the web directory web.
+func serveWeb(t *testing.T, s *Store, web fstest.MapFS) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer((&Server{Store: s, Web: web, Keepalive: time.Hour}).Handler())
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // On connect a browser gets the whole model and the recent feed, then
 // each change as it happens: the Application that changed, whole, and
 // the note the change makes.

@@ -22,6 +22,11 @@ spec:
       valuesObject:
         baseDomain: {{ .Values.baseDomain }}
         bootstrapRevision: {{ .Values.bootstrap.targetRevision | quote }}
+        links:
+          argocdURL: {{ .Values.argocdURL | quote }}
+          grafanaURL: {{ .Values.grafanaURL | default "" | quote }}
+          platformRepository: {{ .Values.deployGate.platformRepository | quote }}
+          bootstrapRepository: {{ .Values.bootstrap.repoURL | quote }}
         image:
           repository: {{ .Values.argus.image.repository }}
           tag: {{ .Values.argus.image.tag | quote }}

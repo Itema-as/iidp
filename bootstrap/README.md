@@ -88,7 +88,7 @@ To add or change it by hand: write the Secret in the clear at `bootstrap/templat
 | `baseDomain` | bootstrap, CLI | Applications are served under `<application>.<baseDomain>`; the wildcard certificate covers `*.<baseDomain>` and `<baseDomain>` |
 | `cloudflareZone` | bootstrap, CLI | The Cloudflare zone containing `baseDomain`: the only zone external-dns manages and where custom domains are automated. Also the Itema login cookie's domain (see [Itema login](#itema-login)); without it, `baseDomain` is. A `baseDomain` outside it is refused |
 | `argocdURL` | bootstrap, CLI | Where ArgoCD is served; its host must be under `baseDomain` so the wildcard covers it |
-| `grafanaURL` | CLI | The Grafana Cloud stack, for the closing summary |
+| `grafanaURL` | CLI, bootstrap | The Grafana Cloud stack: the CLI's closing summary, and Argus's links to an Environment's logs (empty leaves them out) |
 | `chartVersion` | CLI | The application chart version written into new Environments |
 | `githubApp.id`, `githubApp.installationId` | nobody (documentation) | The org GitHub App the Deploy gate commits as and ArgoCD reads the Platform repository with; both take it from the Secret cloud-init writes |
 | `deployGate.githubOrgId` | bootstrap | Itema-as's numeric GitHub org id (default `1230559`): a deploy's OIDC token and the Application's binding must both carry it |
@@ -213,6 +213,8 @@ Argus watches the cluster with client-go informers and writes nothing. Its Clust
 | `nodes` | The node, which is k3s's Condition |
 
 It is cluster-wide because Environment namespaces come and go; the informers narrow themselves by label and namespace. Nothing grants Secrets, ConfigMaps or `pods/log`, and `bootstrap_test.go` fails on any other verb or kind. It asks for 10m of CPU and 48Mi of memory, with a 96Mi memory limit and no CPU limit, and runs with `GOMEMLIMIT=48MiB`: it aims to stay within 64 MiB, and a spike restarts it rather than squeezing Applications. What it serves, and how it was measured, is in [`docs/implementation-notes/118-argus-backend.md`](../docs/implementation-notes/118-argus-backend.md).
+
+Its detail card links out, read-only, to ArgoCD, Grafana Cloud, the Platform repository and this repository. The `argus` Application passes it `platform.yaml`'s `argocdURL` and `grafanaURL`, `deployGate.platformRepository`, and `bootstrap.repoURL` with the pinned revision, as the component's `links.*` values and from there as `IIDP_ARGUS_*` environment variables; a link whose address is empty is left out. The page itself loads nothing from outside Argus: the frontend, three.js included, is embedded in the binary, and a Content-Security-Policy allows nothing else ([`docs/implementation-notes/119-argus-frontend.md`](../docs/implementation-notes/119-argus-frontend.md)).
 
 ## Verifying without a cluster
 

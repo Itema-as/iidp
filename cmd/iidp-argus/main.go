@@ -13,7 +13,12 @@
 // The bootstrap chart runs it (bootstrap/components/argus) as the pod's
 // service account. It is configured from the environment:
 //
-//	IIDP_ARGUS_LISTEN  the listen address (default :8080)
+//	IIDP_ARGUS_LISTEN               the listen address (default :8080)
+//	IIDP_ARGUS_ARGOCD_URL           where the detail card links out to
+//	IIDP_ARGUS_GRAFANA_URL          (argus.Platform); each may be empty,
+//	IIDP_ARGUS_PLATFORM_REPOSITORY  and the card then leaves that link
+//	IIDP_ARGUS_BOOTSTRAP_REPOSITORY out
+//	IIDP_ARGUS_BOOTSTRAP_REVISION
 package main
 
 import (
@@ -88,6 +93,8 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 	store := argus.NewStore(time.Now, log)
+	store.SetPlatform(argus.NewPlatform(os.Getenv("IIDP_ARGUS_ARGOCD_URL"), os.Getenv("IIDP_ARGUS_GRAFANA_URL"),
+		os.Getenv("IIDP_ARGUS_PLATFORM_REPOSITORY"), os.Getenv("IIDP_ARGUS_BOOTSTRAP_REPOSITORY"), os.Getenv("IIDP_ARGUS_BOOTSTRAP_REVISION")))
 	go store.Run(ctx, argus.TickEvery)
 	informers := startInformers(ctx, client, store, log)
 	go func() {

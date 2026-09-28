@@ -1,0 +1,164 @@
+// @ts-check
+// What sits on the map besides the drawing (#103): the chip that says
+// what the automatic camera is doing and switches it, the feed in the
+// corner, the edge markers for loud changes off screen, the banner for a
+// lost cluster or stream, and, with ?fps=1, a frame-rate meter.
+
+import { h } from './dom.js';
+import { mapFeed } from '../feed.js';
+
+/** @typedef {import('../types.js').Note} Note */
+
+/**
+ * The chip: the camera's mode in words, and the switch.
+ * @param {HTMLButtonElement} el
+ * @param {() => void} onToggle
+ */
+export function createChip(el, onToggle) {
+  el.addEventListener('click', onToggle);
+  let text = '';
+  let cls = '';
+  return {
+    /** @param {string} mode @param {string} words */
+    update(mode, words) {
+      const c = mode === 'off' ? 'off' : mode === 'looking' || mode === 'pinned' ? 'paused' : mode === 'lost' ? 'lost' : 'on';
+      if (c !== cls) {
+        el.dataset.state = c;
+        el.setAttribute('aria-pressed', String(mode !== 'off'));
+        cls = c;
+      }
+      if (words !== text) {
+        /** @type {HTMLElement} */ (el.querySelector('.words')).textContent = words;
+        el.title = mode === 'off' ? 'Turn the automatic camera on' : 'Turn the automatic camera off';
+        text = words;
+      }
+    },
+  };
+}
+
+/**
+ * The feed on the map: the latest six notes, newest at the bottom, each
+ * with its loudness dot, message and age. A click flies to its place; the
+ * pointer on one rings its place.
+ * @param {HTMLElement} el
+ * @param {{onGo: (key: string) => void, onRing: (key: string | null) => void}} options
+ */
+export function createFeed(el, { onGo, onRing }) {
+  let last = '';
+  return {
+    /** @param {Note[]} feed @param {number} nowMs */
+    update(feed, nowMs) {
+      const entries = mapFeed(feed, nowMs);
+      const key = JSON.stringify(entries);
+      if (key === last) return;
+      last = key;
+      el.replaceChildren(...entries.map((e) => {
+        const go = e.key;
+        const li = h('li', { class: go ? e.tone : `${e.tone} nowhere` },
+          h('span', { class: `dot ${e.tone}`, 'aria-hidden': 'true' }),
+          h('span', { class: 'msg' }, e.message),
+          h('span', { class: 'age' }, e.age));
+        if (go) {
+          const button = h('button', { type: 'button', class: 'go', 'aria-label': `Show ${go === 'platform' ? 'the Platform' : go}` });
+          li.prepend(button);
+          li.addEventListener('click', () => onGo(go));
+          li.addEventListener('mouseenter', () => onRing(go));
+          li.addEventListener('mouseleave', () => onRing(null));
+        }
+        return li;
+      }));
+    },
+  };
+}
+
+/**
+ * Edge markers: an arrow in the loudness's colour and the Application's
+ * name, at the screen's edge towards a loud or normal change off screen.
+ * A click flies there.
+ * @param {HTMLElement} el
+ * @param {(key: string) => void} onGo
+ */
+export function createEdges(el, onGo) {
+  let last = '';
+  return {
+    /**
+     * @param {{key: string, loudness: string, ndcX: number, ndcY: number, front: boolean}[]} items
+     * @param {number} width @param {number} height
+     */
+    update(items, width, height) {
+      const out = [];
+      for (const i of items) {
+        let x = i.ndcX;
+        let y = i.ndcY;
+        if (!i.front) {
+          x = -x * 10;
+          y = -y * 10;
+        }
+        if (Math.abs(x) < 0.95 && Math.abs(y) < 0.95) continue;
+        const k = 1 / Math.max(Math.abs(x) / 0.86, Math.abs(y) / 0.82);
+        const ex = x * k;
+        const ey = Math.max(y * k, -0.6);
+        out.push({ key: i.key, loudness: i.loudness, left: Math.round(((ex + 1) / 2) * width), top: Math.round(((1 - ey) / 2) * height), rot: Math.atan2(-y, x) });
+      }
+      const key = JSON.stringify(out.map((o) => [o.key, o.loudness, o.left >> 3, o.top >> 3, Math.round(o.rot * 8)]));
+      if (key === last) return;
+      last = key;
+      el.replaceChildren(...out.map((o) => {
+        const arrow = h('span', { class: 'arrow', 'aria-hidden': 'true' });
+        arrow.style.transform = `rotate(${o.rot}rad)`;
+        const b = h('button', { type: 'button', class: `edge ${o.loudness}`, onclick: () => onGo(o.key) }, arrow, h('span', {}, o.key === 'platform' ? 'the Platform' : o.key));
+        b.style.transform = `translate(${o.left}px, ${o.top}px) translate(-50%, -50%)`;
+        return b;
+      }));
+    },
+  };
+}
+
+/**
+ * The banner over a picture that is not live.
+ * @param {HTMLElement} el
+ */
+export function createBanner(el) {
+  let last = '';
+  return {
+    /** @param {string} text empty hides it */
+    update(text) {
+      if (text === last) return;
+      last = text;
+      el.textContent = text;
+      el.hidden = !text;
+    },
+  };
+}
+
+/**
+ * A frame-rate meter, for ?fps=1: frames a second over the last second,
+ * the slowest frame in it, and what was drawn.
+ * @param {HTMLElement} el
+ */
+export function createMeter(el) {
+  el.hidden = false;
+  let frames = 0;
+  let worst = 0;
+  let since = performance.now();
+  let prev = since;
+  return {
+    /**
+     * @param {number} t
+     * @param {() => string} detail
+     * @returns {number | null} the frame rate, once a second
+     */
+    tick(t, detail) {
+      frames++;
+      worst = Math.max(worst, t - prev);
+      prev = t;
+      if (t - since < 1000) return null;
+      const fps = (frames * 1000) / (t - since);
+      el.textContent = `${fps.toFixed(0)} fps · slowest frame ${worst.toFixed(0)} ms · ${detail()}`;
+      frames = 0;
+      worst = 0;
+      since = t;
+      return fps;
+    },
+  };
+}

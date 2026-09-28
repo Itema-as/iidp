@@ -94,8 +94,10 @@ func gather(all map[string]map[string]any) objects {
 }
 
 // build interprets the objects at now: every Application with its
-// Environments, and every Platform component, each by name.
-func build(o objects, outOfSyncSince map[string]time.Time, now time.Time) (map[string]platformstate.Application, map[string]platformstate.Component) {
+// Environments, and every Platform component, each by name. Each
+// Environment gets its links from platform, and its image's deployedAt
+// (platform.go), which build keeps in known.
+func build(o objects, outOfSyncSince map[string]time.Time, platform Platform, known map[string]time.Time, now time.Time) (map[string]platformstate.Application, map[string]platformstate.Component) {
 	byNamespace := map[string]*platformstate.Objects{}
 	in := func(ns string) *platformstate.Objects {
 		if byNamespace[ns] == nil {
@@ -163,8 +165,27 @@ func build(o objects, outOfSyncSince map[string]time.Time, now time.Time) (map[s
 		envs[name] = append(envs[name], env)
 	}
 	apps := map[string]platformstate.Application{}
+	live := map[string]bool{}
 	for name, objs := range envs {
-		apps[name] = platformstate.ApplicationOf(name, objs, now)
+		app := withLinks(platformstate.ApplicationOf(name, objs, now), platform)
+		for i := range app.Environments {
+			env := &app.Environments[i]
+			if env.Image == nil || env.ArgoCD == nil {
+				continue
+			}
+			for _, o := range objs {
+				if o.ArgoCD.Metadata.Name == env.ArgoCD.Application {
+					env.Image.DeployedAt = deployedAt(*env, o.ArgoCD, known)
+					live[o.ArgoCD.Metadata.Name+"@"+env.Image.Tag] = true
+				}
+			}
+		}
+		apps[name] = app
+	}
+	for key := range known {
+		if !live[key] {
+			delete(known, key)
+		}
 	}
 
 	components := map[string]platformstate.Component{}

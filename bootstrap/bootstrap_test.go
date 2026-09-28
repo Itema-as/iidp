@@ -669,6 +669,15 @@ func TestArgusIsOnByDefaultAndOffRendersNothing(t *testing.T) {
 		get[string](t, values, "image", "repository") != "ghcr.io/itema-as/iidp-argus" {
 		t.Errorf("argus values = %v", values)
 	}
+	// Where the detail card links out to, from platform.yaml's own fields.
+	links := get[object](t, values, "links")
+	if fmt.Sprint(links) != "map[argocdURL:https://argocd.app.itma.no bootstrapRepository:https://example.test/iidp.git grafanaURL: platformRepository:https://github.com/Itema-as/iidp-platform.git]" {
+		t.Errorf("argus links = %v", links)
+	}
+	withGrafana := renderApplications(t, append(append([]string{}, args...), "--set", "grafanaURL=https://itema.grafana.net")...)["argus"]
+	if got := get[string](t, withGrafana, "spec", "source", "helm", "valuesObject", "links", "grafanaURL"); got != "https://itema.grafana.net" {
+		t.Errorf("argus links.grafanaURL = %q, want platform.yaml's grafanaURL", got)
+	}
 
 	for _, off := range [][]string{
 		append(append([]string{}, args...), "--set", "argus.enabled=false"),
@@ -683,7 +692,9 @@ func TestArgusIsOnByDefaultAndOffRendersNothing(t *testing.T) {
 
 func TestArgusComponentRendersArgus(t *testing.T) {
 	objects := parseObjects(t, helmTemplate(t, "components/argus", "--namespace", "argus",
-		"--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
+		"--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3",
+		"--set", "links.argocdURL=https://argocd.app.example.test", "--set", "links.grafanaURL=https://itema.grafana.net",
+		"--set", "links.platformRepository=https://github.com/Itema-as/iidp-platform.git", "--set", "links.bootstrapRepository=https://github.com/Itema-as/iidp.git"))
 	if got := strings.Join(keys(objects), " "); got != "ClusterRole/iidp-argus ClusterRoleBinding/iidp-argus Deployment/iidp-argus Ingress/iidp-argus Service/iidp-argus ServiceAccount/iidp-argus" {
 		t.Errorf("rendered %s", got)
 	}
@@ -709,9 +720,19 @@ func TestArgusComponentRendersArgus(t *testing.T) {
 	if got := fmt.Sprint(resources); got != "map[limits:map[memory:96Mi] requests:map[cpu:10m memory:48Mi]]" {
 		t.Errorf("resources = %s, want requests cpu 10m and memory 48Mi, a memory limit of 96Mi and no CPU limit", got)
 	}
-	env := get[[]any](t, container, "env")
-	if len(env) != 1 || fmt.Sprint(env[0]) != "map[name:GOMEMLIMIT value:48MiB]" {
-		t.Errorf("env = %v, want only GOMEMLIMIT 48MiB", env)
+	var env []string
+	for _, e := range get[[]any](t, container, "env") {
+		env = append(env, fmt.Sprint(e))
+	}
+	if got := strings.Join(env, "\n"); got != strings.Join([]string{
+		"map[name:GOMEMLIMIT value:48MiB]",
+		"map[name:IIDP_ARGUS_ARGOCD_URL value:https://argocd.app.example.test]",
+		"map[name:IIDP_ARGUS_GRAFANA_URL value:https://itema.grafana.net]",
+		"map[name:IIDP_ARGUS_PLATFORM_REPOSITORY value:https://github.com/Itema-as/iidp-platform.git]",
+		"map[name:IIDP_ARGUS_BOOTSTRAP_REPOSITORY value:https://github.com/Itema-as/iidp.git]",
+		"map[name:IIDP_ARGUS_BOOTSTRAP_REVISION value:v1.2.3]",
+	}, "\n") {
+		t.Errorf("env =\n%s\nwant GOMEMLIMIT 48MiB and the card's links", got)
 	}
 	if get[string](t, container, "readinessProbe", "httpGet", "path") != "/readyz" || get[string](t, container, "livenessProbe", "httpGet", "path") != "/healthz" {
 		t.Errorf("probes = %v, %v", container["readinessProbe"], container["livenessProbe"])

@@ -39,3 +39,4 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #116 | [116-condition-and-activity.md](116-condition-and-activity.md) |
 | #117 | [117-deploy-events.md](117-deploy-events.md) |
 | #118 | [118-argus-backend.md](118-argus-backend.md) |
+| #119 | [119-argus-frontend.md](119-argus-frontend.md) |
