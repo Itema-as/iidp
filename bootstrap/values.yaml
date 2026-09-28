@@ -83,6 +83,19 @@ deployGate:
   # with it before committing the tag.
   ghcrSecret: ghcr-pull-token
 
+# Argus (templates/argus.yaml), the live, read-only view of the Platform,
+# served at https://argus.<baseDomain> behind Itema login. false renders
+# nothing: no Deployment, RBAC, Ingress or DNS record. The kind harness's
+# fixture platform.yaml turns it off.
+argus:
+  enabled: true
+  image:
+    repository: ghcr.io/itema-as/iidp-argus
+    # Empty: the version of the bootstrap release pinned in the Platform
+    # repository's platform-components.yaml (v1.2.3 runs 1.2.3).
+    tag: ""
+    pullPolicy: IfNotPresent
+
 # The guardrails on Application namespaces (templates/guardrails.yaml,
 # README.md "Guardrails"): four ValidatingAdmissionPolicies whose bindings
 # take these actions when a check fails.

@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  Argus's placeholder page (#118): the domain model and the feed as text,
+  kept current from the stream at /events. The drawing replaces it (#119).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Argus</title>
+  <style>
+    body { margin: 0; padding: 1.5rem 2rem; background: #0e1116; color: #d8dee9; font: 15px/1.5 system-ui, sans-serif; }
+    h1 { margin: 0 0 .25rem; font-size: 1.4rem; font-weight: 600; }
+    h2 { margin: 1.5rem 0 .5rem; font-size: 1rem; font-weight: 600; color: #8fbcbb; }
+    #cluster { color: #a3be8c; }
+    #cluster.interrupted, #cluster.lost { color: #ebcb8b; }
+    #feed { list-style: none; margin: 0; padding: 0; }
+    #feed li { padding: .15rem 0; }
+    #feed .loud { color: #bf616a; }
+    #feed .normal { color: #ebcb8b; }
+    #feed .seam { color: #81a1c1; border-top: 1px solid #3b4252; margin-top: .25rem; }
+    pre { background: #161b22; padding: 1rem; border-radius: 6px; overflow: auto; font-size: 13px; }
+  </style>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <h1>Argus</h1>
+  <p>Cluster: <span id="cluster">connecting</span></p>
+  <h2>Feed</h2>
+  <ul id="feed"></ul>
+  <h2>Applications and Platform components</h2>
+  <pre id="model">Waiting for the snapshot.</pre>
+</body>
+</html>

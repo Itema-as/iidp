@@ -1,0 +1,68 @@
+# What Argus may read, and nothing else (#101): get, list and watch on the
+# kinds its informers watch (cmd/iidp-argus/informers.go), and no other
+# verb, kind or non-resource URL. No Secrets, ConfigMaps or pods/log. It is
+# a ClusterRole because the Environments' namespaces come and go, and RBAC
+# cannot select namespaces by label; the informers narrow themselves by
+# the iidp.itema.no/application label, the argocd and kube-system
+# namespaces, and a field selector for Warning Events.
+# bootstrap_test.go fails on any other verb or kind.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: iidp-argus
+  labels:
+    {{- include "argus.labels" . | nindent 4 }}
+# Only Argus's pod mounts the token, and says so itself.
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: iidp-argus
+  labels:
+    {{- include "argus.labels" . | nindent 4 }}
+rules:
+  # The Environments' and the Platform components' ArgoCD Applications:
+  # sync, operation, revisions and history.
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch"]
+  # Their workloads, the migration and final backup Jobs, and the
+  # Scheduled tasks.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  # Pods; Events, the Deploy gate's among them, read through core v1; and
+  # the node.
+  - apiGroups: [""]
+    resources: ["pods", "events", "nodes"]
+    verbs: ["get", "list", "watch"]
+  # Itema login, from the Environments' Ingresses' annotation.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  # The Capabilities: Postgres and custom domains.
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: iidp-argus
+  labels:
+    {{- include "argus.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: iidp-argus
+subjects:
+  - kind: ServiceAccount
+    name: iidp-argus
+    namespace: {{ .Release.Namespace }}

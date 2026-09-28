@@ -2,14 +2,27 @@ package platformstate
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
 // The Capabilities judged here, by what the cluster holds for them.
 const (
 	CapabilityPostgres      = "postgres"
+	CapabilityItemaLogin    = "itema-login"
 	CapabilityCustomDomain  = "custom-domain"
 	CapabilityScheduledTask = "scheduled-task"
+)
+
+// The Itema login Capability is only an annotation on the Environment's
+// Ingresses (chart/application/templates/_helpers.tpl,
+// application.login.annotation): Traefik's middlewares annotation names
+// the Platform's shared ForwardAuth middleware, or, with sign-in groups,
+// the Environment's own copy of it, <namespace>-<fullname>-itema-login.
+const (
+	MiddlewaresAnnotation = "traefik.ingress.kubernetes.io/router.middlewares"
+	sharedLoginMiddleware = "oauth2-proxy-itema-login-auth@kubernetescrd"
+	ownLoginMiddleware    = "-itema-login@kubernetescrd"
 )
 
 // cnpgSettingUpPrimary is CNPG's phase for a Cluster being created.
@@ -19,10 +32,10 @@ const cnpgSettingUpPrimary = "Setting up primary"
 // own and does not roll up into the Environment's, which judges only its
 // own workload.
 type Capability struct {
-	// Type is postgres, custom-domain or scheduled-task.
+	// Type is postgres, itema-login, custom-domain or scheduled-task.
 	Type string `json:"type"`
-	// Name is the CNPG Cluster's name, the custom domain's host, or the
-	// Scheduled task's name.
+	// Name is the CNPG Cluster's name, itema-login, the custom domain's
+	// host, or the Scheduled task's name.
 	Name      string    `json:"name"`
 	Condition Condition `json:"condition"`
 	// Activity is Arriving while a database or a certificate is first
@@ -32,29 +45,78 @@ type Capability struct {
 }
 
 // CapabilitiesOf are the Capabilities of one Environment from its
-// objects: its Postgres, its custom domains (by their certificates) and
-// its Scheduled tasks, in that order.
+// objects: its Postgres, its Itema login (by its Ingresses), its custom
+// domains (by their certificates) and its Scheduled tasks, in that order.
 func CapabilitiesOf(o Objects, now time.Time) []Capability {
 	out := []Capability{}
 	for _, c := range o.PostgresClusters {
 		out = append(out, postgresCapability(c, now))
 	}
+	if c, ok := loginCapability(o.Ingresses); ok {
+		out = append(out, c)
+	}
 	for _, c := range o.Certificates {
 		out = append(out, domainCapability(c, now))
 	}
 	var tasks []Capability
+	byTask := jobsByTask(o.Jobs)
 	for _, cronJob := range o.CronJobs {
-		if cronJob.Metadata.Labels[ComponentLabel] != ComponentScheduledTask {
-			continue
+		if name, ok := taskName(cronJob); ok {
+			tasks = append(tasks, taskCapability(name, cronJob, byTask[name]))
 		}
-		name := cronJob.Metadata.Labels[TaskLabel]
-		if name == "" {
-			name = cronJob.Metadata.Name
-		}
-		tasks = append(tasks, Capability{Type: CapabilityScheduledTask, Name: name, Condition: Condition{State: Healthy}, Activity: leaving(cronJob.Metadata)})
 	}
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].Name < tasks[j].Name })
 	return append(out, tasks...)
+}
+
+// loginCapability is the Itema login Capability, when an Ingress of the
+// Environment is behind it. It has no state of its own to judge: the
+// ForwardAuth service it relies on is a Platform component, oauth2-proxy.
+// It is Leaving once every such Ingress is being deleted.
+func loginCapability(ingresses []Ingress) (Capability, bool) {
+	found, allLeaving := false, true
+	for _, ing := range ingresses {
+		if !behindItemaLogin(ing) {
+			continue
+		}
+		found = true
+		allLeaving = allLeaving && ing.Metadata.DeletionTimestamp != nil
+	}
+	if !found {
+		return Capability{}, false
+	}
+	c := Capability{Type: CapabilityItemaLogin, Name: CapabilityItemaLogin, Condition: Condition{State: Healthy}}
+	if allLeaving {
+		c.Activity = &Activity{State: Leaving}
+	}
+	return c, true
+}
+
+// behindItemaLogin reports whether an Ingress's middlewares annotation
+// names the shared Itema login middleware or an Environment's own copy.
+func behindItemaLogin(ing Ingress) bool {
+	for _, m := range strings.Split(ing.Metadata.Annotations[MiddlewaresAnnotation], ",") {
+		m = strings.TrimSpace(m)
+		if m == sharedLoginMiddleware || (strings.HasSuffix(m, ownLoginMiddleware) && len(m) > len(ownLoginMiddleware)) {
+			return true
+		}
+	}
+	return false
+}
+
+// taskCapability is a Scheduled task. A failed last run (its CronJob's
+// newest Job, the one Tasks shows) is a Warning, as failing backups are:
+// the Environment serves all the same, so it is never Degraded, and the
+// Environment's own Condition and Activity do not change.
+func taskCapability(name string, cronJob CronJob, jobs []Job) Capability {
+	c := Capability{Type: CapabilityScheduledTask, Name: name, Condition: Condition{State: Healthy}, Activity: leaving(cronJob.Metadata)}
+	if run := newestRun(jobs); run != nil && run.Result == RunFailed {
+		c.Condition.Warning = "the last run failed"
+		if run.FinishedAt != nil {
+			c.Condition.Warning += " at " + run.FinishedAt.UTC().Format("2006-01-02 15:04 UTC")
+		}
+	}
+	return c
 }
 
 func leaving(m ObjectMeta) *Activity {
@@ -147,6 +209,9 @@ type ComponentObjects struct {
 	// Pods are its pods, those of its Deployments and any others (a
 	// StatefulSet's, a DaemonSet's).
 	Pods []Pod
+	// Nodes are the nodes it is, for k3s itself: each is judged by its
+	// Ready condition.
+	Nodes []Node
 	// OutOfSyncSince is when the caller saw its ArgoCD Application turn
 	// OutOfSync; nil when it does not know.
 	OutOfSyncSince *time.Time
@@ -179,11 +244,24 @@ func ComponentOf(o ComponentObjects, now time.Time) Component {
 		}
 		out.Condition = worse(out.Condition, podsCondition([]Pod{pod}, 1, now, true, now))
 	}
+	for _, node := range o.Nodes {
+		c := readyCondition(node.Status.Conditions, node.Metadata.CreationTimestamp, now, "the node is not ready")
+		if c.Reason != "" {
+			c.Reason = "node " + node.Metadata.Name + ": " + c.Reason
+		}
+		out.Condition = worse(out.Condition, c)
+	}
 	if o.ArgoCD == nil {
 		return out
 	}
-	if out.Condition.State == Healthy && o.ArgoCD.Status.Health.Status == Unknown {
+	switch health := o.ArgoCD.Status.Health.Status; {
+	case out.Condition.State == Healthy && health == Unknown:
 		out.Condition = Condition{State: Unknown, Reason: "ArgoCD reports its health as Unknown"}
+	case len(o.Deployments) == 0 && len(o.Pods) == 0 && len(o.Nodes) == 0 && health == Degraded:
+		// None of its workload is in view (Argus watches only argocd's
+		// and kube-system's), so ArgoCD's app-level health is all there
+		// is to judge it by.
+		out.Condition = Condition{State: Degraded, Reason: "ArgoCD reports its health as Degraded"}
 	}
 
 	f := facts{app: o.ArgoCD, outOfSyncSince: o.OutOfSyncSince, now: now}

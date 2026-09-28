@@ -53,6 +53,7 @@ type fixture struct {
 	cronJobs    []obj
 	clusters    []obj
 	certs       []obj
+	ingresses   []obj
 	events      []obj
 	outOfSync   *time.Time
 }
@@ -77,7 +78,7 @@ func (f *fixture) objects(t *testing.T) platformstate.Objects {
 		into any
 	}{
 		{f.deployments, &o.Deployments}, {f.pods, &o.Pods}, {f.jobs, &o.Jobs}, {f.cronJobs, &o.CronJobs},
-		{f.clusters, &o.PostgresClusters}, {f.certs, &o.Certificates}, {f.events, &o.Events},
+		{f.clusters, &o.PostgresClusters}, {f.certs, &o.Certificates}, {f.ingresses, &o.Ingresses}, {f.events, &o.Events},
 	} {
 		if len(list.from) > 0 {
 			decodeInto(t, list.from, list.into)

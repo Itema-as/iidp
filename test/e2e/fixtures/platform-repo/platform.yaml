@@ -70,6 +70,11 @@ deployGate:
   githubAPI: http://fake-github.iidp-e2e.svc.cluster.local/api
   platformRepository: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
 
+# Argus is off here: the harness does not build its image, and the 2-vCPU
+# runner has no room to spare (docs/implementation-notes/118-argus-backend.md).
+argus:
+  enabled: false
+
 # kind has no GHCR: the fixture Applications run nginx from Docker Hub
 # (applications/*/*/values.yaml), which the guardrails' image policy would
 # otherwise report on every Pod. The Platform itself allows only

@@ -41,6 +41,22 @@ builds:
       - -s -w -X github.com/Itema-as/iidp/internal/version.Version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
+  # Argus (cmd/iidp-argus), shipped only as its image, like the gate.
+  - id: iidp-argus
+    main: ./cmd/iidp-argus
+    binary: iidp-argus
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/Itema-as/iidp/internal/version.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
 # The Deploy gate's image, ghcr.io/itema-as/iidp-deploy-gate:<version>, the
 # tag the bootstrap chart derives from the bootstrap revision it is pinned
 # to (bootstrap/templates/deploy-gate.yaml). Built from
@@ -71,6 +87,31 @@ dockers_v2:
     flags:
       - "--provenance=false"
     disable: '{{ ne (index .Env "IIDP_PUBLISH_DEPLOY_GATE") "true" }}'
+
+  # Argus's image, ghcr.io/itema-as/iidp-argus:<version>, the tag the
+  # bootstrap chart derives from the bootstrap revision it is pinned to
+  # (bootstrap/templates/argus.yaml). Built and published like the gate's,
+  # under IIDP_PUBLISH_ARGUS, which the release workflow sets
+  # (docs/implementation-notes/118-argus-backend.md).
+  - id: iidp-argus
+    ids:
+      - iidp-argus
+    dockerfile: cmd/iidp-argus/Dockerfile
+    images:
+      - ghcr.io/itema-as/iidp-argus
+    tags:
+      - "{{ .Version }}"
+    platforms:
+      - linux/amd64
+    labels:
+      "org.opencontainers.image.source": '{{ trimsuffix .GitURL ".git" }}'
+      "org.opencontainers.image.description": "Argus, the live view of the iidp Platform"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+    sbom: false
+    flags:
+      - "--provenance=false"
+    disable: '{{ ne (index .Env "IIDP_PUBLISH_ARGUS") "true" }}'
 
 archives:
   - id: iidp

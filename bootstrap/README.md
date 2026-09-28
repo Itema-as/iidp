@@ -14,6 +14,7 @@ The ArgoCD app-of-apps that installs every Phase 1 Platform component. It is a H
 | `oauth2-proxy` | The Itema login Capability's one shared oauth2-proxy (Entra ID, `entra-id` provider), served at `auth.<baseDomain>` through an Ingress covered by the wildcard, plus the Traefik ForwardAuth `Middleware` `itema-login-auth` the application chart's `login.enabled` Ingress annotation points at. An unauthenticated browser is redirected straight to Entra ID and back (`docs/implementation-notes/77-login-redirect.md`). Its cookie covers `cloudflareZone` ([Itema login](#itema-login)) | `oauth2-proxy` |
 | `guardrails` | [`components/guardrails`](components/guardrails): four ValidatingAdmissionPolicies and their bindings on Application namespaces (image origin, container limits, Service types, Ingress hosts). See [Guardrails](#guardrails) | cluster-scoped |
 | `deploy-gate` | [`components/deploy-gate`](components/deploy-gate): the Deploy gate (`cmd/iidp-deploy-gate`), the one way an Application repository's CI deploys and promotes, served at `deploy.<baseDomain>` through an Ingress covered by the wildcard (below) | `argocd` |
+| `argus` | [`components/argus`](components/argus): Argus (`cmd/iidp-argus`), the live, read-only view of the Platform, served at `argus.<baseDomain>` behind Itema login. Only with `argus.enabled` (below) | `argus` |
 
 Every version is pinned in [`versions.yaml`](versions.yaml). The Applications share one sync policy (`templates/_helpers.tpl`): automated with prune and self-heal, server-side apply, and unlimited retries, so a component that needs another one's CRDs or namespace converges on its own. Each retry syncs the newest commit (`retry.refresh: true`), so a fix pushed while a sync keeps failing applies on the next retry instead of waiting for someone to terminate the operation. No Application carries the resources finalizer: removing a component from the bootstrap leaves what it installed in the cluster, to be deleted by hand, rather than cascading into the deletion of CRDs and everything defined with them.
 
@@ -94,6 +95,8 @@ To add or change it by hand: write the Secret in the clear at `bootstrap/templat
 | `deployGate.image.*` | bootstrap | The gate's image; `tag` empty (the default) means the version of the bootstrap release `platform-components.yaml` pins |
 | `deployGate.oidc.issuer`, `deployGate.oidc.jwksURL` | bootstrap | The OIDC issuer the gate trusts (default GitHub Actions') and its key set (default `<issuer>/.well-known/jwks`); only a test cluster changes them |
 | `deployGate.githubAPI`, `deployGate.platformRepository`, `deployGate.appSecret` | bootstrap | The GitHub API, the Platform repository the gate writes, and the Secret with the App credential (default `platform-repo-github-app`); only a test cluster changes them |
+| `argus.enabled` | bootstrap | Whether the Platform runs [Argus](#argus) (default `true`); `false` renders none of it |
+| `argus.image.*` | bootstrap | Argus's image; `tag` empty (the default) means the version of the bootstrap release `platform-components.yaml` pins |
 | `agePublicKey` | CLI | What `iidp secret set` encrypts with; the private key exists only in the cluster |
 | `backupsBucket` | CLI | The Object Storage bucket for CloudNativePG backups. Required for `--postgres` |
 | `objectStorageEndpoint` | CLI | The S3 endpoint of `backupsBucket`'s location, for example `https://hel1.your-objectstorage.com`. Required for `--postgres` |
@@ -193,12 +196,31 @@ Neither Role has `get`, `update` or `delete`, the events Role has nothing on cor
 
 Its requests are 5m of CPU and 32Mi of memory, with a 128Mi memory limit: the node is near its CPU request limit, a deploy is one shallow clone and one push, and a status call is one clone of the Platform repository, one GitHub call and a handful of list calls. What it checks and what it commits is in [`docs/platform-repository.md`](../docs/platform-repository.md#how-a-deploy-reaches-the-platform-repository-the-deploy-gate); why it is built this way is in [`docs/implementation-notes/60-deploy-gate.md`](../docs/implementation-notes/60-deploy-gate.md).
 
+## Argus
+
+With `argus.enabled` (the default), the `argus` Application renders [`components/argus`](components/argus) at the same pin as this chart, into the namespace `argus`: a Deployment of one replica, a Service, a service account with a read-only ClusterRole (below), and an Ingress at `argus.<baseDomain>` behind Itema login, the same `oauth2-proxy-itema-login-auth` middleware a protected Environment's Ingress names. Anyone in the Entra tenant can open it. The Ingress has TLS with no secret of its own, so Traefik serves the wildcard, and external-dns makes its DNS record. It runs the image `ghcr.io/itema-as/iidp-argus:<version>`, which the release workflow publishes for every `v*` tag next to the gate's; `<version>` is the pinned bootstrap revision without its `v`, as for the gate, and a pin that is not a release tag fails only this Application. With `argus.enabled: false` the bootstrap renders none of it: no Deployment, RBAC, Ingress or DNS record. The kind fixture turns it off.
+
+Argus watches the cluster with client-go informers and writes nothing. Its ClusterRole `iidp-argus` grants `get`, `list` and `watch`, and nothing else, on:
+
+| Kind | Why |
+|---|---|
+| `applications.argoproj.io` | The Environments' and the Platform components' ArgoCD Applications, in `argocd`: sync, operation, revisions and history |
+| `deployments` (`apps`), `pods` | The Environments' workloads, by the label `iidp.itema.no/application`, and the Platform components' in `argocd` and `kube-system` |
+| `jobs`, `cronjobs` (`batch`) | The migration and final backup Jobs, and the Scheduled tasks |
+| `events` | The Deploy gate's Events in `argocd`, ArgoCD's own there, and Warning Events everywhere else, for the feed |
+| `ingresses` (`networking.k8s.io`) | Whether an Environment is behind Itema login |
+| `clusters.postgresql.cnpg.io`, `certificates.cert-manager.io` | The Postgres and custom domain Capabilities |
+| `nodes` | The node, which is k3s's Condition |
+
+It is cluster-wide because Environment namespaces come and go; the informers narrow themselves by label and namespace. Nothing grants Secrets, ConfigMaps or `pods/log`, and `bootstrap_test.go` fails on any other verb or kind. It asks for 10m of CPU and 48Mi of memory, with a 96Mi memory limit and no CPU limit, and runs with `GOMEMLIMIT=48MiB`: it aims to stay within 64 MiB, and a spike restarts it rather than squeezing Applications. What it serves, and how it was measured, is in [`docs/implementation-notes/118-argus-backend.md`](../docs/implementation-notes/118-argus-backend.md).
+
 ## Verifying without a cluster
 
 ```sh
 helm lint --strict bootstrap --values test/e2e/fixtures/platform-repo/platform.yaml
 helm lint --strict bootstrap/components/tls
 helm lint --strict bootstrap/components/deploy-gate --set bootstrapRevision=v0.0.0
+helm lint --strict bootstrap/components/argus --set bootstrapRevision=v0.0.0
 helm lint --strict bootstrap/components/guardrails
 go test ./bootstrap/...          # renders with helm template and checks the Applications and the guardrails
 ```

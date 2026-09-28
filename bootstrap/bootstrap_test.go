@@ -642,6 +642,185 @@ func TestDeployGateImageTagCanBePinnedButNotGuessed(t *testing.T) {
 	}
 }
 
+// Argus is on by default, follows the bootstrap pin like the gate, and
+// runs in a namespace of its own. argus.enabled: false renders nothing of
+// it: no Application, so no Deployment, RBAC, Ingress or DNS record.
+func TestArgusIsOnByDefaultAndOffRendersNothing(t *testing.T) {
+	args := []string{"--values", "values.yaml", "--set", "baseDomain=app.example.test", "--set", "cloudflareZone=example.test",
+		"--set", "bootstrap.repoURL=https://example.test/iidp.git", "--set", "bootstrap.targetRevision=v9.9.9"}
+	argus, ok := renderApplications(t, args...)["argus"]
+	if !ok {
+		t.Fatal("values.yaml renders no argus Application; Argus is on by default")
+	}
+	for path, want := range map[string]string{
+		"repoURL":        "https://example.test/iidp.git",
+		"targetRevision": "v9.9.9",
+		"path":           "bootstrap/components/argus",
+	} {
+		if got := get[string](t, argus, "spec", "source", path); got != want {
+			t.Errorf("argus source %s = %q, want %q", path, got, want)
+		}
+	}
+	if got := get[string](t, argus, "spec", "destination", "namespace"); got != "argus" {
+		t.Errorf("argus namespace = %q, want argus", got)
+	}
+	values := get[object](t, argus, "spec", "source", "helm", "valuesObject")
+	if get[string](t, values, "baseDomain") != "app.example.test" || get[string](t, values, "bootstrapRevision") != "v9.9.9" ||
+		get[string](t, values, "image", "repository") != "ghcr.io/itema-as/iidp-argus" {
+		t.Errorf("argus values = %v", values)
+	}
+
+	for _, off := range [][]string{
+		append(append([]string{}, args...), "--set", "argus.enabled=false"),
+		{"--values", fixture},
+	} {
+		rendered := renderText(t, off...)
+		if strings.Contains(rendered, "argus") {
+			t.Errorf("with Argus off (%v), the bootstrap still renders it:\n%s", off, rendered)
+		}
+	}
+}
+
+func TestArgusComponentRendersArgus(t *testing.T) {
+	objects := parseObjects(t, helmTemplate(t, "components/argus", "--namespace", "argus",
+		"--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
+	if got := strings.Join(keys(objects), " "); got != "ClusterRole/iidp-argus ClusterRoleBinding/iidp-argus Deployment/iidp-argus Ingress/iidp-argus Service/iidp-argus ServiceAccount/iidp-argus" {
+		t.Errorf("rendered %s", got)
+	}
+
+	deployment := objects["Deployment/iidp-argus"]
+	if got := get[int](t, deployment, "spec", "replicas"); got != 1 {
+		t.Errorf("replicas = %d, want 1: every stream is served from one process's memory", got)
+	}
+	pod := get[object](t, deployment, "spec", "template", "spec")
+	if get[string](t, pod, "serviceAccountName") != "iidp-argus" || !get[bool](t, pod, "automountServiceAccountToken") {
+		t.Errorf("pod service account = %v, token %v; want its own, mounted", pod["serviceAccountName"], pod["automountServiceAccountToken"])
+	}
+	if _, has := pod["volumes"]; has {
+		t.Errorf("the pod mounts volumes %v; Argus needs none", pod["volumes"])
+	}
+	container := get[[]any](t, pod, "containers")[0].(object)
+	if got := container["image"]; got != "ghcr.io/itema-as/iidp-argus:1.2.3" {
+		t.Errorf("image = %v, want the bootstrap release's version", got)
+	}
+	// The resource figures of #101: 48 Mi requested, a 96 Mi limit, 10m of
+	// CPU and no CPU limit; and the Go runtime aiming at the request.
+	resources := get[object](t, container, "resources")
+	if got := fmt.Sprint(resources); got != "map[limits:map[memory:96Mi] requests:map[cpu:10m memory:48Mi]]" {
+		t.Errorf("resources = %s, want requests cpu 10m and memory 48Mi, a memory limit of 96Mi and no CPU limit", got)
+	}
+	env := get[[]any](t, container, "env")
+	if len(env) != 1 || fmt.Sprint(env[0]) != "map[name:GOMEMLIMIT value:48MiB]" {
+		t.Errorf("env = %v, want only GOMEMLIMIT 48MiB", env)
+	}
+	if get[string](t, container, "readinessProbe", "httpGet", "path") != "/readyz" || get[string](t, container, "livenessProbe", "httpGet", "path") != "/healthz" {
+		t.Errorf("probes = %v, %v", container["readinessProbe"], container["livenessProbe"])
+	}
+	if !get[bool](t, container, "securityContext", "readOnlyRootFilesystem") || get[bool](t, container, "securityContext", "allowPrivilegeEscalation") {
+		t.Errorf("container securityContext = %v", container["securityContext"])
+	}
+
+	// argus.<baseDomain>, behind the Itema login middleware the bootstrap
+	// installs (components/oauth2-proxy-login/middleware.yaml), which
+	// Traefik names <namespace>-<name>@kubernetescrd.
+	ingress := objects["Ingress/iidp-argus"]
+	rule := get[[]any](t, ingress, "spec", "rules")[0].(object)
+	if got := get[string](t, rule, "host"); got != "argus.app.example.test" {
+		t.Errorf("Ingress host = %q, want argus.<baseDomain>", got)
+	}
+	middleware := readYAML(t, "components/oauth2-proxy-login/middleware.yaml")
+	login := get[string](t, middleware, "metadata", "namespace") + "-" + get[string](t, middleware, "metadata", "name") + "@kubernetescrd"
+	if got := get[string](t, ingress, "metadata", "annotations", "traefik.ingress.kubernetes.io/router.middlewares"); got != login {
+		t.Errorf("Ingress middlewares = %q, want the Itema login middleware %q", got, login)
+	}
+	tls := get[[]any](t, ingress, "spec", "tls")[0].(object)
+	if _, has := tls["secretName"]; has {
+		t.Errorf("the Ingress names a TLS secret; the wildcard comes from Traefik's default store")
+	}
+	if got := get[string](t, ingress, "metadata", "annotations", "traefik.ingress.kubernetes.io/router.entrypoints"); got != "websecure" {
+		t.Errorf("entrypoints = %q", got)
+	}
+}
+
+// Argus reads with get, list and watch only, on exactly the kinds it
+// watches, and nothing else: no Secrets, ConfigMaps, pods/log or
+// non-resource URLs, no narrowing by name, and bound to no one but Argus.
+func TestArgusReadsTheClusterWithGetListWatchOnly(t *testing.T) {
+	objects := parseObjects(t, helmTemplate(t, "components/argus", "--namespace", "argus",
+		"--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
+	var grants []string
+	for key, obj := range objects {
+		kind := obj["kind"].(string)
+		if kind == "Role" || kind == "RoleBinding" {
+			t.Errorf("%s: Argus's reads are one ClusterRole", key)
+		}
+		if kind != "ClusterRole" {
+			continue
+		}
+		for _, r := range get[[]any](t, obj, "rules") {
+			rule := r.(object)
+			for _, field := range []string{"nonResourceURLs", "resourceNames"} {
+				if _, ok := rule[field]; ok {
+					t.Errorf("%s has %s: %v", key, field, rule)
+				}
+			}
+			var verbs []string
+			for _, v := range rule["verbs"].([]any) {
+				verbs = append(verbs, v.(string))
+			}
+			sort.Strings(verbs)
+			for _, g := range rule["apiGroups"].([]any) {
+				for _, res := range rule["resources"].([]any) {
+					grants = append(grants, fmt.Sprintf("%s/%s %s", g, res, strings.Join(verbs, ",")))
+				}
+			}
+		}
+	}
+	sort.Strings(grants)
+	want := []string{
+		"/events get,list,watch",
+		"/nodes get,list,watch",
+		"/pods get,list,watch",
+		"apps/deployments get,list,watch",
+		"argoproj.io/applications get,list,watch",
+		"batch/cronjobs get,list,watch",
+		"batch/jobs get,list,watch",
+		"cert-manager.io/certificates get,list,watch",
+		"networking.k8s.io/ingresses get,list,watch",
+		"postgresql.cnpg.io/clusters get,list,watch",
+	}
+	if strings.Join(grants, "\n") != strings.Join(want, "\n") {
+		t.Errorf("Argus may:\n%s\nwant exactly:\n%s", strings.Join(grants, "\n"), strings.Join(want, "\n"))
+	}
+
+	binding := objects["ClusterRoleBinding/iidp-argus"]
+	if get[string](t, binding, "roleRef", "kind") != "ClusterRole" || get[string](t, binding, "roleRef", "name") != "iidp-argus" {
+		t.Errorf("binding refers to %v", binding["roleRef"])
+	}
+	subjects := get[[]any](t, binding, "subjects")
+	if len(subjects) != 1 || fmt.Sprint(subjects[0]) != fmt.Sprint(object{"kind": "ServiceAccount", "name": "iidp-argus", "namespace": "argus"}) {
+		t.Errorf("binding binds %v, want only argus/iidp-argus", subjects)
+	}
+	if get[bool](t, objects["ServiceAccount/iidp-argus"], "automountServiceAccountToken") {
+		t.Errorf("the ServiceAccount mounts its token everywhere; only Argus's pod should")
+	}
+}
+
+func TestArgusImageTagCanBePinnedButNotGuessed(t *testing.T) {
+	objects := parseObjects(t, helmTemplate(t, "components/argus",
+		"--set", "bootstrapRevision=main", "--set", "image.tag=dev", "--set", "image.repository=iidp-e2e.local/argus"))
+	container := get[[]any](t, objects["Deployment/iidp-argus"], "spec", "template", "spec", "containers")[0].(object)
+	if got := container["image"]; got != "iidp-e2e.local/argus:dev" {
+		t.Errorf("image = %v, want the pinned tag", got)
+	}
+
+	requireHelm(t)
+	out, err := exec.Command("helm", "template", "t", "components/argus", "--set", "bootstrapRevision=main").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "not a v* release tag") {
+		t.Errorf("rendering with the bootstrap on a branch and no tag: err = %v, output:\n%s\nwant a refusal naming the release tag", err, out)
+	}
+}
+
 func TestTLSComponentRendersTheWildcardIntoTraefiksNamespace(t *testing.T) {
 	objects := parseObjects(t, helmTemplate(t, "components/tls", "--set", "baseDomain=app.example.test"))
 	cert, ok := objects["Certificate/wildcard"]

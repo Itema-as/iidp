@@ -1,0 +1,34 @@
+{{- if .Values.argus.enabled }}
+# Argus, the live view of the Platform (cmd/iidp-argus), served at
+# https://argus.<baseDomain> behind Itema login. Rendered from
+# bootstrap/components/argus in this repository at the same revision as
+# this chart, into a namespace of its own. With argus.enabled false nothing
+# is rendered: no Deployment, RBAC, Ingress, or the DNS record external-dns
+# would make from the Ingress
+# (docs/implementation-notes/118-argus-backend.md).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argus
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.bootstrap.repoURL }}
+    targetRevision: {{ .Values.bootstrap.targetRevision | quote }}
+    path: bootstrap/components/argus
+    helm:
+      releaseName: argus
+      valuesObject:
+        baseDomain: {{ .Values.baseDomain }}
+        bootstrapRevision: {{ .Values.bootstrap.targetRevision | quote }}
+        image:
+          repository: {{ .Values.argus.image.repository }}
+          tag: {{ .Values.argus.image.tag | quote }}
+          pullPolicy: {{ .Values.argus.image.pullPolicy }}
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: argus
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list) | nindent 4 }}
+{{- end }}
