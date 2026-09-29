@@ -74,9 +74,9 @@ func TestStaticSiteRendersTheSameObjectsAsAWebService(t *testing.T) {
 	}
 
 	c := container(t, objects, "brochure")
-	for _, field := range []string{"requests", "limits"} {
-		if cpu := get[string](t, c, "resources", field, "cpu"); cpu != "500m" {
-			t.Errorf("%s.cpu = %q, want the medium size's 500m", field, cpu)
+	for field, want := range map[string]string{"requests": "100m", "limits": "500m"} {
+		if cpu := get[string](t, c, "resources", field, "cpu"); cpu != want {
+			t.Errorf("%s.cpu = %q, want the medium size's %s", field, cpu, want)
 		}
 		if mem := get[string](t, c, "resources", field, "memory"); mem != "512Mi" {
 			t.Errorf("%s.memory = %q, want the medium size's 512Mi", field, mem)

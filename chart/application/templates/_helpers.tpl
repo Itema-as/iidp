@@ -577,19 +577,27 @@ as little of the single node as any Environment can.
 
 {{/*
 The resources of the size given as the context, as requests and limits.
+Memory is requested as much as it is limited: it cannot be taken back from
+a container that uses it. CPU is requested at a fifth of its limit: a
+container may still use up to the limit, but the node's scheduler books
+only the request, so idle Environments do not fill the single node with
+CPU nobody uses. When several are busy at once they share the CPU above
+their requests. Until #96 CPU was requested at its limit, and the CPX22
+ran out of CPU to book with three Environments with Postgres and a
+Preview Environment (docs/implementation-notes/96-cpu-requests.md).
 */}}
 {{- define "application.resourcesFor" -}}
 {{- $sizes := dict
-  "small" (dict "cpu" "250m" "memory" "256Mi")
-  "medium" (dict "cpu" "500m" "memory" "512Mi")
-  "large" (dict "cpu" "1" "memory" "1Gi") -}}
+  "small" (dict "cpu" "250m" "cpuRequest" "50m" "memory" "256Mi")
+  "medium" (dict "cpu" "500m" "cpuRequest" "100m" "memory" "512Mi")
+  "large" (dict "cpu" "1" "cpuRequest" "200m" "memory" "1Gi") -}}
 {{- $size := . -}}
 {{- $resources := get $sizes $size -}}
 {{- if not $resources -}}
 {{- fail (printf "size must be one of %s, got %q" (join ", " (keys $sizes | sortAlpha)) $size) -}}
 {{- end -}}
 requests:
-  cpu: {{ $resources.cpu | quote }}
+  cpu: {{ $resources.cpuRequest | quote }}
   memory: {{ $resources.memory | quote }}
 limits:
   cpu: {{ $resources.cpu | quote }}

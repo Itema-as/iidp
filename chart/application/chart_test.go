@@ -164,19 +164,23 @@ func keys(objects map[string]object) []string {
 
 func TestEverySizeSetsRequestsAndLimits(t *testing.T) {
 	cases := []struct {
-		fixture, deployment, cpu, memory string
+		fixture, deployment, cpuRequest, cpu, memory string
 	}{
-		{"prod-small.yaml", "shop", "250m", "256Mi"},
-		{"staging-medium.yaml", "shop-staging", "500m", "512Mi"},
-		{"prod-large.yaml", "warehouse", "1", "1Gi"},
+		{"prod-small.yaml", "shop", "50m", "250m", "256Mi"},
+		{"staging-medium.yaml", "shop-staging", "100m", "500m", "512Mi"},
+		{"prod-large.yaml", "warehouse", "200m", "1", "1Gi"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
 			c := container(t, render(t, tc.fixture), tc.deployment)
+			// CPU is requested at a fifth of its limit, memory at its limit.
+			if cpu := get[string](t, c, "resources", "requests", "cpu"); cpu != tc.cpuRequest {
+				t.Errorf("requests.cpu = %q, want %q", cpu, tc.cpuRequest)
+			}
+			if cpu := get[string](t, c, "resources", "limits", "cpu"); cpu != tc.cpu {
+				t.Errorf("limits.cpu = %q, want %q", cpu, tc.cpu)
+			}
 			for _, field := range []string{"requests", "limits"} {
-				if cpu := get[string](t, c, "resources", field, "cpu"); cpu != tc.cpu {
-					t.Errorf("%s.cpu = %q, want %q", field, cpu, tc.cpu)
-				}
 				if mem := get[string](t, c, "resources", field, "memory"); mem != tc.memory {
 					t.Errorf("%s.memory = %q, want %q", field, mem, tc.memory)
 				}

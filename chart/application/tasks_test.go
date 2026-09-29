@@ -85,9 +85,9 @@ func TestEachTaskRendersACronJob(t *testing.T) {
 			}
 			// The smallest size, whatever the Application's (medium here),
 			// as requests and limits.
-			for _, field := range []string{"requests", "limits"} {
-				if cpu := get[string](t, c, "resources", field, "cpu"); cpu != "250m" {
-					t.Errorf("%s.cpu = %q, want 250m", field, cpu)
+			for field, want := range map[string]string{"requests": "50m", "limits": "250m"} {
+				if cpu := get[string](t, c, "resources", field, "cpu"); cpu != want {
+					t.Errorf("%s.cpu = %q, want %s", field, cpu, want)
 				}
 				if memory := get[string](t, c, "resources", field, "memory"); memory != "256Mi" {
 					t.Errorf("%s.memory = %q, want 256Mi", field, memory)

@@ -53,7 +53,7 @@ Other commands planned: `iidp app add-capability`, `iidp secret set`, `iidp app 
 ## Conventions the chart encodes
 
 - A Web service container listens on `PORT` (default 3000). The readiness probe hits `/` unless the values file overrides it.
-- Sizes: small 250m CPU / 256 MiB, medium 500m / 512 MiB, large 1 CPU / 1 GiB. Postgres is a fixed 256 MiB single instance. The numbers live in the chart, not the CLI.
+- Sizes: small 250m CPU / 256 MiB, medium 500m / 512 MiB, large 1 CPU / 1 GiB, as limits. Memory is requested at its limit, CPU at a fifth of it (since #96), so idle Environments don't book the single node full. Postgres is a fixed 256 MiB single instance. The numbers live in the chart, not the CLI.
 - Static sites are built into an nginx image in CI and deployed like a Web service.
 - Each Environment has its own database and its own address.
 

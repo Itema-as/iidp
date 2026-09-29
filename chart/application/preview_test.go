@@ -223,10 +223,10 @@ func TestAPreviewRunsThePullRequestsImageAtTheSmallestSizeAtItsOwnAddress(t *tes
 	if image := get[string](t, c, "image"); image != "ghcr.io/itema-as/shop:"+pullRequest["head_sha"].(string) {
 		t.Errorf("image = %q, want the pull request's head SHA tag", image)
 	}
-	for _, field := range []string{"requests", "limits"} {
+	for field, cpu := range map[string]string{"requests": "50m", "limits": "250m"} {
 		res := get[map[string]any](t, c, "resources", field)
-		if res["cpu"] != "250m" || res["memory"] != "256Mi" {
-			t.Errorf("resources.%s = %v, want small's 250m and 256Mi (staging is medium)", field, res)
+		if res["cpu"] != cpu || res["memory"] != "256Mi" {
+			t.Errorf("resources.%s = %v, want small's %s and 256Mi (staging is medium)", field, res, cpu)
 		}
 	}
 	if hosts := ingressHosts(t, mustObject(t, objects, "Ingress/shop-pr-42")); !slices.Equal(hosts, []string{"shop-pr-42.app.itma.no"}) {

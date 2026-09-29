@@ -35,6 +35,7 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #92 | [92-sign-in-groups.md](92-sign-in-groups.md) |
 | #94 | [94-app-status.md](94-app-status.md) |
 | #95 | [95-preview-environments.md](95-preview-environments.md) |
+| #96 | [96-cpu-requests.md](96-cpu-requests.md) |
 | #114 | [114-argocd-refresh.md](114-argocd-refresh.md) |
 | #116 | [116-condition-and-activity.md](116-condition-and-activity.md) |
 | #117 | [117-deploy-events.md](117-deploy-events.md) |
