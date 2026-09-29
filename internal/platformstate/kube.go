@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
@@ -27,10 +26,11 @@ type Lister interface {
 
 // Read reads the state of every Environment of application the cluster
 // has an ArgoCD Application for: one list of ArgoCD Applications by label,
-// then, in each Environment's namespace, its Deployments, their pods, its
-// Jobs and its CronJobs. The Environments come back in SortEnvironments
-// order, interpreted as of now. It lists no Events, so a Deploy is found
-// by its tag, from Applying on.
+// then, in each Environment's namespace, its Deployments, its pods (the
+// Deployment's and the Jobs'), its Jobs and its CronJobs, all by the same
+// label, as Argus's informers read them. The Environments come back in
+// SortEnvironments order, interpreted as of now. It lists no Events, so
+// a Deploy is found by its tag, from Applying on.
 func Read(ctx context.Context, cluster Lister, application string) ([]Environment, error) {
 	now := time.Now()
 	var apps []ArgoCDApplication
@@ -47,10 +47,8 @@ func Read(ctx context.Context, cluster Lister, application string) ([]Environmen
 			if err := cluster.List(ctx, "/apis/apps/v1"+base+"/deployments", selector, &o.Deployments); err != nil {
 				return nil, err
 			}
-			if d, ok := workload(o.Deployments); ok && len(d.Spec.Selector.MatchLabels) > 0 {
-				if err := cluster.List(ctx, "/api/v1"+base+"/pods", selectorString(d.Spec.Selector.MatchLabels), &o.Pods); err != nil {
-					return nil, err
-				}
+			if err := cluster.List(ctx, "/api/v1"+base+"/pods", selector, &o.Pods); err != nil {
+				return nil, err
 			}
 			if err := cluster.List(ctx, "/apis/batch/v1"+base+"/jobs", selector, &o.Jobs); err != nil {
 				return nil, err
@@ -63,15 +61,6 @@ func Read(ctx context.Context, cluster Lister, application string) ([]Environmen
 	}
 	SortEnvironments(envs)
 	return envs, nil
-}
-
-func selectorString(labels map[string]string) string {
-	parts := make([]string, 0, len(labels))
-	for k, v := range labels {
-		parts = append(parts, k+"="+v)
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, ",")
 }
 
 // The files and variables a pod's service account token is mounted as.

@@ -14,7 +14,7 @@
  * @typedef {{state: ActivityState, stuck: boolean, reason?: string, deploy?: Deploy}} Activity
  * @typedef {'postgres' | 'itema-login' | 'custom-domain' | 'scheduled-task'} CapabilityType
  * @typedef {{type: CapabilityType, name: string, condition: Condition, activity: Activity | null}} Capability
- * @typedef {{result: 'succeeded' | 'failed' | 'running', startedAt?: string, finishedAt?: string}} Run
+ * @typedef {{result: 'succeeded' | 'failed' | 'running' | 'pending', startedAt?: string, finishedAt?: string}} Run
  * @typedef {{name: string, schedule: string, lastScheduleTime?: string, lastRun: Run | null}} Task
  * @typedef {{phase: string, message?: string, startedAt?: string, finishedAt?: string}} Operation
  * @typedef {{application: string, sync: string, health: string, operation: Operation | null}} ArgoCDState

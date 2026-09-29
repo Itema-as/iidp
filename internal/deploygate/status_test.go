@@ -180,6 +180,8 @@ func shopCluster(prodTag, stagingTag string) *fakeCluster {
 		podObj("shop-abc", "shop-prod", web("shop"), "Running", true, 2),
 		podObj("shop-def", "shop-prod", web("shop"), "Pending", false, 0),
 		podObj("shop-migrate-x", "shop-prod", with(app, "app.kubernetes.io/component", "migration"), "Succeeded", false, 0),
+		podObj("shop-report-1-x", "shop-prod", with(app, "app.kubernetes.io/component", "scheduled-task", "iidp.itema.no/task", "report",
+			"batch.kubernetes.io/job-name", "shop-report-1"), "Running", true, 0),
 	)
 	c.add("/apis/batch/v1/namespaces/shop-prod/jobs",
 		jobObj("shop-migrate", "shop-prod", with(app, "app.kubernetes.io/component", "migration"), 10, "Complete"),
