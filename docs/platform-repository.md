@@ -316,7 +316,7 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: shop-pr-{{.number}}:/Namespace:/shop-pr-{{.number}}
         retry:
-          limit: -1
+          limit: 3
           refresh: true
           backoff:
             duration: 10s
@@ -328,6 +328,7 @@ spec:
 - **The template is staging's Application.** Its sources are copied from staging's `application.yaml`, so the chart is at staging's pinned version, staging's `values.yaml` is the base, and, once staging has secrets (`iidp secret set <name> staging`, or Postgres's `backups-credentials`), staging's `sops/` source gives the preview the same Secrets through the same KSOPS path. When a CLI command adds that source to staging's `application.yaml`, it rewrites this file in the same commit.
 - **What a preview overrides** (`helm.valuesObject`, which ArgoCD gives precedence over `valueFiles`): the Environment `pr-<number>`, so the chart names everything `<name>-pr-<number>` and serves it at `<name>-pr-<number>.<baseDomain>`; `image.tag`, the pull request's head SHA, the tag the reusable deploy workflow pushes; the smallest size; Itema login on, keeping staging's `login.groups`; no custom domains; `runTasks: false`; and `postgres.backups: false`, so the database gets no WAL archiving, no daily backup and no final backup on delete. Staging's migration command, env and secrets are kept.
 - **The namespace** carries the labels every Environment's namespace carries, `iidp.itema.no/environment: pr-<number>` among them, so the guardrails bind to it. ArgoCD's tracking annotation on it makes the namespace the preview's own: ArgoCD deletes it with the preview, which it does not do for a namespace `CreateNamespace` made otherwise (every other Environment's stays after `iidp app delete`).
+- **The sync policy** is staging's, except that a failed sync is retried 3 times instead of without limit. ArgoCD retries inside the same sync operation and deletes an Application only when no operation is running, so a preview whose sync kept failing would never be removed when its pull request closes (#131). A preview does not need the unlimited retry: a new push to the pull request changes `image.tag`, which starts a fresh sync. Together with the migration Job's 30-minute deadline ([`chart/application/README.md`](../chart/application/README.md)), a preview whose migration can't start is removed at most about two hours (four attempts) after its pull request closes ([`docs/implementation-notes/131-preview-sync-ends.md`](implementation-notes/131-preview-sync-ends.md)).
 
 ## `applications/<name>/<environment>/sops/`
 

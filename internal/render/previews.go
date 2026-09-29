@@ -35,6 +35,16 @@ const (
 	// PreviewSize is a Preview Environment's size, whatever staging's: the
 	// smallest.
 	PreviewSize = "small"
+
+	// PreviewRetryLimit is how many times ArgoCD retries a Preview
+	// Environment's failed sync, where staging and prod retry without
+	// limit (ArgoCDApplication). ArgoCD retries inside the same operation,
+	// and deletes an Application only once it has no operation running, so
+	// with no limit a preview whose sync keeps failing (a broken migration,
+	// say) is never removed when its pull request closes (#131). A preview
+	// does not need the unlimited retry: a new push to the pull request
+	// changes the Application's image tag, which starts a fresh sync.
+	PreviewRetryLimit = 3
 )
 
 // PreviewEnvironment is the Environment name of the Preview Environment
@@ -168,7 +178,8 @@ type previewAppSpec struct {
 //     annotation on it, which makes ArgoCD delete the namespace with the
 //     Application when the pull request closes. ArgoCD leaves a namespace
 //     CreateNamespace made behind otherwise; this is the way its sync
-//     options documentation gives to have it owned.
+//     options documentation gives to have it owned;
+//   - staging's retry, limited to PreviewRetryLimit retries.
 func PreviewApplicationSet(p Previews) ([]byte, error) {
 	if p.Application == "" || p.Owner == "" || p.Repository == "" {
 		return nil, errors.New("previews need the Application and its repository's owner and name")
@@ -242,7 +253,7 @@ func PreviewApplicationSet(p Previews) ([]byte, error) {
 							},
 						},
 						Retry: retry{
-							Limit:   -1,
+							Limit:   PreviewRetryLimit,
 							Refresh: true,
 							Backoff: backoff{Duration: "10s", Factor: 2, MaxDuration: "3m"},
 						},
