@@ -5,9 +5,15 @@
 // lost cluster or stream, and, with ?fps=1, a frame-rate meter.
 
 import { h } from './dom.js';
-import { mapFeed } from '../feed.js';
+import { mapFeed, notesSince, toneOf } from '../feed.js';
 
 /** @typedef {import('../types.js').Note} Note */
+
+/**
+ * Which dot a folded feed's switch shows: the loudest among the new notes.
+ * @type {Record<string, number>}
+ */
+const TONE_RANK = { loud: 4, normal: 3, quiet: 2, resolved: 1 };
 
 /**
  * The chip: the camera's mode in words, and the switch.
@@ -29,7 +35,7 @@ export function createChip(el, onToggle) {
       }
       if (words !== text) {
         /** @type {HTMLElement} */ (el.querySelector('.words')).textContent = words;
-        el.title = mode === 'off' ? 'Turn the automatic camera on' : 'Turn the automatic camera off';
+        el.title = mode === 'off' ? 'Turn the automatic camera on (Esc also resets the view)' : 'Turn the automatic camera off (Esc resets the view)';
         text = words;
       }
     },
@@ -39,15 +45,56 @@ export function createChip(el, onToggle) {
 /**
  * The feed on the map: the latest six notes, newest at the bottom, each
  * with its loudness dot, message and age. A click flies to its place; the
- * pointer on one rings its place.
+ * pointer on one rings its place. The switch under it folds it away; while
+ * folded, the switch counts the notes that came since, with the loudest
+ * one's dot.
  * @param {HTMLElement} el
- * @param {{onGo: (key: string) => void, onRing: (key: string | null) => void}} options
+ * @param {HTMLButtonElement} toggle
+ * @param {{onGo: (key: string) => void, onRing: (key: string | null) => void, folded: boolean, onFold: (folded: boolean) => void}} options
  */
-export function createFeed(el, { onGo, onRing }) {
+export function createFeed(el, toggle, { onGo, onRing, folded, onFold }) {
   let last = '';
+  let lastToggle = '';
+  /** @type {Note[]} */
+  let notes = [];
+  /**
+   * The newest note's time when the feed was folded, or, for a feed that
+   * starts folded, the time the page loaded.
+   * @type {string | null}
+   */
+  let since = new Date().toISOString();
+  const fold = (/** @type {boolean} */ value) => {
+    folded = value;
+    if (folded) since = notes.at(-1)?.at ?? since;
+    el.hidden = folded;
+    toggle.setAttribute('aria-expanded', String(!folded));
+  };
+  const label = () => {
+    const unseen = folded ? notesSince(notes, since) : [];
+    const loudest = unseen.map(toneOf).sort((a, b) => (TONE_RANK[b] ?? 0) - (TONE_RANK[a] ?? 0))[0];
+    const key = `${folded} ${unseen.length} ${loudest}`;
+    if (key === lastToggle) return;
+    lastToggle = key;
+    toggle.title = folded ? 'Show recent changes' : 'Hide recent changes';
+    toggle.replaceChildren(
+      h('span', { class: 'caret', 'aria-hidden': 'true' }),
+      h('span', {}, folded ? 'Recent changes' : 'Hide recent changes'),
+      ...(unseen.length > 0 ? [h('span', { class: `dot ${loudest}`, 'aria-hidden': 'true' }), h('span', { class: 'new' }, `${unseen.length} new`)] : []),
+    );
+  };
+  toggle.addEventListener('click', () => {
+    fold(!folded);
+    onFold(folded);
+    label();
+  });
+  fold(folded);
+  label();
   return {
     /** @param {Note[]} feed @param {number} nowMs */
     update(feed, nowMs) {
+      notes = feed;
+      label();
+      if (folded) return;
       const entries = mapFeed(feed, nowMs);
       const key = JSON.stringify(entries);
       if (key === last) return;

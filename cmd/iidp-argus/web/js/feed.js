@@ -91,6 +91,20 @@ export function mapFeed(feed, nowMs) {
 }
 
 /**
+ * The notes that came after since (a note's time), not counting the seam:
+ * what a folded feed has not shown. By time, not id, because ids start
+ * again when Argus does.
+ * @param {Note[]} feed oldest first
+ * @param {string | null} since the newest note's time when the feed was
+ *   folded, or null if it was empty then
+ * @returns {Note[]}
+ */
+export function notesSince(feed, since) {
+  const after = since ? Date.parse(since) : -Infinity;
+  return feed.filter((n) => !n.seam && Date.parse(n.at) > after);
+}
+
+/**
  * The latest notes about somewhere, newest first, for a card.
  * @param {Note[]} feed oldest first
  * @param {(p: Place) => boolean} about

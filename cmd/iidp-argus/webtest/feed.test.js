@@ -1,7 +1,7 @@
 // The feed, and what the map's corner shows of it (#103).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addNote, ageText, mapFeed, placeKey, trim, FEED_SIZE } from '../web/js/feed.js';
+import { addNote, ageText, mapFeed, notesSince, placeKey, trim, FEED_SIZE } from '../web/js/feed.js';
 
 const now = Date.parse('2026-09-28T12:00:00Z');
 const at = (msAgo) => new Date(now - msAgo).toISOString();
@@ -37,4 +37,11 @@ test('places and ages', () => {
   assert.equal(placeKey({ component: 'argocd' }), 'platform');
   assert.equal(placeKey({}), 'platform');
   assert.deepEqual([0, 12000, 125000, 3 * 3600000, 2 * 86400000].map(ageText), ['now', '12 s', '2 min', '3 h', '2 d']);
+});
+
+test('a folded feed counts the notes since it was folded, by time, without the seam', () => {
+  const feed = [note(7, 90000), note(8, 60000), note(1, 30000), note(2, 20000, { seam: true, place: {} }), note(3, 1000)];
+  assert.deepEqual(notesSince(feed, at(60000)).map((n) => n.id), [1, 3]);
+  assert.deepEqual(notesSince(feed, at(0)), []);
+  assert.deepEqual(notesSince(feed, null).map((n) => n.id), [7, 8, 1, 3]);
 });

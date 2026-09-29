@@ -24,7 +24,10 @@
   <button id="chip" type="button" data-state="on" aria-pressed="true"><span class="dot" aria-hidden="true"></span><span class="words">Automatic camera watching</span></button>
   <div id="banner" role="status" hidden></div>
   <div id="edges"></div>
-  <ol id="feed" aria-label="Recent changes"></ol>
+  <section id="log" aria-label="Recent changes">
+    <ol id="feed"></ol>
+    <button id="feed-toggle" type="button" aria-controls="feed" aria-expanded="true"></button>
+  </section>
   <section id="card" aria-live="polite" hidden></section>
   <div id="meter" hidden></div>
   <div id="fallback" hidden>Argus needs WebGL to draw the Platform, and this browser could not start it.</div>
