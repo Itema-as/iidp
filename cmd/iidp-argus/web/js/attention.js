@@ -107,6 +107,21 @@ export function createAttention({ enabled = true } = {}) {
       return on;
     },
 
+    /**
+     * Esc: the automatic camera on and in charge again at once, with no
+     * pause, starting from home. What waits in the queue is still shown.
+     */
+    resume() {
+      on = true;
+      pinned = false;
+      lastInput = -Infinity;
+      held = false;
+      mode = 'watching';
+      home = false;
+      current = null;
+      until = 0;
+    },
+
     /** Whether Argus has lost the cluster, or its stream. @param {boolean} value */
     setLost(value) {
       lost = value;

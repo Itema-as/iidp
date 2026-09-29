@@ -51,7 +51,29 @@ const go = (key) => {
   attention.seen(key);
   drawing.camera.go(key);
 };
-const feed = createFeed($('feed'), { onGo: go, onRing: (key) => (ring = key) });
+// The feed starts folded on a small screen; folding or unfolding it is
+// remembered.
+const FOLD = 'argus.feed';
+const stored = (() => {
+  try {
+    return localStorage.getItem(FOLD);
+  } catch {
+    return null;
+  }
+})();
+const feed = createFeed($('feed'), /** @type {HTMLButtonElement} */ ($('feed-toggle')), {
+  onGo: go,
+  onRing: (key) => (ring = key),
+  folded: stored ? stored === 'folded' : matchMedia('(max-width: 700px), (max-height: 560px)').matches,
+  onFold(folded) {
+    if (folded) ring = null;
+    try {
+      localStorage.setItem(FOLD, folded ? 'folded' : 'open');
+    } catch {
+      // Not remembered, then.
+    }
+  },
+});
 const edges = createEdges($('edges'), go);
 const meter = params.get('fps') === '1' ? createMeter($('meter')) : null;
 const cardView = createCardView($('card'), { onClose: () => close() });
@@ -110,7 +132,7 @@ connect({
   },
 });
 
-// The pointer: hovering peeks, a click pins, a click on empty space or Esc
+// The pointer: hovering peeks, a click pins, a click on empty space
 // closes.
 const stageEl = $('stage');
 /** @type {{x: number, y: number} | null} */
@@ -138,8 +160,12 @@ stageEl.addEventListener('pointerup', (e) => {
   if (target) pin(target);
   else close();
 });
+// Esc closes the card and hands the view back to the automatic camera,
+// turning it on if it was off; it starts again from home.
 addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') close();
+  if (e.key !== 'Escape') return;
+  close();
+  attention.resume();
 });
 
 /**

@@ -208,3 +208,33 @@ test('a place flown to by hand has been seen', () => {
   a.seen('api');
   assert.deepEqual(a.waiting(), []);
 });
+
+test('Esc hands the view back at once: on, unpinned, no pause, from home', () => {
+  for (const hold of [(a) => a.input(1000), (a) => a.pin(true, 1000), (a) => a.setEnabled(false)]) {
+    const a = createAttention();
+    run(a, 0, 1000);
+    hold(a);
+    assert.deepEqual(run(a, 1050, 3000).map((c) => c.type), ['hold']);
+    a.resume();
+    assert.equal(a.enabled, true);
+    assert.deepEqual(a.step(3050), { type: 'home' });
+    assert.equal(a.mode, 'watching');
+  }
+});
+
+test('after Esc, what waits is still shown', () => {
+  const a = createAttention();
+  a.input(0);
+  a.note(note('api', 'loud'), 100);
+  run(a, 150, 2000);
+  a.resume();
+  assert.deepEqual(a.step(2050), { type: 'visit', key: 'api', loudness: 'loud' });
+});
+
+test('Esc while showing something cuts the linger short', () => {
+  const a = createAttention();
+  a.note(note('shop', 'quiet'), 0);
+  assert.equal(run(a, 700, 1000)[0].type, 'visit');
+  a.resume();
+  assert.deepEqual(a.step(1050), { type: 'home' });
+});
