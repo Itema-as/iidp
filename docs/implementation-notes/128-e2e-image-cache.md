@@ -67,8 +67,14 @@ A pull that fails with a rate limit (`429`, `toomanyrequests`), a 5xx or a netwo
 - **Restore the newest.** The restore step's primary key never matches (`e2e-images-run-<run id>`), so it restores the newest `e2e-images-` cache that this ref or `main` can see. Images still on the list load from it, and images that changed are pulled.
 - **Save only when the list changes.** The save step is skipped when the restored key already equals the new one, which is most runs. A bumped pin changes the list and gets a new cache. That cache is saved even when the test fails later, because the images are good either way.
 
-Pull requests restore `main`'s caches, and the caches they save are only visible to that pull request, so a pull request that bumps a pin pulls the new images once per branch until `main` saves them. The archives take about 400 MB, well within GitHub's 10 GB per repository. Unset, `IIDP_E2E_IMAGE_CACHE` means a temporary directory that is removed after the run, so a local run pulls fresh but still gets the retries.
+Pull requests restore `main`'s caches, and the caches they save are only visible to that pull request, so a pull request that bumps a pin pulls the new images once per branch until `main` saves them. The cache is 371 MB compressed, well within GitHub's 10 GB per repository. Unset, `IIDP_E2E_IMAGE_CACHE` means a temporary directory that is removed after the run, so a local run pulls fresh but still gets the retries.
 
 ## Proof
 
-To be filled in from the pull request's runs.
+All three runs are of the same commit.
+
+- **Cold cache** (run 36585090874, first attempt). `Cache not found for input keys: e2e-images-run-36585090874, e2e-images-`. The harness pulled all six images on the runner, each on the first attempt, in under two minutes. It saved `e2e-images-167180040e4a…` (371 MB), and `TestBootstrap` passed in 675 s. The node pulled nothing from Docker Hub or ECR Public: its "pulled from a registry" list holds only ghcr.io, quay.io and registry.k8s.io images.
+- **Warm cache** (the same run, second attempt). `Cache restored from key: e2e-images-167180040e4a…`. The log has one `image cache: loaded <image> from <archive>, with no registry pull` line per image, Redis's included. Redis, Traefik and KSOPS are in the node's "found already present" list, and `Save the image cache` was skipped. `TestBootstrap` passed in 710 s.
+- **Locally** under Podman (`KIND_EXPERIMENTAL_PROVIDER=podman`, arm64), `TestBootstrap` passed in 668 s with a cold cache directory. That run predates Alloy's addition, and Alloy was the only Docker Hub image the node still pulled.
+- **Retries.** No 429 came up in these runs. `TestRetryPullRetriesARateLimit` covers the cold-cache path through two 429s, and `TestTransientPullError` covers which failures are retried.
+- **A chart bump.** `TestRegistryImagesFollowThePinnedCharts` reads Redis, Traefik, KSOPS and Alloy from the charts at the versions `bootstrap/versions.yaml` pins, so moving a pin moves the images, and the cache key with them.
