@@ -94,6 +94,8 @@ func TestBootstrap(t *testing.T) {
 			t.Logf("delete cluster: %v", err)
 		}
 	})
+	// Runs before the cluster is deleted: cleanups run last registered first.
+	t.Cleanup(func() { cluster.LogImageSources(context.Background()) })
 
 	if err := cluster.InstallTraefik(ctx); err != nil {
 		t.Fatal(err)
