@@ -76,6 +76,15 @@
 # with cookie-secure. docs/implementation-notes/76-login-in-zone-domains.md
 # has the source this was checked against.
 #
+# Cookie size: session-cookie-minimal keeps the Entra access, ID and refresh
+# tokens out of the session cookie; nothing here needs them after sign-in
+# (the headers below come from user, email, preferred_username and groups,
+# and cookie-refresh is off, the two things oauth2-proxy refuses it with).
+# Without it the cookie carries the tokens as well as the groups (#92) and
+# is split into several parts, and with any other cookie on the domain the
+# Cookie header outgrew the 8 KB an nginx Static site accepts: iprofil
+# answered 400 "Request Header Or Cookie Too Large" (#96).
+#
 # Sign-in groups: groupsClaim fills the session's groups from the ID
 # token's groups claim at sign-in, which the Entra app registration only
 # issues with groupMembershipClaims set (the bootstrap wizard sets
@@ -192,6 +201,7 @@ spec:
             whitelist-domain: {{ $cookieDomain | quote }}
             redirect-url: {{ printf "https://%s/oauth2/callback" $host | quote }}
             cookie-secure: "true"
+            session-cookie-minimal: "true"
           ingress:
             enabled: true
             className: traefik

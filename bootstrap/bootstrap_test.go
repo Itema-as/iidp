@@ -222,6 +222,12 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	if got := get[string](t, values, "extraArgs", "redirect-url"); got != "https://auth.app.example.test/oauth2/callback" {
 		t.Errorf("redirect-url = %q", got)
 	}
+	// The session cookie carries no OAuth tokens, only who signed in and
+	// their groups, so it stays small enough for an nginx Static site's
+	// 8 KB header limit (#96).
+	if got := get[string](t, values, "extraArgs", "session-cookie-minimal"); got != "true" {
+		t.Errorf("session-cookie-minimal = %q, want true", got)
+	}
 	// An unauthenticated browser goes straight to Entra ID, never to
 	// oauth2-proxy's own sign-in page (docs/implementation-notes/77-login-redirect.md).
 	if got := get[string](t, values, "extraArgs", "skip-provider-button"); got != "true" {
