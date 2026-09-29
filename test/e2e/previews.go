@@ -163,14 +163,16 @@ func (c *Cluster) WaitForApplicationGone(ctx context.Context, name string, timeo
 // inside the node's containerd, so a Pod asking for target starts without
 // a pull. Preview Environments run the image tagged with the pull
 // request's head SHA, which no registry kind reaches has: this stands in
-// for the deploy workflow pushing it. source is pulled first, in case the
-// node does not have it yet.
+// for the deploy workflow pushing it. source is pulled first if the node
+// does not have it yet; PreloadImages normally has loaded it, and crictl
+// pull would ask the registry even then.
 func (c *Cluster) TagNodeImage(ctx context.Context, source, target string) error {
 	node := c.Name + "-control-plane"
-	for _, args := range [][]string{
-		{"exec", node, "crictl", "pull", source},
-		{"exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force", source, target},
-	} {
+	steps := [][]string{{"exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force", source, target}}
+	if err := exec.CommandContext(ctx, c.Provider, "exec", node, "crictl", "inspecti", source).Run(); err != nil {
+		steps = append([][]string{{"exec", node, "crictl", "pull", source}}, steps...)
+	}
+	for _, args := range steps {
 		cmd := exec.CommandContext(ctx, c.Provider, args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s %s: %w\n%s", c.Provider, strings.Join(args, " "), err, out)

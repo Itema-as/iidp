@@ -17,6 +17,9 @@ Thumbs.db
 .claude/.cc-writes/
 .claude/worktrees/
 
+# The kind e2e test's image cache (IIDP_E2E_IMAGE_CACHE)
+.e2e-image-cache/
+
 # Build output
 dist/
 /iidp
