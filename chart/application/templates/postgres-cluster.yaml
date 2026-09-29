@@ -38,10 +38,11 @@ spec:
   storage:
     size: 5Gi
   # Postgres is a fixed size whatever the Application's size is
-  # (docs/design.md, "Conventions the chart encodes").
+  # (docs/design.md, "Conventions the chart encodes"). CPU is requested at
+  # a fifth of its limit, like every size (application.resourcesFor).
   resources:
     requests:
-      cpu: "250m"
+      cpu: "50m"
       memory: "256Mi"
     limits:
       cpu: "250m"

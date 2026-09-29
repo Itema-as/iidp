@@ -71,10 +71,13 @@ func TestPostgresClusterIsOneInstanceNamedAfterTheEnvironment(t *testing.T) {
 			}
 
 			// Postgres is a fixed size whatever the Application's size is.
+			if cpu := get[string](t, cluster, "spec", "resources", "requests", "cpu"); cpu != "50m" {
+				t.Errorf("resources.requests.cpu = %q, want 50m", cpu)
+			}
+			if cpu := get[string](t, cluster, "spec", "resources", "limits", "cpu"); cpu != "250m" {
+				t.Errorf("resources.limits.cpu = %q, want 250m", cpu)
+			}
 			for _, field := range []string{"requests", "limits"} {
-				if cpu := get[string](t, cluster, "spec", "resources", field, "cpu"); cpu != "250m" {
-					t.Errorf("resources.%s.cpu = %q, want 250m", field, cpu)
-				}
 				if mem := get[string](t, cluster, "spec", "resources", field, "memory"); mem != "256Mi" {
 					t.Errorf("resources.%s.memory = %q, want 256Mi", field, mem)
 				}
