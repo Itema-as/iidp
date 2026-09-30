@@ -257,6 +257,9 @@ func activityText(a platformstate.Activity) string {
 
 func runText(run platformstate.Run) string {
 	switch {
+	case run.Result == platformstate.RunPending && run.StartedAt != nil:
+		// Its pod has not started: the Job has, and has waited since.
+		return run.Result + " since " + statusTime(*run.StartedAt)
 	case run.FinishedAt != nil:
 		return run.Result + " " + statusTime(*run.FinishedAt)
 	case run.StartedAt != nil:

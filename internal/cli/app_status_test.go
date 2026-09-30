@@ -113,6 +113,16 @@ func shopStatus() platformstate.Status {
 				Activity: &platformstate.Activity{State: "Deploying", Stuck: true, Reason: "the migration failed",
 					Deploy: &platformstate.Deploy{Tag: "sha-2", Hop: platformstate.HopApplying, Stuck: true, Reason: "the migration failed"}},
 			},
+			// hello-pr-2 in #132: its migration's Pod, and a task run's,
+			// cannot be scheduled.
+			{Name: "pr-2", Namespace: "shop-pr-2", ArgoCD: &platformstate.ArgoCD{Application: "shop-pr-2", Sync: "OutOfSync", Health: "Missing",
+				Operation: &platformstate.Operation{Phase: "Running", StartedAt: tp("2026-09-29T09:40:00Z")}},
+				Migration: &platformstate.Run{Result: "pending", StartedAt: tp("2026-09-29T09:41:00Z")},
+				Tasks:     []platformstate.Task{{Name: "heartbeat", Schedule: "*/10 * * * *", LastRun: &platformstate.Run{Result: "pending", StartedAt: tp("2026-09-29T10:00:00Z")}}},
+				Addresses: []string{},
+				Condition: &platformstate.Condition{State: "Healthy"},
+				Activity: &platformstate.Activity{State: "Arriving", Stuck: true, Reason: "the migration's Pod shop-pr-2-migrate-x is Unschedulable: 0/1 nodes are available: 1 Insufficient cpu.",
+					Deploy: &platformstate.Deploy{Tag: "sha-3", Preview: true, Hop: platformstate.HopApplying, Stuck: true}}},
 			{Name: "pr-7", Namespace: "shop-pr-7", ArgoCD: &platformstate.ArgoCD{Application: "shop-pr-7", Sync: "Synced", Health: "Healthy"}, Tasks: []platformstate.Task{}, Addresses: []string{},
 				Condition: &platformstate.Condition{State: "Healthy"}, Activity: &platformstate.Activity{State: "Unreleased"}},
 			{Name: "later", Tasks: []platformstate.Task{}, Addresses: []string{}},
@@ -164,6 +174,14 @@ staging
   Image:     ghcr.io/itema-as/shop:sha-1
   Pods:      0/1 ready, 7 restarts
   Addresses: https://shop-staging.app.example.test
+
+pr-2
+  Condition: Healthy
+  Activity:  Arriving sha-3, stuck at Applying: the migration's Pod shop-pr-2-migrate-x is Unschedulable: 0/1 nodes are available: 1 Insufficient cpu.
+  Status:    OutOfSync, Missing, last sync Running, started 2026-09-29 09:40 UTC
+  Image:     none yet: nothing has been deployed
+  Migration: last run pending since 2026-09-29 09:41 UTC
+  Tasks:     heartbeat (*/10 * * * *): last run pending since 2026-09-29 10:00 UTC
 
 pr-7
   Condition: Healthy

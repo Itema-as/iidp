@@ -63,7 +63,7 @@ func CapabilitiesOf(o Objects, now time.Time) []Capability {
 	byTask := jobsByTask(o.Jobs)
 	for _, cronJob := range o.CronJobs {
 		if name, ok := taskName(cronJob); ok {
-			tasks = append(tasks, taskCapability(name, cronJob, byTask[name]))
+			tasks = append(tasks, taskCapability(name, cronJob, byTask[name], o.Pods))
 		}
 	}
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].Name < tasks[j].Name })
@@ -108,13 +108,22 @@ func behindItemaLogin(ing Ingress) bool {
 // taskCapability is a Scheduled task. A failed last run (its CronJob's
 // newest Job, the one Tasks shows) is a Warning, as failing backups are:
 // the Environment serves all the same, so it is never Degraded, and the
-// Environment's own Condition and Activity do not change.
-func taskCapability(name string, cronJob CronJob, jobs []Job) Capability {
+// Environment's own Condition and Activity do not change. So is a last
+// run whose pod cannot be scheduled: it is not running, and fails once
+// its hour (the chart's activeDeadlineSeconds) is up.
+func taskCapability(name string, cronJob CronJob, jobs []Job, pods []Pod) Capability {
 	c := Capability{Type: CapabilityScheduledTask, Name: name, Condition: Condition{State: Healthy}, Activity: leaving(cronJob.Metadata)}
-	if run := newestRun(jobs); run != nil && run.Result == RunFailed {
+	run := newestRun(jobs, pods)
+	switch {
+	case run != nil && run.Result == RunFailed:
 		c.Condition.Warning = "the last run failed"
 		if run.FinishedAt != nil {
 			c.Condition.Warning += " at " + run.FinishedAt.UTC().Format("2006-01-02 15:04 UTC")
+		}
+	case run != nil && run.Result == RunPending:
+		job, _ := newestJob(jobs)
+		if why := jobUnschedulable(job, pods); why != "" {
+			c.Condition.Warning = "the last run's " + why
 		}
 	}
 	return c

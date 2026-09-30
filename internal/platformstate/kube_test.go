@@ -93,6 +93,53 @@ func TestReadInterpretsEachEnvironment(t *testing.T) {
 	}
 }
 
+// Read lists the pods by the application label, not the Deployment's
+// selector, so it sees a Job's pods, even before there is a Deployment:
+// hello-pr-2 in #132, waiting on a migration whose pod cannot be
+// scheduled.
+func TestReadSeesTheJobsPods(t *testing.T) {
+	var podSelector string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications":
+			_, _ = w.Write([]byte(`{"items":[
+				{"metadata":{"name":"shop-pr-2","creationTimestamp":"2020-01-01T00:00:00Z","labels":{"iidp.itema.no/application":"shop"}},
+				 "spec":{"destination":{"namespace":"shop-pr-2"},"sources":[{"helm":{"valuesObject":{"image":{"tag":"sha-new"}}}}]},
+				 "status":{"sync":{"status":"OutOfSync"},"health":{"status":"Missing"},
+				  "operationState":{"phase":"Running","startedAt":"2020-01-01T00:01:00Z"}}}]}`))
+		case "/apis/batch/v1/namespaces/shop-pr-2/jobs":
+			_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"shop-migrate","creationTimestamp":"2020-01-01T00:02:00Z",
+				"labels":{"iidp.itema.no/application":"shop","app.kubernetes.io/component":"migration"}},
+				"spec":{"template":{"spec":{"containers":[{"name":"migrate","image":"ghcr.io/itema-as/shop:sha-new"}]}}},
+				"status":{"startTime":"2020-01-01T00:02:00Z"}}]}`))
+		case "/api/v1/namespaces/shop-pr-2/pods":
+			podSelector = r.URL.Query().Get("labelSelector")
+			_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"shop-migrate-x7k2p","labels":{"iidp.itema.no/application":"shop",
+				"app.kubernetes.io/component":"migration","batch.kubernetes.io/job-name":"shop-migrate","job-name":"shop-migrate"}},
+				"status":{"phase":"Pending","conditions":[{"type":"PodScheduled","status":"False","reason":"Unschedulable",
+				"message":"0/1 nodes are available: 1 Insufficient cpu."}]}}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		}
+	}))
+	defer api.Close()
+
+	envs, err := platformstate.Read(context.Background(), &platformstate.Kube{BaseURL: api.URL}, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if podSelector != "iidp.itema.no/application=shop" {
+		t.Errorf("pods listed by %q, want the application label", podSelector)
+	}
+	pr := envs[0]
+	if a := pr.Activity; a == nil || a.State != platformstate.Arriving || !a.Stuck || a.Reason != "the migration's Pod shop-migrate-x7k2p is Unschedulable: 0/1 nodes are available: 1 Insufficient cpu." {
+		t.Errorf("Activity = %+v, want Arriving, stuck on the migration's pod", a)
+	}
+	if pr.Migration == nil || pr.Migration.Result != platformstate.RunPending {
+		t.Errorf("Migration = %+v, want pending", pr.Migration)
+	}
+}
+
 func TestEnvironmentsAreSortedProdStagingThenPreviewsByNumber(t *testing.T) {
 	envs := []platformstate.Environment{{Name: "pr-10"}, {Name: "staging"}, {Name: "pr-9"}, {Name: "prod"}, {Name: "pr-9a"}}
 	platformstate.SortEnvironments(envs)
