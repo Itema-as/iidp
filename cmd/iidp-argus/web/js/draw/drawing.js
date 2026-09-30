@@ -18,7 +18,7 @@ const DISTANCE = { app: 30, platform: 34, core: 34, component: 16, env: 18 };
 
 /**
  * @param {HTMLElement} container
- * @param {{reduced: boolean, onInput: (t: number) => void}} options
+ * @param {{reduced: boolean, glow?: number, onInput: (t: number) => void}} options
  */
 export function createDrawing(container, options) {
   const stage = createStage(container, options);
