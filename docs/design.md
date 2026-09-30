@@ -23,6 +23,7 @@ The shared understanding reached in the design session on 2026-09-20. Vocabulary
 | Done means | A fresh Next.js app with Postgres created end-to-end by the wizard, then an Adopt of a real Itema repository |
 | Build order | Infra and bootstrap, chart, CLI Create path, Adopt path, then Itema login |
 | Phase 2 | Designed 2026-09-26 (spec issue, ADR-0006, ADR-0007): Scheduled tasks (a Capability declared in `iidp.yaml`, replacing the Cron job Kind), guardrails with Pod Security and ValidatingAdmissionPolicy (replacing Kyverno), `iidp app status` through the Deploy gate's service, sign-in groups for Itema login (replacing per-app Entra registrations), Preview Environments from an ArgoCD ApplicationSet. Deferred: OpenTelemetry traces (`phase-3`), the CPX32 resize (manual, when memory runs out) |
+| Phase 3 | Designed 2026-09-30, no spec: no Application or team is waiting, so each `phase-3` issue becomes a ticket of its own when its trigger arrives. Started at once: every Application non-root with Pod Security `restricted` enforced (Adopt fixes a root Dockerfile in its pull request where it knows how), a one-hour ArgoCD sync timeout so no stuck sync holds up a deletion, and research into what the Lovable application would need. Waiting: traces (until an Application asks), the GHCR pull token on a machine user (until the Platform admin changes or a second one joins) |
 
 ## The wizard
 
