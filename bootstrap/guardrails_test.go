@@ -49,7 +49,7 @@ func TestGuardrailsFollowTheBootstrapAndThePlatformValues(t *testing.T) {
 	if got := fmt.Sprint(get[[]any](t, values, "validationActions")); got != "[Warn Audit]" {
 		t.Errorf("validationActions = %s, want [Warn Audit] until the rollout switches them to Deny", got)
 	}
-	if got := fmt.Sprint(get[[]any](t, values, "extraAllowedImages")); got != "[docker.io/library/nginx]" {
+	if got := fmt.Sprint(get[[]any](t, values, "extraAllowedImages")); got != "[docker.io/nginxinc/nginx-unprivileged]" {
 		t.Errorf("extraAllowedImages = %s, want the fixture's nginx", got)
 	}
 
@@ -135,7 +135,7 @@ func TestGuardrailsComponentCarriesThePlatformsValues(t *testing.T) {
 		"'ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar'",
 		"'docker.io/bitnami/kubectl'",
 		"'quay.io/jetstack/cert-manager-acmesolver'",
-		"'docker.io/library/nginx'",
+		"'docker.io/nginxinc/nginx-unprivileged'",
 	} {
 		if !strings.Contains(allowed, want) {
 			t.Errorf("allowed images %s lack %s", allowed, want)
