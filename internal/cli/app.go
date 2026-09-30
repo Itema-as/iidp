@@ -273,7 +273,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 				return fmt.Errorf("%s/%s: %w", plan.repoOwner, plan.repoName, err)
 			}
 			summaryMigration = preview.Detection.MigrationCommand(plan.postgres, plan.migrationCommand, plan.migrationCommandSet)
-			adoptFiles = preview.Detection.Files()
+			adoptFiles = preview.Detection.Files(summaryKind)
 		}
 		if err := checkPostgresKind(plan.postgres, summaryKind); err != nil {
 			return err
@@ -406,9 +406,16 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		fmt.Fprintf(out, "\nOpened a pull request on %s, branch %s: %s\n", adoptResult.RepoURL, adoptResult.Branch, adoptResult.PullRequestURL)
 		fmt.Fprintln(out, "It adds:")
 		for _, f := range adoptResult.Files {
+			if f == "Dockerfile" && adoptResult.HasDockerfile {
+				fmt.Fprintf(out, "  %s (changed, to run as non-root: %s)\n", f, adoptResult.NonRoot.Change)
+				continue
+			}
 			fmt.Fprintf(out, "  %s\n", f)
 		}
 		fmt.Fprintln(out, "The first merged run of its deploy workflow deploys the Application.")
+		if adoptResult.NonRoot.Advice != "" {
+			fmt.Fprintf(out, "Its Dockerfile may run as root, and the Platform refuses to start it then. Change it before merging: %s\n", adoptResult.NonRoot.Advice)
+		}
 	}
 
 	// Create and Adopt bind the Application to its Application repository

@@ -39,14 +39,17 @@ var ErrBranchExists = errors.New("branch already exists")
 var ErrNothingToAdd = errors.New("nothing to add")
 
 // Detection is what cloning an Application repository's default branch
-// found: whether it already has a Dockerfile (Adopt never modifies it) and,
-// when it does not, which framework was detected to generate one from, plus
+// found: whether it already has a Dockerfile (Adopt changes it only to run
+// as non-root, NonRoot) and, when it does not, which framework was
+// detected to generate one from, plus
 // any migration tooling found — the same detection Create runs against its
 // own freshly rendered template (docs/implementation-notes/13-cli-capabilities.md),
 // here against the real clone, per the ticket's "migration tooling
 // detection runs against the repository's default branch".
 type Detection struct {
 	HasDockerfile bool
+	// dockerfile is the existing Dockerfile, which NonRoot reads.
+	dockerfile []byte
 	// Framework is "" when HasDockerfile is true: there is nothing to
 	// derive a Dockerfile from, and none is generated.
 	Framework templates.Framework
@@ -63,16 +66,28 @@ type Detection struct {
 	MigrationOK  bool
 }
 
-// Files reports which paths Adopt would add for this Detection: a
-// Dockerfile and .dockerignore when none exists, the deploy workflow when
-// none exists there, and iidp.yaml when there is none — sorted, the same
-// order Adopt itself writes them in. A preview (the wizard's summary) uses
-// this to list exactly what the pull request will add before anything
-// happens.
-func (d Detection) Files() []string {
+// NonRoot is how Adopt makes the repository's own Dockerfile run as
+// non-root for an Application of kind (fixNonRoot), or nothing when it
+// has none: a generated one already does.
+func (d Detection) NonRoot(kind string) NonRootFix {
+	if !d.HasDockerfile {
+		return NonRootFix{}
+	}
+	return fixNonRoot(d.dockerfile, kind)
+}
+
+// Files reports which paths Adopt would add or change for this Detection
+// and kind: a Dockerfile and .dockerignore when none exists, the existing
+// Dockerfile when NonRoot changes it, the deploy workflow when none exists
+// there, and iidp.yaml when there is none — sorted, the same order Adopt
+// itself writes them in. A preview (the wizard's summary) uses this to
+// list exactly what the pull request will add before anything happens.
+func (d Detection) Files(kind string) []string {
 	var files []string
 	if !d.HasDockerfile {
 		files = append(files, "Dockerfile", ".dockerignore")
+	} else if d.NonRoot(kind).Dockerfile != nil {
+		files = append(files, "Dockerfile")
 	}
 	if !d.HasDeployWorkflow {
 		files = append(files, templates.DeployWorkflowPath)
@@ -234,6 +249,9 @@ type AdoptResult struct {
 	// (Detection.MigrationCommand): the one written when Adopt added the
 	// file, or the one the developer should check an existing file for.
 	MigrationCommand string
+	// NonRoot is what Adopt changed in the repository's own Dockerfile
+	// so that it runs as non-root, or what the developer must change.
+	NonRoot NonRootFix
 }
 
 // Adopt reads req.Owner/req.Name through the GitHub API, refuses it when
@@ -243,7 +261,8 @@ type AdoptResult struct {
 // scope when that includes the deploy workflow), writes only that (a Dockerfile and
 // .dockerignore when none exists, the deploy workflow and iidp.yaml unless
 // one already exists there — identical or not, Adopt never modifies an
-// existing file),
+// existing file, except a Dockerfile that would run as root, when the fix
+// is known: NonRoot),
 // commits as the developer, pushes AdoptBranch and opens a pull request
 // against the default branch.
 func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, error) {
@@ -291,9 +310,14 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 		return AdoptResult{}, fmt.Errorf("%s/%s: --postgres needs --kind web-service (or a framework/detected framework that derives it); a Static site has no server to use a database", req.Owner, req.Name)
 	}
 
-	files := det.Files()
+	nonRoot := det.NonRoot(kind)
+	files := det.Files(kind)
 	if len(files) == 0 {
-		return AdoptResult{}, fmt.Errorf("%w: %s/%s already has a Dockerfile, a deploy workflow and %s", ErrNothingToAdd, req.Owner, req.Name, templates.AppConfigPath)
+		err := fmt.Errorf("%w: %s/%s already has a Dockerfile, a deploy workflow and %s", ErrNothingToAdd, req.Owner, req.Name, templates.AppConfigPath)
+		if nonRoot.Advice != "" {
+			err = fmt.Errorf("%w. Its Dockerfile may run as root, which the Platform refuses: %s", err, nonRoot.Advice)
+		}
+		return AdoptResult{}, err
 	}
 	if !det.HasDeployWorkflow {
 		if err := CheckWorkflowScope(req.Scopes); err != nil {
@@ -306,6 +330,10 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 
 	if !det.HasDockerfile {
 		if _, err := templates.RenderDockerfile(det.Framework, data, dir); err != nil {
+			return AdoptResult{}, err
+		}
+	} else if nonRoot.Dockerfile != nil {
+		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), nonRoot.Dockerfile, 0o644); err != nil {
 			return AdoptResult{}, err
 		}
 	}
@@ -341,7 +369,7 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 		Title: "Add the iidp deploy pipeline",
 		Head:  AdoptBranch,
 		Base:  repo.DefaultBranch,
-		Body:  pullRequestBody(req, files, det, migrationCommand),
+		Body:  pullRequestBody(req, files, det, migrationCommand, nonRoot),
 	})
 	if err != nil {
 		return AdoptResult{}, err
@@ -357,6 +385,7 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 		Detection:        det,
 		Binding:          binding,
 		MigrationCommand: migrationCommand,
+		NonRoot:          nonRoot,
 	}, nil
 }
 
@@ -381,7 +410,13 @@ func (a *Adopter) detect(ctx context.Context, cloneURL, branch string) (Detectio
 func detectDir(dir string) (Detection, error) {
 	var det Detection
 	det.HasDockerfile = fileExists(filepath.Join(dir, "Dockerfile"))
-	if !det.HasDockerfile {
+	if det.HasDockerfile {
+		dockerfile, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+		if err != nil {
+			return Detection{}, err
+		}
+		det.dockerfile = dockerfile
+	} else {
 		fw, err := detectFramework(dir)
 		if err != nil {
 			return Detection{}, err
@@ -446,19 +481,25 @@ func detectFramework(dir string) (templates.Framework, error) {
 // pullRequestBody describes what each added file does and what happens on
 // merge, per docs/design.md's Adopt paragraph and
 // docs/implementation-notes/12-deploy-workflow.md's write-back.
-func pullRequestBody(req AdoptRequest, files []string, det Detection, migrationCommand string) string {
+func pullRequestBody(req AdoptRequest, files []string, det Detection, migrationCommand string, nonRoot NonRootFix) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "iidp adopts %s onto Itema's Platform. This pull request adds only what is missing; nothing else in the repository is created, modified or deleted.\n\n", req.AppName)
+	if nonRoot.Dockerfile != nil {
+		fmt.Fprintf(&b, "iidp adopts %s onto Itema's Platform. This pull request adds only what is missing, and changes the Dockerfile only so that the image runs as a non-root user; nothing else in the repository is created, modified or deleted.\n\n", req.AppName)
+	} else {
+		fmt.Fprintf(&b, "iidp adopts %s onto Itema's Platform. This pull request adds only what is missing; nothing else in the repository is created, modified or deleted.\n\n", req.AppName)
+	}
 	b.WriteString("## What each file does\n\n")
 	for _, f := range files {
-		switch f {
-		case "Dockerfile":
+		switch {
+		case f == "Dockerfile" && det.HasDockerfile:
+			fmt.Fprintf(&b, "- `Dockerfile`: changed so the image runs as a non-root user, as the Platform requires of every container. %s\n", nonRoot.Change)
+		case f == "Dockerfile":
 			fmt.Fprintf(&b, "- `Dockerfile`: builds the image the deploy workflow below pushes (%s detected).\n", frameworkLabel(det.Framework))
-		case ".dockerignore":
+		case f == ".dockerignore":
 			b.WriteString("- `.dockerignore`: keeps the build context small and the image free of files it does not need.\n")
-		case templates.DeployWorkflowPath:
+		case f == templates.DeployWorkflowPath:
 			b.WriteString("- `.github/workflows/deploy.yaml`: calls iidp's reusable deploy workflow (`" + DeployWorkflowRef() + "`). On a push to the default branch, it builds the image with buildx, pushes it to GHCR tagged with the commit SHA, and deploys that tag through the Platform's Deploy gate (`iidp ci set-image`); on a `v*` tag, it retags the same image with the version, with no rebuild, and promotes it to prod. **The first merged run of this workflow is what deploys the Application for the first time.**\n")
-		case templates.AppConfigPath:
+		case f == templates.AppConfigPath:
 			if migrationCommand != "" {
 				fmt.Fprintf(&b, "- `%s`: settings the deploy workflow sends the Platform with every deploy, from the commit it deploys. It sets the migration command, `%s`, which runs before every rollout, in the new image, with `DATABASE_URL` set.\n", templates.AppConfigPath, migrationCommand)
 			} else {
@@ -472,6 +513,9 @@ func pullRequestBody(req AdoptRequest, files []string, det Detection, migrationC
 		} else {
 			fmt.Fprintf(&b, "\nDetected %s in the repository. The Application has no Postgres Capability, so `%s` sets no migration command; add `%s` there once it has one.\n", det.Migration.Tool, templates.AppConfigPath, appconfig.MigrationCommandLine(det.Migration.Command))
 		}
+	}
+	if nonRoot.Advice != "" {
+		fmt.Fprintf(&b, "\n## Before merging: the Dockerfile may run as root\n\n%s Until it does, the Application's Pods are refused.\n", nonRoot.Advice)
 	}
 	return b.String()
 }

@@ -22,7 +22,7 @@ const (
 	nextJSPackageJSON    = `{"name":"shop","dependencies":{"next":"16.0.0","react":"19.0.0","react-dom":"19.0.0"}}`
 	viteReactPackageJSON = `{"name":"shop","dependencies":{"react":"19.0.0","react-dom":"19.0.0"},"devDependencies":{"vite":"8.0.0"}}`
 	plainPackageJSON     = `{"name":"shop","dependencies":{"express":"4.0.0"}}`
-	adoptedDockerfile    = "FROM node:24-slim\nEXPOSE 3000\nCMD [\"node\", \"server.js\"]\n"
+	adoptedDockerfile    = "FROM node:24-slim\nUSER 1000:1000\nEXPOSE 3000\nCMD [\"node\", \"server.js\"]\n"
 	adoptedPrismaSchema  = "// schema\n"
 )
 
@@ -226,6 +226,8 @@ func TestAppAdoptNoKnownFrameworkRequiresKindAndProducesTheOtherStub(t *testing.
 	})
 }
 
+// A Dockerfile that already runs as a numeric non-root user is left as it
+// is; nothing tells a Static site image from a Web service one.
 func TestAppAdoptWithExistingDockerfileIsNeverModifiedAndRequiresKind(t *testing.T) {
 	platformURL := newPlatformRepository(t, testPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -266,12 +268,75 @@ func TestAppAdoptWithExistingDockerfileIsNeverModifiedAndRequiresKind(t *testing
 		if got := lookup(t, values, "kind"); got != "web-service" {
 			t.Errorf("values.yaml kind = %v, want web-service (from --kind)", got)
 		}
-		// The repository's own Dockerfile may run as root (iprofil's
-		// does), so nothing promises the chart otherwise.
-		if got, has := values["runAsNonRoot"]; has {
-			t.Errorf("values.yaml runAsNonRoot = %v, want it absent for an Adopted Dockerfile", got)
+		if pr := gh.pullRequestsTo(platform.Org, "shop")[0]; strings.Contains(pr.Body, "root") {
+			t.Errorf("pull request body talks about root for a Dockerfile that runs as 1000:\n%s", pr.Body)
 		}
 	})
+}
+
+// A Dockerfile that would run as root, with a known fix: the pull request
+// changes it, says how, and still adds the rest (#110). The fixes
+// themselves are nonroot_test.go's.
+func TestAppAdoptFixesADockerfileThatRunsAsRoot(t *testing.T) {
+	platformURL := newPlatformRepository(t, testPlatformYAML)
+	gh := newFakeGitHub(t)
+	const rootNginx = "FROM nginx:1.30-alpine\nCOPY index.html /usr/share/nginx/html/\nEXPOSE 80\n"
+	gh.seedAdoptRepository(t, platform.Org, "brochure", "main", map[string]string{"Dockerfile": rootNginx})
+
+	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--path", "adopt", "--repo", platform.Org+"/brochure", "--kind", "static-site")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	cloneURL := gh.cloneURL(platform.Org, "brochure")
+	dir := filepath.Join(t.TempDir(), "diff")
+	gitRun(t, t.TempDir(), "clone", "--quiet", cloneURL, dir)
+	gitRun(t, dir, "fetch", "--quiet", "origin", apprepo.AdoptBranch)
+	if got, want := strings.TrimSpace(gitRun(t, dir, "diff", "--name-status", "HEAD", "FETCH_HEAD")), "A\t.github/workflows/deploy.yaml\nM\tDockerfile\nA\tiidp.yaml"; got != want {
+		t.Errorf("the pull request's changes:\n%s\nwant:\n%s", got, want)
+	}
+	dockerfile, err := os.ReadFile(filepath.Join(cloneBranch(t, cloneURL, apprepo.AdoptBranch), "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "FROM nginxinc/nginx-unprivileged:1.30-alpine\nCOPY index.html /usr/share/nginx/html/\nEXPOSE 8080\n"; string(dockerfile) != want {
+		t.Errorf("Dockerfile:\n%s\nwant:\n%s", dockerfile, want)
+	}
+	pr := gh.pullRequestsTo(platform.Org, "brochure")[0]
+	for _, want := range []string{"changes the Dockerfile only so that the image runs as a non-root user", "`FROM nginxinc/nginx-unprivileged:1.30-alpine`"} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("pull request body lacks %q:\n%s", want, pr.Body)
+		}
+	}
+	if !strings.Contains(stdout, "Dockerfile (changed, to run as non-root") {
+		t.Errorf("stdout does not say the Dockerfile changed:\n%s", stdout)
+	}
+}
+
+// A Dockerfile that may run as root, with no known fix: left as it is, and
+// both the pull request and the output say what to change.
+func TestAppAdoptSaysWhatToChangeInADockerfileItCantFix(t *testing.T) {
+	platformURL := newPlatformRepository(t, testPlatformYAML)
+	gh := newFakeGitHub(t)
+	const python = "FROM python:3.13-slim\nCOPY . /app\nCMD [\"python\", \"/app/main.py\"]\n"
+	gh.seedAdoptRepository(t, platform.Org, "shop", "main", map[string]string{"Dockerfile": python})
+
+	stdout, stderr, code := createApplication(t, platformURL, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--path", "adopt", "--repo", platform.Org+"/shop", "--kind", "web-service")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	assertOnlyAddedFiles(t, gh.cloneURL(platform.Org, "shop"), apprepo.AdoptBranch, []string{".github/workflows/deploy.yaml", "iidp.yaml"})
+	pr := gh.pullRequestsTo(platform.Org, "shop")[0]
+	for _, want := range []string{"## Before merging: the Dockerfile may run as root", "`python:3.13-slim`", "`USER 1000:1000`"} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("pull request body lacks %q:\n%s", want, pr.Body)
+		}
+	}
+	if !strings.Contains(stdout, "Change it before merging") {
+		t.Errorf("stdout does not say what to change:\n%s", stdout)
+	}
 }
 
 func TestAppAdoptRefusesWithoutPushAccess(t *testing.T) {
