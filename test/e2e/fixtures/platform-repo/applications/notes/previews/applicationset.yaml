@@ -80,7 +80,7 @@ spec:
                     annotations:
                         argocd.argoproj.io/tracking-id: notes-pr-{{.number}}:/Namespace:/notes-pr-{{.number}}
                 retry:
-                    limit: -1
+                    limit: 3
                     refresh: true
                     backoff:
                         duration: 10s

@@ -117,7 +117,7 @@ func ExamplePreviewApplicationSet() {
 	//                     annotations:
 	//                         argocd.argoproj.io/tracking-id: shop-pr-{{.number}}:/Namespace:/shop-pr-{{.number}}
 	//                 retry:
-	//                     limit: -1
+	//                     limit: 3
 	//                     refresh: true
 	//                     backoff:
 	//                         duration: 10s
@@ -151,6 +151,57 @@ func TestPreviewApplicationSetNamesTheGitHubAPIOnlyWhenGiven(t *testing.T) {
 		if api != "" && got != api {
 			t.Errorf("api = %v, want %s", got, api)
 		}
+	}
+}
+
+// A preview retries a failed sync a limited number of times, so a sync that
+// keeps failing ends and lets ArgoCD delete the preview when its pull
+// request closes (#131). The staging Environment it copies still retries
+// without limit (#75).
+func TestPreviewRetriesALimitedNumberOfTimesWhereStagingRetriesForEver(t *testing.T) {
+	type syncRetry struct {
+		Limit   int  `yaml:"limit"`
+		Refresh bool `yaml:"refresh"`
+	}
+	staging := stagingApplication(false)
+	var app struct {
+		Spec struct {
+			SyncPolicy struct {
+				Retry syncRetry `yaml:"retry"`
+			} `yaml:"syncPolicy"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal(staging, &app); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.Spec.SyncPolicy.Retry; got.Limit != -1 || !got.Refresh {
+		t.Errorf("staging's retry = %+v, want limit -1 with refresh", got)
+	}
+
+	out, err := render.PreviewApplicationSet(render.Previews{Application: "shop", Owner: "Itema-as", Repository: "shop", Staging: staging})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var set struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					SyncPolicy struct {
+						Retry syncRetry `yaml:"retry"`
+					} `yaml:"syncPolicy"`
+				} `yaml:"spec"`
+			} `yaml:"template"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal(out, &set); err != nil {
+		t.Fatal(err)
+	}
+	got := set.Spec.Template.Spec.SyncPolicy.Retry
+	if got.Limit < 0 || got.Limit != render.PreviewRetryLimit {
+		t.Errorf("preview's retry limit = %d, want %d, a finite number", got.Limit, render.PreviewRetryLimit)
+	}
+	if !got.Refresh {
+		t.Error("preview's retry has no refresh; each retry must sync the newest commit")
 	}
 }
 

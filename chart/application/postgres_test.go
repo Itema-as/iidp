@@ -299,6 +299,27 @@ func TestMigrationJobRunsTheCommandBeforeTheRolloutOnlyWhenSet(t *testing.T) {
 	}
 }
 
+// A migration Job whose Pod never starts fails at its deadline instead of
+// holding the sync, and with it the Environment's deletion, for ever (#131).
+// Every Environment's, a Preview Environment's among them.
+func TestEveryMigrationJobHasADeadline(t *testing.T) {
+	var seen []string
+	for _, fixture := range renderingFixtures(t) {
+		for key, obj := range render(t, fixture) {
+			if !strings.HasPrefix(key, "Job/") || !strings.HasSuffix(key, "-migrate") {
+				continue
+			}
+			seen = append(seen, fixture+": "+key)
+			if deadline := get[int](t, obj, "spec", "activeDeadlineSeconds"); deadline != 1800 {
+				t.Errorf("%s %s: activeDeadlineSeconds = %d, want 1800", fixture, key, deadline)
+			}
+		}
+	}
+	if !slices.ContainsFunc(seen, func(s string) bool { return strings.HasPrefix(s, "preview-") }) {
+		t.Errorf("no preview fixture rendered a migration Job; checked %v", seen)
+	}
+}
+
 // matches reports whether labels satisfy every key of selector.
 func matches(selector, labels map[string]any) bool {
 	for key, value := range selector {
