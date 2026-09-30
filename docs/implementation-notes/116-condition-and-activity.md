@@ -39,8 +39,8 @@ The new cut-down structs follow the existing convention, the API's own JSON name
 
 The order is Leaving, then Arriving or Unreleased, then Deploying, then Updating.
 
-- **Leaving** is the ArgoCD Application's `deletionTimestamp`. It is stuck on a `DeletionError` condition or a failed `final-backup` Job.
-- **Arriving** runs until the workload has served. With no Deployment, it is Unreleased 30 minutes after the ArgoCD Application's creation. A Deploy into an Unreleased Environment makes it Arriving again, with the Deploy attached.
+- **Leaving** is the ArgoCD Application's `deletionTimestamp`. It is stuck on a `DeletionError` condition or a failed `final-backup` Job. Since #132, also on a `final-backup` Pod that is `Unschedulable`, and after 45 minutes ([132-stuck-states.md](132-stuck-states.md)).
+- **Arriving** runs until the workload has served. With no Deployment, it is Unreleased 30 minutes after the ArgoCD Application's creation. A Deploy into an Unreleased Environment makes it Arriving again, with the Deploy attached. Since #132, an arrival with a Deploy or a Deployment on its way is stuck after 15 minutes with no step forward.
 - **Deploying** is a Deploy under way (below).
 - **Updating** is anything else changing: ArgoCD `OutOfSync`, a sync running, or the Deployment mid-rollout.
 - **A stuck signal with no Activity is Updating, stuck.** Something that is not landing is a change, even when ArgoCD shows nothing in progress, as after a failed sync of a Capability.
@@ -49,7 +49,7 @@ The stuck rules are #100's. Four points had to be pinned down:
 
 - **"OutOfSync with no operation for 5 minutes": since when?** ArgoCD does not record when an Application turned OutOfSync. A watch does, and passes it as `OutOfSyncSince`. Without it, the start is the later of the ArgoCD Application's creation and its last operation's end, or, for a Deploy waiting for ArgoCD, its acceptance. `OutOfSyncSince` is used when it is later than that. This errs towards "not yet stuck".
 - **A Deploy is stuck only by the rules of the hop it is at.** An older failed sync, of a commit before the Deploy's, does not make a newer Deploy stuck at Waiting for ArgoCD. ArgoCD tries each new commit afresh.
-- **A failed migration** is the newest migration Job, `Failed`. For a Deploy it counts only when that Job ran the Deploy's tag.
+- **A failed migration** is the newest migration Job, `Failed`. For a Deploy it counts only when that Job ran the Deploy's tag. Since #132, so does a newest migration Job whose Pod is `Unschedulable`.
 - **A failing image pull** is `ErrImagePull`, `ImagePullBackOff` or `InvalidImageName` on one of the workload's pods. For a Deploy, only on a pod of its tag.
 
 ## Where a Deploy is

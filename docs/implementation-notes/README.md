@@ -42,3 +42,5 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #118 | [118-argus-backend.md](118-argus-backend.md) |
 | #119 | [119-argus-frontend.md](119-argus-frontend.md) |
 | #128 | [128-e2e-image-cache.md](128-e2e-image-cache.md) |
+| #131 | [131-preview-sync-ends.md](131-preview-sync-ends.md) |
+| #132 | [132-stuck-states.md](132-stuck-states.md) |

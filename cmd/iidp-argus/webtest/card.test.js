@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { componentCard, coreCard, environmentCard } from '../web/js/card.js';
-import { componentLook, envLook, TAGS } from '../web/js/look.js';
+import { componentLook, envLook, TAGS, warningTag } from '../web/js/look.js';
 
 const now = Date.parse('2026-09-28T12:00:00Z');
 const platform = { argocdURL: 'https://argocd.example.test', grafanaURL: 'https://itema.grafana.net', platformRepository: 'https://github.com/Itema-as/iidp-platform', bootstrapRepository: 'https://github.com/Itema-as/iidp', bootstrapRevision: 'v1.2.3' };
@@ -85,4 +85,11 @@ test('loud looks have a shape and a marked tag, not only a colour', () => {
   assert.equal(envLook({ ...base, activity: { state: 'Updating', stuck: false } }).wave, true);
   assert.equal(envLook({ ...base, activity: { state: 'Arriving', stuck: false } }, { preview: true }).tag, null, 'a preview arrives quietly');
   assert.equal(componentLook({ name: 'traefik', condition: { state: 'Degraded' }, activity: null }).shape, 'broken');
+});
+
+test("a Scheduled task's Warning tag says whether its last run failed or cannot start (#132)", () => {
+  const task = (warning) => ({ type: 'scheduled-task', name: 'heartbeat', condition: { state: 'Healthy', warning }, activity: null });
+  assert.equal(warningTag(task('the last run failed at 2026-09-29 10:00 UTC')), '! TASK FAILED');
+  assert.equal(warningTag(task("the last run's Pod hello-heartbeat-1-x is Unschedulable: 0/1 nodes are available: 1 Insufficient cpu.")), '! TASK PENDING');
+  assert.equal(warningTag(task(undefined)), null);
 });

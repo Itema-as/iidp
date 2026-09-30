@@ -79,7 +79,7 @@ export function warningTag(cap) {
   if (!w) return null;
   if (cap.type === 'postgres') return /wal/i.test(w) ? '! ARCHIVING' : '! BACKUPS';
   if (cap.type === 'custom-domain') return '! CERTIFICATE';
-  if (cap.type === 'scheduled-task') return '! TASK FAILED';
+  if (cap.type === 'scheduled-task') return /^the last run failed/.test(w) ? '! TASK FAILED' : '! TASK PENDING';
   return '! WARNING';
 }
 

@@ -148,7 +148,8 @@ func ArgoCDApplication(env Environment, chart Chart, platformRepoURL, valuesPath
 				// each time against the newest commit. Without refresh, a
 				// failing sync (a migration, say) keeps retrying the commit
 				// it started on while the fix already sits in the Platform
-				// repository (#75).
+				// repository (#75). Preview Environments retry a limited
+				// number of times instead (PreviewRetryLimit).
 				Retry: retry{
 					Limit:   -1,
 					Refresh: true,

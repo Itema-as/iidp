@@ -26,6 +26,7 @@
 package platformstate
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -142,12 +143,17 @@ const (
 	RunSucceeded = "succeeded"
 	RunFailed    = "failed"
 	RunRunning   = "running"
+	RunPending   = "pending"
 )
 
 // Run is one Job: a migration, or a Scheduled task's run.
 type Run struct {
-	// Result is succeeded, failed or running.
-	Result     string     `json:"result"`
+	// Result is succeeded, failed, running, or pending while no pod of
+	// the Job has started: there is none yet, or it waits to be
+	// scheduled or for its image.
+	Result string `json:"result"`
+	// StartedAt is when the Job controller started the Job, pending
+	// included.
 	StartedAt  *time.Time `json:"startedAt,omitempty"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 }
@@ -236,7 +242,7 @@ func environmentOf(application string, o Objects, now time.Time) (Environment, [
 			migrations = append(migrations, job)
 		}
 	}
-	env.Migration = newestRun(migrations)
+	env.Migration = newestRun(migrations, o.Pods)
 
 	byTask := jobsByTask(o.Jobs)
 	for _, cronJob := range o.CronJobs {
@@ -248,7 +254,7 @@ func environmentOf(application string, o Objects, now time.Time) (Environment, [
 			Name:             name,
 			Schedule:         cronJob.Spec.Schedule,
 			LastScheduleTime: cronJob.Status.LastScheduleTime,
-			LastRun:          newestRun(byTask[name]),
+			LastRun:          newestRun(byTask[name], o.Pods),
 		})
 	}
 	sort.Slice(env.Tasks, func(i, j int) bool { return env.Tasks[i].Name < env.Tasks[j].Name })
@@ -398,8 +404,9 @@ func matches(labels, selector map[string]string) bool {
 	return true
 }
 
-// newestRun is the result of the newest Job, by creation.
-func newestRun(jobs []Job) *Run {
+// newestRun is the result of the newest Job, by creation, with pods the
+// namespace's pods, among which are the Job's.
+func newestRun(jobs []Job, pods []Pod) *Run {
 	if len(jobs) == 0 {
 		return nil
 	}
@@ -410,6 +417,9 @@ func newestRun(jobs []Job) *Run {
 		}
 	}
 	run := &Run{Result: RunRunning, StartedAt: newest.Status.StartTime}
+	if !jobStarted(newest, pods) {
+		run.Result = RunPending
+	}
 	for _, c := range newest.Status.Conditions {
 		if c.Status != "True" {
 			continue
@@ -428,27 +438,25 @@ func newestRun(jobs []Job) *Run {
 	return run
 }
 
-// addressesOf is ArgoCD's external URLs, one per host, https preferred,
-// sorted.
+// addressesOf is https://<host> for each host in ArgoCD's external URLs,
+// one per host, sorted. ArgoCD's scheme is not kept: it writes http:// for
+// an Ingress host whose TLS entry names no Secret, which is every Platform
+// address, since their wildcard certificate is Traefik's default. Every
+// Application Ingress is on the websecure entrypoint only
+// (chart/application/templates/ingress*.yaml), so every host is served
+// over HTTPS; plain HTTP is only redirected to it.
 func addressesOf(urls []string) []string {
-	byHost := map[string]string{}
+	out := []string{}
 	for _, u := range urls {
-		scheme, rest, ok := strings.Cut(u, "://")
+		_, rest, ok := strings.Cut(u, "://")
 		if !ok {
 			continue
 		}
-		host := strings.TrimSuffix(rest, "/")
-		if existing, seen := byHost[host]; seen && strings.HasPrefix(existing, "https://") {
-			continue
-		}
-		byHost[host] = scheme + "://" + host
-	}
-	out := make([]string, 0, len(byHost))
-	for _, u := range byHost {
-		out = append(out, u)
+		host, _, _ := strings.Cut(rest, "/")
+		out = append(out, "https://"+host)
 	}
 	sort.Strings(out)
-	return out
+	return slices.Compact(out)
 }
 
 // splitImage splits an image reference into its repository and its tag

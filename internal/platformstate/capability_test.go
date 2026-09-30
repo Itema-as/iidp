@@ -253,6 +253,85 @@ func TestFailedScheduledTaskRunIsAWarning(t *testing.T) {
 	}
 }
 
+// A run is pending until a pod of its Job has started, and then running
+// until the Job finishes: a migration and a Scheduled task's run alike.
+func TestRunIsPendingUntilItsPodStarts(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		condition string
+		pods      []obj
+		want      string
+	}{
+		{"no pod yet", "", nil, platformstate.RunPending},
+		{"its pod Unschedulable", "", []obj{unschedulableJobPod("shop-migration-a", "shop-migration")}, platformstate.RunPending},
+		{"its pod getting its image", "", []obj{jobPod("shop-migration-a", "shop-migration", "Pending")}, platformstate.RunPending},
+		{"only another Job's pod running", "", []obj{jobPod("shop-migration-old", "shop-migration-old", "Running")}, platformstate.RunPending},
+		{"its pod running", "", []obj{jobPod("shop-migration-a", "shop-migration", "Running")}, platformstate.RunRunning},
+		{"its pod running, by the older label alone", "", []obj{func() obj {
+			p := jobPod("shop-migration-a", "shop-migration", "Running")
+			delete(p["metadata"].(obj)["labels"].(obj), "batch.kubernetes.io/job-name")
+			return p
+		}()}, platformstate.RunRunning},
+		{"its pod done, the Job not yet", "", []obj{jobPod("shop-migration-a", "shop-migration", "Succeeded")}, platformstate.RunRunning},
+		{"a second pod pending after one that failed", "", []obj{jobPod("shop-migration-a", "shop-migration", "Failed"), jobPod("shop-migration-b", "shop-migration", "Pending")}, platformstate.RunRunning},
+		{"Complete, its pod gone", "Complete", nil, platformstate.RunSucceeded},
+		{"Failed, its pod gone", "Failed", nil, platformstate.RunFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := env()
+			f.cronJobs = []obj{{"metadata": obj{"name": "shop-report", "namespace": "shop-prod", "creationTimestamp": ago(24 * time.Hour),
+				"labels": obj{"app.kubernetes.io/component": "scheduled-task", "iidp.itema.no/task": "report"}}}}
+			m := migration("1.0.0", time.Minute, tc.condition)
+			run := job("scheduled-task", "1.0.0", time.Minute, tc.condition)
+			run["metadata"].(obj)["name"] = "shop-migration"
+			run["metadata"].(obj)["labels"].(obj)["iidp.itema.no/task"] = "report"
+			f.jobs = []obj{m}
+			f.pods = append([]obj{readyPod("shop-a", "1.0.0")}, tc.pods...)
+			if got := f.state(t).Migration; got == nil || got.Result != tc.want {
+				t.Errorf("migration = %+v, want %s", got, tc.want)
+			}
+			// A task's run, as the Job the same pods belong to, reads the
+			// same.
+			f.jobs = []obj{run}
+			if got := f.state(t).Tasks; len(got) != 1 || got[0].LastRun == nil || got[0].LastRun.Result != tc.want {
+				t.Errorf("tasks = %+v, want the last run %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// A Scheduled task run whose pod cannot be scheduled is the task's
+// Warning, as a failed run is. Tasks do not block serving, so the
+// Environment is neither Degraded nor stuck (#132, heartbeat in
+// hello-staging and hello-prod).
+func TestUnschedulableScheduledTaskRunIsAWarning(t *testing.T) {
+	f := env()
+	f.cronJobs = []obj{{"metadata": obj{"name": "shop-heartbeat", "namespace": "shop-prod", "creationTimestamp": ago(24 * time.Hour),
+		"labels": obj{"app.kubernetes.io/component": "scheduled-task", "iidp.itema.no/task": "heartbeat", "iidp.itema.no/application": "shop"}},
+		"spec": obj{"schedule": "*/10 * * * *"}}}
+	run := job("scheduled-task", "1.0.0", 3*time.Minute, "")
+	run["metadata"].(obj)["name"] = "shop-heartbeat-29311500"
+	run["metadata"].(obj)["labels"].(obj)["iidp.itema.no/task"] = "heartbeat"
+	f.jobs = []obj{run}
+	f.pods = []obj{readyPod("shop-a", "1.0.0"), unschedulableJobPod("shop-heartbeat-29311500-q8w4d", "shop-heartbeat-29311500")}
+
+	got := f.state(t)
+	want{condition: "Healthy"}.check(t, got)
+	task := capability(t, got, platformstate.CapabilityScheduledTask)
+	if w := "the last run's Pod shop-heartbeat-29311500-q8w4d is Unschedulable: 0/1 nodes are available: 1 Insufficient cpu."; task.Condition.State != platformstate.Healthy || task.Condition.Warning != w || task.Activity != nil {
+		t.Errorf("Scheduled task = %+v, want Healthy with the Warning %q", task, w)
+	}
+	if len(got.Tasks) != 1 || got.Tasks[0].LastRun == nil || got.Tasks[0].LastRun.Result != platformstate.RunPending {
+		t.Errorf("Tasks = %+v, want the last run pending", got.Tasks)
+	}
+
+	// A run pending for its image is no Warning.
+	f.pods = []obj{readyPod("shop-a", "1.0.0"), jobPod("shop-heartbeat-29311500-q8w4d", "shop-heartbeat-29311500", "Pending")}
+	if task := capability(t, f.state(t), platformstate.CapabilityScheduledTask); task.Condition.Warning != "" {
+		t.Errorf("Scheduled task = %+v, want no Warning", task)
+	}
+}
+
 // Platform components: a Condition, plus Updating for one ArgoCD manages.
 // Traefik and k3s's own parts have a Condition only.
 func TestPlatformComponents(t *testing.T) {

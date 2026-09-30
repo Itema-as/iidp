@@ -20,6 +20,15 @@ metadata:
 spec:
   # One attempt: a migration that failed once must not be retried blindly.
   backoffLimit: 0
+  # A Job whose Pod never starts (Unschedulable, or its image never pulled)
+  # never fails, so ArgoCD would wait on the hook, and keep the sync
+  # running, for ever. A running sync holds up the Environment's deletion,
+  # which is how a closed pull request's Preview Environment got stuck
+  # (#131). The deadline counts from the Job's start, time its Pod spends
+  # Pending included, and fails the Job, which fails the sync. 30 minutes
+  # leaves a preview's first sync room to wait for its image to be built.
+  # Not a value: nothing so far has asked for a longer migration.
+  activeDeadlineSeconds: 1800
   template:
     metadata:
       # Not the selector labels: the Service must never route to this Pod.
