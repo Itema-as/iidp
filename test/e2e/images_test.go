@@ -124,13 +124,15 @@ func TestManifestImages(t *testing.T) {
 }
 
 // RegistryImages reads the images from the pinned charts, so a chart bump
-// is followed with no edit to the harness. Needs helm and the network.
+// is followed with no edit to the harness. It fetches the charts from their
+// repositories, so it runs only where IIDP_REQUIRE_CHART_TOOLS is set (the
+// e2e workflow's lint job), not in every go test ./... with helm on PATH.
 func TestRegistryImagesFollowThePinnedCharts(t *testing.T) {
+	if os.Getenv("IIDP_REQUIRE_CHART_TOOLS") == "" {
+		t.Skip("fetches charts over the network; set IIDP_REQUIRE_CHART_TOOLS=1 to run")
+	}
 	if _, err := exec.LookPath("helm"); err != nil {
-		if os.Getenv("IIDP_REQUIRE_CHART_TOOLS") != "" {
-			t.Fatal("helm not on PATH and IIDP_REQUIRE_CHART_TOOLS is set")
-		}
-		t.Skip("helm not on PATH")
+		t.Fatal("helm not on PATH and IIDP_REQUIRE_CHART_TOOLS is set")
 	}
 	root, err := RepoRoot()
 	if err != nil {
@@ -154,5 +156,19 @@ func TestRegistryImagesFollowThePinnedCharts(t *testing.T) {
 	}
 	if !redis || !traefik || !alloy || !slices.Contains(images, versions.KSOPS.Image) {
 		t.Errorf("RegistryImages = %q: want ArgoCD's Redis, Traefik, Alloy and %s", images, versions.KSOPS.Image)
+	}
+}
+
+// The kind node image's local name carries the pinned digest, so moving
+// the pin gives a new name and a new archive.
+func TestLocalNodeImage(t *testing.T) {
+	for pinned, want := range map[string]string{
+		"kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed": "iidp-e2e.local/kind-node:sha256-099e049362a1526b",
+		"kindest/node:v1.36.4":                "iidp-e2e.local/kind-node:v1.36.4",
+		"localhost:5000/kindest/node:v1.36.4": "iidp-e2e.local/kind-node:v1.36.4",
+	} {
+		if got := localNodeImage(pinned); got != want {
+			t.Errorf("localNodeImage(%q) = %q, want %q", pinned, got, want)
+		}
 	}
 }

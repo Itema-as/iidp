@@ -187,6 +187,8 @@ type Cluster struct {
 	Versions Versions
 	// Log receives progress lines; tests pass t.Logf.
 	Log func(format string, args ...any)
+
+	images *imageCache
 }
 
 // NewCluster describes a cluster without creating it.
@@ -224,7 +226,12 @@ func NewCluster(name string, logf func(format string, args ...any)) (*Cluster, e
 		}
 		httpsPort = p
 	}
+	images, err := openImageCache()
+	if err != nil {
+		return nil, err
+	}
 	return &Cluster{
+		images:     images,
 		Name:       name,
 		Kubeconfig: kubeconfig.Name(),
 		HTTPPort:   httpPort,
@@ -299,12 +306,16 @@ nodes:
 		return err
 	}
 	defer os.Remove(configFile)
-	c.Log("creating kind cluster %s from %s", c.Name, c.Versions.Kind.NodeImage)
+	nodeImage, err := c.ensureNodeImage(ctx)
+	if err != nil {
+		return err
+	}
+	c.Log("creating kind cluster %s from %s (%s)", c.Name, nodeImage, c.Versions.Kind.NodeImage)
 	out, err = c.run(ctx, "kind", "create", "cluster",
 		"--name", c.Name,
 		"--config", configFile,
 		"--kubeconfig", c.Kubeconfig,
-		"--image", c.Versions.Kind.NodeImage,
+		"--image", nodeImage,
 		"--wait", "120s")
 	if err != nil {
 		return fmt.Errorf("kind create cluster: %w\n%s", err, out)
@@ -337,13 +348,15 @@ nodes:
 	return nil
 }
 
-// Delete removes the kind cluster and the kubeconfig.
+// Delete removes the kind cluster, the kubeconfig and a temporary image
+// cache.
 func (c *Cluster) Delete(ctx context.Context) error {
 	out, err := c.run(ctx, "kind", "delete", "cluster", "--name", c.Name, "--kubeconfig", c.Kubeconfig)
 	if err != nil {
 		return fmt.Errorf("kind delete cluster: %w\n%s", err, out)
 	}
 	os.Remove(c.Kubeconfig)
+	c.images.remove()
 	return nil
 }
 

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -54,12 +56,16 @@ func (c *Cluster) RegistryImages(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("helm template traefik: %w", err)
 	}
-	alloy, err := c.alloyImage(ctx)
-	if err != nil {
-		return nil, err
-	}
 	images := append(manifestImages(argocd), manifestImages(traefik)...)
-	images = append(images, c.Versions.KSOPS.Image, alloy)
+	images = append(images, c.Versions.KSOPS.Image)
+	// Alloy's tag is read from inside a third-party chart. If a release
+	// moves it, the node pulls Alloy itself rather than the run failing;
+	// TestRegistryImagesFollowThePinnedCharts is what fails.
+	if alloy, err := c.alloyImage(ctx); err != nil {
+		c.Log("image cache: leaving Alloy to the node: %v", err)
+	} else {
+		images = append(images, alloy)
+	}
 	return RateLimited(images), nil
 }
 
@@ -132,48 +138,72 @@ func registry(image string) string {
 	return first
 }
 
-// PreloadImages loads each image into the node from the image cache, or
-// pulls it on this machine first, retrying a refused pull, and saves it to
-// the cache. The cache is left holding only these images, and its index
-// lists them.
-func (c *Cluster) PreloadImages(ctx context.Context, images []string) error {
-	dir := os.Getenv(ImageCacheEnv)
-	if dir == "" {
-		tmp, err := os.MkdirTemp("", "iidp-e2e-images-*")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(tmp)
-		dir = tmp
+// imageCache is the directory the image archives are kept in: the one
+// ImageCacheEnv names, or a temporary one Delete removes.
+type imageCache struct {
+	dir       string
+	temporary bool
+	// used are the archives this run needed, the kind node image's
+	// included; finish keeps only these.
+	used []string
+}
+
+func openImageCache() (*imageCache, error) {
+	if dir := os.Getenv(ImageCacheEnv); dir != "" {
+		return &imageCache{dir: dir}, os.MkdirAll(dir, 0o755)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	dir, err := os.MkdirTemp("", "iidp-e2e-images-*")
+	return &imageCache{dir: dir, temporary: true}, err
+}
+
+// archive is the path of the named archive, recorded as used.
+func (ic *imageCache) archive(name string) string {
+	ic.used = append(ic.used, name)
+	return filepath.Join(ic.dir, name)
+}
+
+// finish removes the archives this run did not use and writes the index
+// listing those it did.
+func (ic *imageCache) finish() error {
+	used := map[string]bool{}
+	for _, name := range ic.used {
+		used[name] = true
 	}
-	arch, err := c.nodeArch(ctx)
-	if err != nil {
-		return err
-	}
-	keep := map[string]bool{imageCacheIndex: true}
-	var index []string
-	for _, image := range images {
-		name := archiveName(image, arch)
-		keep[name] = true
-		index = append(index, name)
-		if err := c.preloadImage(ctx, image, arch, filepath.Join(dir, name)); err != nil {
-			return err
-		}
-	}
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(ic.dir)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
-		if !keep[e.Name()] {
-			os.RemoveAll(filepath.Join(dir, e.Name()))
+		if !used[e.Name()] && e.Name() != imageCacheIndex {
+			os.RemoveAll(filepath.Join(ic.dir, e.Name()))
 		}
 	}
-	sort.Strings(index)
-	return os.WriteFile(filepath.Join(dir, imageCacheIndex), []byte(strings.Join(index, "\n")+"\n"), 0o644)
+	index := sortedKeys(used)
+	return os.WriteFile(filepath.Join(ic.dir, imageCacheIndex), []byte(strings.Join(index, "\n")+"\n"), 0o644)
+}
+
+func (ic *imageCache) remove() {
+	if ic.temporary {
+		os.RemoveAll(ic.dir)
+	}
+}
+
+// PreloadImages loads each image into the node from the image cache, or
+// pulls it on this machine first, retrying a refused pull, and saves it to
+// the cache. Then it leaves the cache holding only the images this run
+// used, the kind node image's included, and writes its index.
+func (c *Cluster) PreloadImages(ctx context.Context, images []string) error {
+	arch, err := c.nodeArch(ctx)
+	if err != nil {
+		return err
+	}
+	for _, image := range images {
+		archive := c.images.archive(archiveName(image, arch))
+		if err := c.preloadImage(ctx, image, arch, archive); err != nil {
+			return err
+		}
+	}
+	return c.images.finish()
 }
 
 func (c *Cluster) preloadImage(ctx context.Context, image, arch, archive string) error {
@@ -186,6 +216,19 @@ func (c *Cluster) preloadImage(ctx context.Context, image, arch, archive string)
 		c.Log("image cache: loading %s failed, pulling it again: %v\n%s", filepath.Base(archive), err, out)
 		os.Remove(archive)
 	}
+	if err := c.pullAndSave(ctx, image, image, arch, archive); err != nil {
+		return err
+	}
+	if out, err := c.run(ctx, "kind", "load", "image-archive", archive, "--name", c.Name); err != nil {
+		return fmt.Errorf("kind load image-archive %s: %w\n%s", image, err, out)
+	}
+	return nil
+}
+
+// pullAndSave pulls image for linux/arch, retrying a refused pull, and
+// saves it to archive under the name saveAs, tagging it first when that
+// differs.
+func (c *Cluster) pullAndSave(ctx context.Context, image, saveAs, arch, archive string) error {
 	attempts, err := retryPull(ctx, pullBackoff, func() (string, error) {
 		return c.run(ctx, c.Provider, "pull", "--platform", "linux/"+arch, image)
 	}, func(attempt int, wait time.Duration, out string) {
@@ -195,9 +238,18 @@ func (c *Cluster) preloadImage(ctx context.Context, image, arch, archive string)
 		return fmt.Errorf("pull %s: %w", image, err)
 	}
 	c.Log("image cache: pulled %s from its registry (attempt %d)", image, attempts)
-	// docker save writes every platform of a multi-platform image unless
-	// told one, and fails on those it did not pull; podman save only ever
-	// has the one.
+	if saveAs != image {
+		if out, err := c.run(ctx, c.Provider, "tag", image, saveAs); err != nil {
+			return fmt.Errorf("%s tag %s %s: %w\n%s", c.Provider, image, saveAs, err, out)
+		}
+	}
+	return c.save(ctx, saveAs, arch, archive)
+}
+
+// save writes image, already in the container engine, to archive. docker
+// save writes every platform of a multi-platform image unless told one, and
+// fails on those it did not pull; podman save only ever has the one.
+func (c *Cluster) save(ctx context.Context, image, arch, archive string) error {
 	args := []string{"save", "-o", archive + ".partial"}
 	if c.Provider == "docker" {
 		args = append(args, "--platform", "linux/"+arch)
@@ -206,13 +258,53 @@ func (c *Cluster) preloadImage(ctx context.Context, image, arch, archive string)
 		os.Remove(archive + ".partial")
 		return fmt.Errorf("%s save %s: %w\n%s", c.Provider, image, err, out)
 	}
-	if err := os.Rename(archive+".partial", archive); err != nil {
-		return err
+	return os.Rename(archive+".partial", archive)
+}
+
+// ensureNodeImage makes the pinned kind node image available to the
+// container engine without a registry pull when the cache has it, and
+// returns the name to create the cluster from. kind pulls the node image
+// from Docker Hub unless `docker inspect --type=image <name>` finds it, and
+// after save and load Docker's classic image store no longer resolves a
+// reference by digest. So the image is pulled by the pinned digest, tagged
+// with a local name carrying that digest, and cached and handed to kind
+// under that name.
+func (c *Cluster) ensureNodeImage(ctx context.Context) (string, error) {
+	pinned := c.Versions.Kind.NodeImage
+	local := localNodeImage(pinned)
+	archive := c.images.archive(archiveName(local, runtime.GOARCH))
+	present := func() bool {
+		return exec.CommandContext(ctx, c.Provider, "image", "inspect", local).Run() == nil
 	}
-	if out, err := c.run(ctx, "kind", "load", "image-archive", archive, "--name", c.Name); err != nil {
-		return fmt.Errorf("kind load image-archive %s: %w\n%s", image, err, out)
+	// Only a machine that keeps images between runs, such as a laptop,
+	// has it already; a CI runner starts empty.
+	if present() {
+		c.Log("image cache: %s is already in %s", local, c.Provider)
+		return local, nil
 	}
-	return nil
+	if _, err := os.Stat(archive); err == nil {
+		out, err := c.run(ctx, c.Provider, "load", "-i", archive)
+		if err == nil && present() {
+			c.Log("image cache: loaded %s from %s, with no registry pull", local, filepath.Base(archive))
+			return local, nil
+		}
+		c.Log("image cache: loading %s failed, pulling it again: %v\n%s", filepath.Base(archive), err, out)
+		os.Remove(archive)
+	}
+	return local, c.pullAndSave(ctx, pinned, local, runtime.GOARCH, archive)
+}
+
+// localNodeImage is the local name ensureNodeImage gives the kind node
+// image: the pinned digest's first 16 hex digits when there is one, else
+// the tag, so a new pin gets a new name.
+func localNodeImage(pinned string) string {
+	id := pinned
+	if _, digest, ok := strings.Cut(pinned, "@sha256:"); ok && len(digest) >= 16 {
+		id = "sha256-" + digest[:16]
+	} else if i := strings.LastIndex(pinned, ":"); i >= 0 && !strings.Contains(pinned[i:], "/") {
+		id = pinned[i+1:]
+	}
+	return "iidp-e2e.local/kind-node:" + id
 }
 
 // pullBackoff is how long retryPull waits before each retry: about four
