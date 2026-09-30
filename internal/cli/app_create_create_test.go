@@ -524,10 +524,6 @@ func TestAppCreatePathNextJSUnderOrgIsAWebService(t *testing.T) {
 	if got := lookup(t, values, "image", "repository"); got != platform.Registry+"/shop" {
 		t.Errorf("values.yaml image.repository = %v, want %s", got, platform.Registry+"/shop")
 	}
-	// The template's image runs as uid 1001, so the chart may require it.
-	if got := lookup(t, values, "runAsNonRoot"); got != true {
-		t.Errorf("values.yaml runAsNonRoot = %v, want true for the Next.js template", got)
-	}
 
 	for _, want := range []string{
 		"https://github.com/" + platform.Org + "/shop",
@@ -579,11 +575,6 @@ func TestAppCreatePathViteReactIsAStaticSite(t *testing.T) {
 	if got := lookup(t, values, "kind"); got != "static-site" {
 		t.Errorf("values.yaml kind = %v, want static-site", got)
 	}
-	// The unprivileged nginx: the chart requires non-root and serves the
-	// Static site on 8080.
-	if got := lookup(t, values, "runAsNonRoot"); got != true {
-		t.Errorf("values.yaml runAsNonRoot = %v, want true for the Vite React template", got)
-	}
 }
 
 func TestAppCreatePathOtherProducesOnlyADockerfileStub(t *testing.T) {
@@ -608,14 +599,15 @@ func TestAppCreatePathOtherProducesOnlyADockerfileStub(t *testing.T) {
 	if !strings.Contains(string(dockerfile), "PORT") {
 		t.Errorf("Dockerfile stub does not mention PORT:\n%s", dockerfile)
 	}
+	// Like every generated Dockerfile, the stub's runs as a numeric,
+	// non-root user: the Platform starts nothing else (#110).
+	if !strings.Contains(string(dockerfile), "USER 1000:1000") {
+		t.Errorf("Dockerfile stub has no numeric USER:\n%s", dockerfile)
+	}
 
 	values := readYAML(t, filepath.Join(cloneMain(t, platformURL), "applications/shop/prod/values.yaml"))
 	if got := lookup(t, values, "kind"); got != "web-service" {
 		t.Errorf("values.yaml kind = %v, want web-service", got)
-	}
-	// The stub's image is whatever the developer writes into it.
-	if got, has := values["runAsNonRoot"]; has {
-		t.Errorf("values.yaml runAsNonRoot = %v, want it absent for the Other stub", got)
 	}
 }
 

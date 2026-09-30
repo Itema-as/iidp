@@ -211,6 +211,9 @@ func CopyValuesForStaging(prodValuesYAML []byte) (out []byte, secretsDropped boo
 	// Staging's Scheduled tasks are those of the commit its first deploy
 	// brings, not prod's.
 	removeMappingKey(root, "tasks")
+	// A prod written before #110 may carry runAsNonRoot, which the chart
+	// no longer reads.
+	removeMappingKey(root, "runAsNonRoot")
 	out, err = encodeDocument(root)
 	return out, secretsDropped, err
 }

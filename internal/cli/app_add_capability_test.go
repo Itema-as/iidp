@@ -209,7 +209,7 @@ func TestAppAddCapabilityStagingCopiesProdValues(t *testing.T) {
 	for label, want := range map[string]string{
 		"iidp.itema.no/application":          "shop",
 		"iidp.itema.no/environment":          "staging",
-		"pod-security.kubernetes.io/enforce": "baseline",
+		"pod-security.kubernetes.io/enforce": "restricted",
 		"pod-security.kubernetes.io/warn":    "restricted",
 		"pod-security.kubernetes.io/audit":   "restricted",
 	} {

@@ -112,7 +112,7 @@ func ExamplePreviewApplicationSet() {
 	//                         iidp.itema.no/application: shop
 	//                         iidp.itema.no/environment: pr-{{.number}}
 	//                         pod-security.kubernetes.io/audit: restricted
-	//                         pod-security.kubernetes.io/enforce: baseline
+	//                         pod-security.kubernetes.io/enforce: restricted
 	//                         pod-security.kubernetes.io/warn: restricted
 	//                     annotations:
 	//                         argocd.argoproj.io/tracking-id: shop-pr-{{.number}}:/Namespace:/shop-pr-{{.number}}

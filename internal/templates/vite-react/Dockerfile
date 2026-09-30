@@ -1,8 +1,6 @@
 # Multi-stage build: build the static site with Vite, then serve dist/ with
 # an unprivileged nginx. It runs as uid 101 and listens on 8080, the port
-# the Platform routes a Static site to when its values say runAsNonRoot
-# (iidp app create writes that for this template); the Platform sets no PORT
-# for it.
+# the Platform routes a Static site to; the Platform sets no PORT for it.
 
 ARG NODE_VERSION=24-slim
 

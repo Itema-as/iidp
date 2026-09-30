@@ -147,10 +147,6 @@ func TestAppAdoptWithoutDockerfileDetectsNextJSAndGeneratesIt(t *testing.T) {
 	if got := lookup(t, values, "kind"); got != "web-service" {
 		t.Errorf("values.yaml kind = %v, want web-service (derived from Next.js)", got)
 	}
-	// Adopt generated the Dockerfile from the Next.js template.
-	if got := lookup(t, values, "runAsNonRoot"); got != true {
-		t.Errorf("values.yaml runAsNonRoot = %v, want true for a Dockerfile generated from the Next.js template", got)
-	}
 	if got := lookup(t, values, "image", "repository"); got != "ghcr.io/"+strings.ToLower(platform.Org)+"/shop" {
 		t.Errorf("values.yaml image.repository = %v", got)
 	}

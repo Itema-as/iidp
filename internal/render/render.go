@@ -22,12 +22,6 @@ type Environment struct {
 	Size            string
 	Port            int
 	ProbePath       string
-	// RunAsNonRoot says the image runs as a non-root user with a numeric
-	// UID, as the built-in templates' images do: the chart then requires
-	// it (runAsNonRoot), drops every capability, and serves a Static site
-	// on 8080. Left false for an image iidp did not generate, which may
-	// run as root (docs/implementation-notes/90-guardrails.md).
-	RunAsNonRoot bool
 	// Domains are the custom domains served beside the Platform address.
 	// Only prod carries any: staging keeps its Platform address (see
 	// docs/implementation-notes/13-cli-capabilities.md).
@@ -75,15 +69,17 @@ const ApplicationNamespaceLabel = "iidp.itema.no/application"
 // NamespaceLabels are the labels ArgoCD sets on an Environment's namespace
 // (syncPolicy.managedNamespaceMetadata): the Environment's identity, the
 // same two labels its ArgoCD Application and every chart object carry,
-// and Pod Security Admission's levels. baseline is enforced, so no Pod
-// runs privileged, shares the host's namespaces or mounts its paths;
-// restricted is warned about and audited, and an image built from a
-// template meets it (docs/implementation-notes/90-guardrails.md).
+// and Pod Security Admission's levels. restricted is enforced, so no Pod
+// runs as root, keeps a capability or escalates its privileges; it is
+// warned about and audited too, which Pod Security also does for the
+// workloads that make Pods, so a Deployment whose Pods would be refused
+// says so when ArgoCD applies it (docs/implementation-notes/90-guardrails.md,
+// docs/implementation-notes/110-non-root-restricted.md).
 func NamespaceLabels(application, environment string) map[string]string {
 	return map[string]string{
 		ApplicationNamespaceLabel:            application,
 		"iidp.itema.no/environment":          environment,
-		"pod-security.kubernetes.io/enforce": "baseline",
+		"pod-security.kubernetes.io/enforce": "restricted",
 		"pod-security.kubernetes.io/warn":    "restricted",
 		"pod-security.kubernetes.io/audit":   "restricted",
 	}
@@ -186,17 +182,13 @@ func Values(env Environment) ([]byte, error) {
 			BackupsBucket:         env.BackupsBucket,
 			ObjectStorageEndpoint: env.ObjectStorageEndpoint,
 		},
-		Kind:  env.Kind,
-		Image: imageValues{Repository: env.ImageRepository, Tag: env.ImageTag},
-		Size:  env.Size,
-		Port:  env.Port,
-		Probe: probeValues{Path: env.ProbePath},
-		// Written only when true: an Environment written before #90, or
-		// for an image iidp did not generate, reads the same as the
-		// chart's default, and a staging copied from prod keeps it.
-		RunAsNonRoot: env.RunAsNonRoot,
-		Env:          map[string]string{},
-		Domains:      domains,
+		Kind:    env.Kind,
+		Image:   imageValues{Repository: env.ImageRepository, Tag: env.ImageTag},
+		Size:    env.Size,
+		Port:    env.Port,
+		Probe:   probeValues{Path: env.ProbePath},
+		Env:     map[string]string{},
+		Domains: domains,
 		Postgres: postgresValues{
 			Enabled:          env.PostgresEnabled,
 			MigrationCommand: env.MigrationCommand,
@@ -296,12 +288,10 @@ type values struct {
 	Size        string            `yaml:"size"`
 	Port        int               `yaml:"port"`
 	Probe       probeValues       `yaml:"probe"`
-	// RunAsNonRoot is omitted when false (see Values).
-	RunAsNonRoot bool              `yaml:"runAsNonRoot,omitempty"`
-	Env          map[string]string `yaml:"env"`
-	Domains      []string          `yaml:"domains"`
-	Postgres     postgresValues    `yaml:"postgres"`
-	Login        loginValues       `yaml:"login"`
+	Env         map[string]string `yaml:"env"`
+	Domains     []string          `yaml:"domains"`
+	Postgres    postgresValues    `yaml:"postgres"`
+	Login       loginValues       `yaml:"login"`
 }
 
 type applicationValues struct {

@@ -243,7 +243,7 @@ func TestAppCreateStagingWritesASecondEnvironment(t *testing.T) {
 		want := map[string]any{
 			"iidp.itema.no/application":          "shop",
 			"iidp.itema.no/environment":          env.name,
-			"pod-security.kubernetes.io/enforce": "baseline",
+			"pod-security.kubernetes.io/enforce": "restricted",
 			"pod-security.kubernetes.io/warn":    "restricted",
 			"pod-security.kubernetes.io/audit":   "restricted",
 		}

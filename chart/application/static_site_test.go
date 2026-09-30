@@ -9,11 +9,10 @@ import (
 // A Static site is built into an nginx image by CI and deployed through the
 // same chart as a Web service. nginx takes no PORT, so the chart fixes the
 // port and skips the injected variable; everything else renders exactly as
-// for a Web service. An nginx running as root, which is what these fixtures
-// describe (no runAsNonRoot), listens on 80; iidp's template since #90 runs
-// an unprivileged nginx on 8080 (guardrails_test.go).
+// for a Web service. Every container runs as non-root (#110), so nginx is
+// the unprivileged one and listens on 8080.
 
-func TestStaticSiteServesOnPort80WithoutPORT(t *testing.T) {
+func TestStaticSiteServesOnPort8080WithoutPORT(t *testing.T) {
 	objects := render(t, "static-site.yaml")
 	c := container(t, objects, "brochure")
 
@@ -21,8 +20,8 @@ func TestStaticSiteServesOnPort80WithoutPORT(t *testing.T) {
 	if len(ports) != 1 {
 		t.Fatalf("container has %d ports, want 1", len(ports))
 	}
-	if got := get[int](t, ports[0], "containerPort"); got != 80 {
-		t.Errorf("containerPort = %d, want 80", got)
+	if got := get[int](t, ports[0], "containerPort"); got != 8080 {
+		t.Errorf("containerPort = %d, want 8080", got)
 	}
 
 	// Plain env still reaches the container; PORT is nginx's business.
@@ -34,14 +33,14 @@ func TestStaticSiteServesOnPort80WithoutPORT(t *testing.T) {
 	if len(svcPorts) != 1 {
 		t.Fatalf("Service has %d ports, want 1", len(svcPorts))
 	}
-	if port := get[int](t, svcPorts[0], "port"); port != 80 {
-		t.Errorf("Service port = %d, want 80", port)
+	if port := get[int](t, svcPorts[0], "port"); port != 8080 {
+		t.Errorf("Service port = %d, want 8080", port)
 	}
 
 	ing := mustObject(t, objects, "Ingress/brochure")
 	paths := get[[]any](t, get[[]any](t, ing, "spec", "rules")[0], "http", "paths")
-	if port := get[int](t, paths[0], "backend", "service", "port", "number"); port != 80 {
-		t.Errorf("Ingress backend port = %d, want 80", port)
+	if port := get[int](t, paths[0], "backend", "service", "port", "number"); port != 8080 {
+		t.Errorf("Ingress backend port = %d, want 8080", port)
 	}
 }
 
