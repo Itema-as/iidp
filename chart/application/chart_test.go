@@ -412,7 +412,6 @@ func TestRenderingRefusesInvalidValues(t *testing.T) {
 		{"refuse-missing-repository.yaml", `image.repository is required`},
 		{"refuse-bad-name.yaml", `application.name must be lowercase letters, digits and dashes, start with a letter and be at most 55 characters, got "1shop"`},
 		{"refuse-env-sets-port.yaml", `env must not set PORT; it is injected from port`},
-		{"refuse-run-as-non-root-not-bool.yaml", `runAsNonRoot must be true or false, got yes`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {

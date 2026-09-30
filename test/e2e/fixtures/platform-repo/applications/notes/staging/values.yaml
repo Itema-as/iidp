@@ -15,10 +15,10 @@ platform:
   objectStorageEndpoint: https://objectstorage.invalid
 kind: web-service
 image:
-  repository: docker.io/library/nginx
+  repository: docker.io/nginxinc/nginx-unprivileged
   tag: ""
 size: medium
-port: 80
+port: 8080
 probe:
   path: /
 env: {}

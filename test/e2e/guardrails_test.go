@@ -16,24 +16,33 @@ import (
 // (kubernetes.io/docs/reference/labels-annotations-taints/audit-annotations).
 const validationFailure = "validation.policy.admission.k8s.io/validation_failure"
 
+// podSecurityAuditViolations is the audit annotation Pod Security's audit
+// mode puts on a request whose Pod, or workload's Pod template, fails the
+// namespace's audit level (kubernetes.io/docs/reference/labels-annotations-taints/audit-annotations).
+const podSecurityAuditViolations = "pod-security.kubernetes.io/audit-violations"
+
 // fixtureNamespaces are the Application namespaces the fixture Platform
 // repository's Environments are installed into.
 var fixtureNamespaces = []string{"shop-prod", "shop-staging", "brochure-prod", "later-prod"}
 
-// testGuardrails proves #90 on the cluster:
+// testGuardrails proves #90 and #110 on the cluster:
 //   - every fixture Environment's namespace carries the labels the CLI
 //     writes through managedNamespaceMetadata: the Application namespace
-//     label the guardrails' bindings select on, and Pod Security's levels;
+//     label the guardrails' bindings select on, and Pod Security's levels,
+//     restricted enforced;
 //   - nothing the fixture Applications did during the whole test (the
 //     Deployments, Services and Ingresses, CloudNativePG's database Pods and
 //     Jobs with the Barman Cloud sidecar, the migration Jobs, the Scheduled
 //     task's Jobs, shop-staging's final Backup hook, brochure's first
 //     deploy) failed a guardrail: no
-//     audit event in a fixture namespace carries a validation failure;
+//     audit event in a fixture namespace carries a validation failure or a
+//     Pod Security violation, and no Pod was refused there;
+//   - CloudNativePG's instance Pod and initdb Job were created under
+//     restricted, so they pass it;
 //   - a NodePort Service applied by hand in a fixture namespace is warned
 //     about and audited, and still created: the bindings Warn and Audit,
 //     they do not Deny yet;
-//   - Pod Security's baseline is enforced: a privileged Pod is refused.
+//   - Pod Security's restricted is enforced: a privileged Pod is refused.
 func testGuardrails(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 
@@ -52,7 +61,7 @@ func testGuardrails(ctx context.Context, t *testing.T, cluster *Cluster) {
 		for key, want := range map[string]string{
 			"iidp.itema.no/application":          application,
 			"iidp.itema.no/environment":          environment,
-			"pod-security.kubernetes.io/enforce": "baseline",
+			"pod-security.kubernetes.io/enforce": "restricted",
 			"pod-security.kubernetes.io/warn":    "restricted",
 			"pod-security.kubernetes.io/audit":   "restricted",
 		} {
@@ -71,6 +80,7 @@ func testGuardrails(ctx context.Context, t *testing.T, cluster *Cluster) {
 		inFixture[ns] = true
 	}
 	seen := 0
+	created := map[string]bool{}
 	for _, e := range events {
 		if !inFixture[e.ObjectRef.Namespace] {
 			continue
@@ -78,6 +88,25 @@ func testGuardrails(ctx context.Context, t *testing.T, cluster *Cluster) {
 		seen++
 		if failure, ok := e.Annotations[validationFailure]; ok {
 			t.Errorf("%s %s/%s in %s failed a guardrail: %s", e.Verb, e.ObjectRef.Resource, e.ObjectRef.Name, e.ObjectRef.Namespace, failure)
+		}
+		// Pod Security audits restricted on Pods and on the workloads
+		// that make them, and refuses a Pod that fails it.
+		if violations, ok := e.Annotations[podSecurityAuditViolations]; ok {
+			t.Errorf("%s %s/%s in %s violates Pod Security restricted: %s", e.Verb, e.ObjectRef.Resource, e.ObjectRef.Name, e.ObjectRef.Namespace, violations)
+		}
+		if e.ObjectRef.Resource == "pods" && e.Verb == "create" && e.ResponseStatus.Code == 403 {
+			t.Errorf("a Pod %q in %s was refused", e.ObjectRef.Name, e.ObjectRef.Namespace)
+		}
+		if e.Verb == "create" && e.ResponseStatus.Code < 300 {
+			created[e.ObjectRef.Resource+"/"+e.ObjectRef.Namespace+"/"+e.ObjectRef.Name] = true
+		}
+	}
+	// CloudNativePG names both itself: they were admitted, so they pass
+	// restricted. Its other Jobs and the Barman Cloud sidecar in the
+	// instance Pod are covered by the checks above.
+	for _, want := range []string{"pods/shop-prod/shop-db-1", "jobs/shop-prod/shop-db-1-initdb"} {
+		if !created[want] {
+			t.Errorf("the audit log has no successful create of %s under Pod Security restricted", want)
 		}
 	}
 	// The audit policy logs writes to Pods, Services, Ingresses and the
@@ -140,7 +169,7 @@ spec:
 		t.Error(err)
 	}
 
-	// Pod Security enforces baseline: a privileged Pod never gets in. A
+	// Pod Security enforces restricted: a privileged Pod never gets in. A
 	// server-side dry run goes through admission and creates nothing.
 	privileged := `apiVersion: v1
 kind: Pod
@@ -150,14 +179,14 @@ metadata:
 spec:
   containers:
     - name: app
-      image: docker.io/library/nginx:1.30-alpine
+      image: docker.io/nginxinc/nginx-unprivileged:1.30-alpine
       resources:
         limits: {cpu: 10m, memory: 16Mi}
       securityContext:
         privileged: true
 `
 	out, err = cluster.ApplyOutput(ctx, privileged, "--dry-run=server")
-	if err == nil || !strings.Contains(out, `violates PodSecurity "baseline`) {
-		t.Errorf("a privileged Pod in shop-prod was not refused by Pod Security baseline: err %v\n%s", err, out)
+	if err == nil || !strings.Contains(out, `violates PodSecurity "restricted`) {
+		t.Errorf("a privileged Pod in shop-prod was not refused by Pod Security restricted: err %v\n%s", err, out)
 	}
 }

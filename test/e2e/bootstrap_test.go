@@ -228,8 +228,8 @@ const (
 // fixture's tag, which the Deploy gate also deploys to brochure and a
 // preview is tagged from, and at shopDeployTag.
 var fixtureImages = []string{
-	"docker.io/library/nginx:1.30-alpine",
-	"docker.io/library/nginx:" + shopDeployTag,
+	"docker.io/nginxinc/nginx-unprivileged:1.30-alpine",
+	"docker.io/nginxinc/nginx-unprivileged:" + shopDeployTag,
 }
 
 // shopDeployTag is the image testMigrationCommandFromIidpYAML deploys to
@@ -455,7 +455,7 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 	// have: the gate's image check (#61) asks the real registry, as it
 	// does for the deploy below.
 	status, msg = call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/main"), "iidp-e2e-no-such-tag")
-	if status != http.StatusUnprocessableEntity || !strings.Contains(msg, "docker.io/library/nginx:iidp-e2e-no-such-tag does not exist") {
+	if status != http.StatusUnprocessableEntity || !strings.Contains(msg, "docker.io/nginxinc/nginx-unprivileged:iidp-e2e-no-such-tag does not exist") {
 		t.Errorf("a tag that was never pushed: HTTP %d %q, want 422 naming the image", status, msg)
 	}
 
@@ -701,7 +701,7 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 	if err := cluster.CheckSignInRedirect(ctx, shopStagingCustomDomain, signInPath, fixtureSignIn, 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.CheckACMEChallengeBypassesLogin(ctx, "shop-staging", shopStagingCustomDomain, "shop-staging", 80, 2*time.Minute); err != nil {
+	if err := cluster.CheckACMEChallengeBypassesLogin(ctx, "shop-staging", shopStagingCustomDomain, "shop-staging", 8080, 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err := cluster.CheckRolloutServes(ctx, "shop-prod", "shop", "shop.app.example.test"); err != nil {

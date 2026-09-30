@@ -7,7 +7,9 @@ commented `Dockerfile` stub.
 **The first deploy fails until `Dockerfile` is completed.** Its comments
 say what to fill in: a base image, how to build your application, the port
 it `EXPOSE`s, and the command that starts it. Your application must listen
-on the port the Platform gives it in the `PORT` environment variable.
+on the port the Platform gives it in the `PORT` environment variable. The
+stub already ends with `USER 1000:1000`: the Platform starts a container
+only as a non-root user, given by number.
 
 `.github/workflows/deploy.yaml` is already here and works the same way it
 does for a built-in template: on a push to `main` it builds `Dockerfile`

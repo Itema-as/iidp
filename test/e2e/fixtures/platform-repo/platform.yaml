@@ -75,11 +75,11 @@ deployGate:
 argus:
   enabled: false
 
-# kind has no GHCR: the fixture Applications run nginx from Docker Hub
-# (applications/*/*/values.yaml), which the guardrails' image policy would
-# otherwise report on every Pod. The Platform itself allows only
-# ghcr.io/itema-as/ and the images the chart and CloudNativePG run
+# kind has no GHCR: the fixture Applications run the unprivileged nginx from
+# Docker Hub (applications/*/*/values.yaml), which the guardrails' image
+# policy would otherwise report on every Pod. The Platform itself allows
+# only ghcr.io/itema-as/ and the images the chart and CloudNativePG run
 # (bootstrap/README.md, "Guardrails").
 guardrails:
   extraAllowedImages:
-    - docker.io/library/nginx
+    - docker.io/nginxinc/nginx-unprivileged

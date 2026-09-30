@@ -31,7 +31,7 @@ The shared understanding reached in the design session on 2026-09-20. Vocabulary
 
 1. Application name. Lowercase, DNS-safe, unique on the Platform.
 2. Create or Adopt? Adopt asks for the repository URL.
-3. Kind: Static site or Web service. On Create, framework: Next.js, Vite React, or Other. Skipped when the repository already has a Dockerfile; an existing Dockerfile is never touched and is what gets deployed. Other scaffolds a commented Dockerfile stub that must be completed before the first deploy succeeds.
+3. Kind: Static site or Web service. On Create, framework: Next.js, Vite React, or Other. Skipped when the repository already has a Dockerfile; an existing Dockerfile is what gets deployed, and the pull request changes it only to run as a non-root user where the fix is known, or says what to change (#110). Other scaffolds a commented Dockerfile stub that must be completed before the first deploy succeeds.
 4. Postgres database? [no]. If yes: migration command [detected or none]. The CLI looks for Prisma (`prisma/schema.prisma`), Drizzle (`drizzle.config.*`) or a `migrate` script in `package.json` and proposes the matching command. Help text:
    ```
    Migration command (optional)

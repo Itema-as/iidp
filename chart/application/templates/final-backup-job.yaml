@@ -152,5 +152,5 @@ spec:
           # bitnami/kubectl runs as uid 1001, whatever the Application's
           # image does.
           securityContext:
-            {{- include "application.securityContext" (list . true) | nindent 12 }}
+            {{- include "application.securityContext" . | nindent 12 }}
 {{- end }}

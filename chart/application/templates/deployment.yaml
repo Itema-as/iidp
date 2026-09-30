@@ -71,5 +71,5 @@ spec:
           resources:
             {{- include "application.resources" . | nindent 12 }}
           securityContext:
-            {{- include "application.securityContext" (list . .Values.runAsNonRoot) | nindent 12 }}
+            {{- include "application.securityContext" . | nindent 12 }}
 {{- end }}

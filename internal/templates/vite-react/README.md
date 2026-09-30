@@ -18,10 +18,9 @@ docker run -p 8080:8080 {{.Name}}
 
 The image builds `dist/` with Vite and serves it with an unprivileged nginx
 on port 8080, `index.html` at `/`. It runs as a non-root user (uid 101),
-and the Platform holds it to that: this Application's values say
-`runAsNonRoot: true`, so the container runs with every capability dropped
-and the Platform routes to 8080. Keep a non-root base image with a numeric
-`USER` if you change it.
+and the Platform holds it to that: every container runs with every
+capability dropped, and a Static site is routed to 8080. Keep a non-root
+base image with a numeric `USER` if you change it.
 
 ## Deploying
 

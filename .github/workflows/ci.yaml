@@ -73,9 +73,9 @@ jobs:
         run: go test -v ./chart/...
 
   # Renders each built-in Create template with cmd/renderfixture, builds its
-  # Dockerfile, and runs it the way the Platform does (#90): the
-  # application chart with runAsNonRoot: true, in a kind namespace that
-  # enforces Pod Security's restricted level. test/templates/run-restricted.sh
+  # Dockerfile, and runs it the way the Platform does (#90, #110): the
+  # application chart, in a kind namespace that enforces Pod Security's
+  # restricted level. test/templates/run-restricted.sh
   # fails on any admission warning, a Pod that does not become Ready, a
   # container running as root, or anything but a 200 on / at the template's
   # port (3000 for Next.js, 8080 for the unprivileged nginx of Vite React).

@@ -41,8 +41,8 @@ func testPreviewEnvironments(ctx context.Context, t *testing.T, cluster *Cluster
 
 	// The deploy workflow would have pushed the image; kind reaches no
 	// registry that has it, so the node gets it under that name.
-	image := "docker.io/library/nginx:" + previewHeadSHA
-	if err := cluster.TagNodeImage(ctx, "docker.io/library/nginx:1.30-alpine", image); err != nil {
+	image := "docker.io/nginxinc/nginx-unprivileged:" + previewHeadSHA
+	if err := cluster.TagNodeImage(ctx, "docker.io/nginxinc/nginx-unprivileged:1.30-alpine", image); err != nil {
 		t.Fatal(err)
 	}
 	open := []FakePullRequest{
@@ -91,7 +91,7 @@ func testPreviewEnvironments(ctx context.Context, t *testing.T, cluster *Cluster
 	for key, want := range map[string]string{
 		"iidp.itema.no/application":          "notes",
 		"iidp.itema.no/environment":          "pr-7",
-		"pod-security.kubernetes.io/enforce": "baseline",
+		"pod-security.kubernetes.io/enforce": "restricted",
 		"pod-security.kubernetes.io/warn":    "restricted",
 		"pod-security.kubernetes.io/audit":   "restricted",
 	} {

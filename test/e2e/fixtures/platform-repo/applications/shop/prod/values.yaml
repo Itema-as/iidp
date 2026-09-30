@@ -14,13 +14,15 @@ platform:
   objectStorageEndpoint: https://objectstorage.invalid
 kind: web-service
 image:
-  # nginx: answers HTTP 200 on / out of the box and its Alpine base carries
-  # the busybox nc the migration command uses to check Postgres is reachable.
-  repository: docker.io/library/nginx
+  # The unprivileged nginx: runs as a non-root user, as the Platform
+  # requires, answers HTTP 200 on / out of the box, and its Alpine base
+  # carries the busybox nc the migration command uses to check Postgres is
+  # reachable.
+  repository: docker.io/nginxinc/nginx-unprivileged
   tag: "1.30-alpine"
 size: small
-# nginx listens on 80; PORT is injected but unused.
-port: 80
+# nginx listens on 8080; PORT is injected but unused.
+port: 8080
 probe:
   path: /
 env: {}
