@@ -82,6 +82,7 @@ func TestBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(cluster.Close)
 	if err := cluster.Create(ctx); err != nil {
 		t.Fatal(err)
 	}

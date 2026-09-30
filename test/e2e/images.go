@@ -139,7 +139,7 @@ func registry(image string) string {
 }
 
 // imageCache is the directory the image archives are kept in: the one
-// ImageCacheEnv names, or a temporary one Delete removes.
+// ImageCacheEnv names, or a temporary one Close removes.
 type imageCache struct {
 	dir       string
 	temporary bool

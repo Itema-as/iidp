@@ -348,16 +348,21 @@ nodes:
 	return nil
 }
 
-// Delete removes the kind cluster, the kubeconfig and a temporary image
-// cache.
+// Delete removes the kind cluster and the kubeconfig.
 func (c *Cluster) Delete(ctx context.Context) error {
 	out, err := c.run(ctx, "kind", "delete", "cluster", "--name", c.Name, "--kubeconfig", c.Kubeconfig)
 	if err != nil {
 		return fmt.Errorf("kind delete cluster: %w\n%s", err, out)
 	}
 	os.Remove(c.Kubeconfig)
-	c.images.remove()
 	return nil
+}
+
+// Close removes the image cache directory when it is a temporary one
+// (ImageCacheEnv unset). It leaves the cluster alone, so it runs whether or
+// not the cluster is kept.
+func (c *Cluster) Close() {
+	c.images.remove()
 }
 
 // Kubectl runs kubectl against the cluster and returns its combined output.
