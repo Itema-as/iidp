@@ -70,12 +70,13 @@ jobs:
           helm lint --strict bootstrap/components/deploy-gate --set bootstrapRevision=v0.0.0
           helm lint --strict bootstrap/components/argus --set bootstrapRevision=v0.0.0
           helm lint --strict bootstrap/components/guardrails
-      # The render tests skip without helm (the Go job of ci.yaml has none);
+      # The render tests, and the harness's reading of images from the
+      # pinned charts, skip without helm (the Go job of ci.yaml has none);
       # here a missing helm must fail.
-      - name: go test ./bootstrap
+      - name: go test ./bootstrap ./test/e2e
         env:
           IIDP_REQUIRE_CHART_TOOLS: "1"
-        run: go test -v ./bootstrap/...
+        run: go test -v ./bootstrap/... ./test/e2e/
 
   kind:
     name: kind bootstrap
@@ -98,5 +99,31 @@ jobs:
         with:
           version: v0.33.0
           install_only: true
+      # The images the node would otherwise pull from Docker Hub and ECR
+      # Public, whose anonymous rate limits the shared runner addresses
+      # exhaust (test/e2e/images.go, #128). The primary key never matches,
+      # so the newest cache is restored; the test pulls whatever is missing
+      # and leaves the directory holding exactly the images it needed.
+      - name: Restore the image cache
+        id: image-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .e2e-image-cache
+          key: e2e-images-run-${{ github.run_id }}
+          restore-keys: e2e-images-
       - name: go test -tags e2e
+        env:
+          IIDP_E2E_IMAGE_CACHE: ${{ github.workspace }}/.e2e-image-cache
         run: go test -tags e2e ./test/e2e/... -run TestBootstrap -v -timeout 23m
+      # Keyed on the list of images the run loaded (images.txt, written
+      # once every image is in the node), so a new cache is saved only when
+      # that list changed, as it does when a pinned chart moves an image.
+      - name: Save the image cache
+        if: >-
+          always()
+          && hashFiles('.e2e-image-cache/images.txt') != ''
+          && steps.image-cache.outputs.cache-matched-key != format('e2e-images-{0}', hashFiles('.e2e-image-cache/images.txt'))
+        uses: actions/cache/save@v6
+        with:
+          path: .e2e-image-cache
+          key: e2e-images-${{ hashFiles('.e2e-image-cache/images.txt') }}

@@ -98,6 +98,13 @@ type Versions struct {
 		Chart      string `yaml:"chart"`
 		Repository string `yaml:"repository"`
 	} `yaml:"argocd"`
+	KSOPS struct {
+		Image string `yaml:"image"`
+	} `yaml:"ksops"`
+	K8sMonitoring struct {
+		Chart      string `yaml:"chart"`
+		Repository string `yaml:"repository"`
+	} `yaml:"k8sMonitoring"`
 	K3s struct {
 		Version string `yaml:"version"`
 		Traefik struct {
@@ -124,14 +131,17 @@ func LoadVersions(repoRoot string) (Versions, error) {
 		return v, fmt.Errorf("parse bootstrap/versions.yaml: %w", err)
 	}
 	for name, value := range map[string]string{
-		"argocd.chart":            v.ArgoCD.Chart,
-		"argocd.repository":       v.ArgoCD.Repository,
-		"k3s.traefik.chart":       v.K3s.Traefik.Chart,
-		"k3s.traefik.chartURL":    v.K3s.Traefik.ChartURL,
-		"k3s.traefik.crdChartURL": v.K3s.Traefik.CRDChartURL,
-		"k3s.traefik.image":       v.K3s.Traefik.Image,
-		"k3s.helmController":      v.K3s.HelmController,
-		"kind.nodeImage":          v.Kind.NodeImage,
+		"argocd.chart":             v.ArgoCD.Chart,
+		"argocd.repository":        v.ArgoCD.Repository,
+		"ksops.image":              v.KSOPS.Image,
+		"k8sMonitoring.chart":      v.K8sMonitoring.Chart,
+		"k8sMonitoring.repository": v.K8sMonitoring.Repository,
+		"k3s.traefik.chart":        v.K3s.Traefik.Chart,
+		"k3s.traefik.chartURL":     v.K3s.Traefik.ChartURL,
+		"k3s.traefik.crdChartURL":  v.K3s.Traefik.CRDChartURL,
+		"k3s.traefik.image":        v.K3s.Traefik.Image,
+		"k3s.helmController":       v.K3s.HelmController,
+		"kind.nodeImage":           v.Kind.NodeImage,
 	} {
 		if value == "" {
 			return v, fmt.Errorf("bootstrap/versions.yaml: %s is empty", name)
@@ -177,6 +187,8 @@ type Cluster struct {
 	Versions Versions
 	// Log receives progress lines; tests pass t.Logf.
 	Log func(format string, args ...any)
+
+	images *imageCache
 }
 
 // NewCluster describes a cluster without creating it.
@@ -214,7 +226,12 @@ func NewCluster(name string, logf func(format string, args ...any)) (*Cluster, e
 		}
 		httpsPort = p
 	}
+	images, err := openImageCache()
+	if err != nil {
+		return nil, err
+	}
 	return &Cluster{
+		images:     images,
 		Name:       name,
 		Kubeconfig: kubeconfig.Name(),
 		HTTPPort:   httpPort,
@@ -289,12 +306,16 @@ nodes:
 		return err
 	}
 	defer os.Remove(configFile)
-	c.Log("creating kind cluster %s from %s", c.Name, c.Versions.Kind.NodeImage)
+	nodeImage, err := c.ensureNodeImage(ctx)
+	if err != nil {
+		return err
+	}
+	c.Log("creating kind cluster %s from %s (%s)", c.Name, nodeImage, c.Versions.Kind.NodeImage)
 	out, err = c.run(ctx, "kind", "create", "cluster",
 		"--name", c.Name,
 		"--config", configFile,
 		"--kubeconfig", c.Kubeconfig,
-		"--image", c.Versions.Kind.NodeImage,
+		"--image", nodeImage,
 		"--wait", "120s")
 	if err != nil {
 		return fmt.Errorf("kind create cluster: %w\n%s", err, out)
@@ -335,6 +356,13 @@ func (c *Cluster) Delete(ctx context.Context) error {
 	}
 	os.Remove(c.Kubeconfig)
 	return nil
+}
+
+// Close removes the image cache directory when it is a temporary one
+// (ImageCacheEnv unset). It leaves the cluster alone, so it runs whether or
+// not the cluster is kept.
+func (c *Cluster) Close() {
+	c.images.remove()
 }
 
 // Kubectl runs kubectl against the cluster and returns its combined output.
@@ -467,12 +495,9 @@ func (c *Cluster) InstallArgoCD(ctx context.Context) error {
 	if err := c.Apply(ctx, "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: argocd\n"); err != nil {
 		return err
 	}
-	manifest, err := c.HelmTemplate(ctx, "argocd", "argo-cd",
-		"--repo", a.Repository, "--version", a.Chart,
-		"--namespace", "argocd", "--include-crds",
-		"--set", "fullnameOverride=argocd", "--set", "crds.install=true")
+	manifest, err := c.argoCDManifest(ctx)
 	if err != nil {
-		return fmt.Errorf("helm template argo-cd: %w", err)
+		return err
 	}
 	// Server-side apply is required: the ArgoCD CRDs exceed the annotation
 	// size limit of client-side apply.
@@ -488,6 +513,20 @@ func (c *Cluster) InstallArgoCD(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// argoCDManifest renders the argo-cd chart the way InstallArgoCD applies
+// it.
+func (c *Cluster) argoCDManifest(ctx context.Context) (string, error) {
+	a := c.Versions.ArgoCD
+	manifest, err := c.HelmTemplate(ctx, "argocd", "argo-cd",
+		"--repo", a.Repository, "--version", a.Chart,
+		"--namespace", "argocd", "--include-crds",
+		"--set", "fullnameOverride=argocd", "--set", "crds.install=true")
+	if err != nil {
+		return "", fmt.Errorf("helm template argo-cd: %w", err)
+	}
+	return manifest, nil
 }
 
 // HelmTemplate runs helm template and returns just the rendered manifests

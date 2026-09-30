@@ -82,6 +82,7 @@ func TestBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(cluster.Close)
 	if err := cluster.Create(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +95,19 @@ func TestBootstrap(t *testing.T) {
 			t.Logf("delete cluster: %v", err)
 		}
 	})
+	// Runs before the cluster is deleted: cleanups run last registered first.
+	t.Cleanup(func() { cluster.LogImageSources(context.Background()) })
+
+	// Everything from a rate-limited registry the node would pull: the
+	// Platform components' images and the fixture Applications' nginx
+	// (docs/implementation-notes/128-e2e-image-cache.md).
+	images, err := cluster.RegistryImages(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.PreloadImages(ctx, RateLimited(append(images, fixtureImages...))); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := cluster.InstallTraefik(ctx); err != nil {
 		t.Fatal(err)
@@ -209,6 +223,14 @@ const (
 	brochureRepositoryID = 700000001
 	shopRepositoryID     = 700000002
 )
+
+// fixtureImages are the images the fixture Applications run: nginx at the
+// fixture's tag, which the Deploy gate also deploys to brochure and a
+// preview is tagged from, and at shopDeployTag.
+var fixtureImages = []string{
+	"docker.io/library/nginx:1.30-alpine",
+	"docker.io/library/nginx:" + shopDeployTag,
+}
 
 // shopDeployTag is the image testMigrationCommandFromIidpYAML deploys to
 // shop-prod: another nginx Alpine tag than the fixture's 1.30-alpine, so

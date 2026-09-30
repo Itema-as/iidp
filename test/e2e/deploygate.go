@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Itema-as/iidp/internal/appconfig"
@@ -213,10 +212,9 @@ func (c *Cluster) InstallDeployGateStandIns(ctx context.Context) (*FakeIssuer, e
 // repository root) with the container engine, and loads the image into the
 // node.
 func (c *Cluster) BuildLocalImage(ctx context.Context, image, pkg, binary, dockerfile string) error {
-	arch, err := c.Kubectl(ctx, "get", "nodes", "-o", "jsonpath={.items[0].status.nodeInfo.architecture}")
-	arch = strings.TrimSpace(arch)
-	if err != nil || arch == "" {
-		return fmt.Errorf("node architecture: %v\n%s", err, arch)
+	arch, err := c.nodeArch(ctx)
+	if err != nil {
+		return err
 	}
 	buildContext, err := os.MkdirTemp("", "iidp-e2e-image-*")
 	if err != nil {
@@ -298,13 +296,25 @@ func (c *Cluster) CallDeployGateWithIidpYAML(ctx context.Context, token, applica
 	body, _ := json.Marshal(request)
 	status, data, err := c.requestDeployGate(ctx, http.MethodPost, "/v1/deploy", token, body)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, fmt.Errorf("%w\n%s", err, c.deployGateLog(ctx))
 	}
 	var decoded map[string]any
 	if err := json.Unmarshal(data, &decoded); err != nil {
-		return status, nil, fmt.Errorf("the Deploy gate answered HTTP %d with something other than JSON: %s", status, data)
+		return status, nil, fmt.Errorf("the Deploy gate answered HTTP %d with something other than JSON: %s\n%s", status, data, c.deployGateLog(ctx))
 	}
 	return status, decoded, nil
+}
+
+// deployGateLog is the tail of the gate's own log, for a call that failed
+// without an answer from it (#128). The gate logs every call it finishes,
+// refused or not, so a call with no line of its own never finished, and a
+// start-up line after the earlier calls means the gate restarted.
+func (c *Cluster) deployGateLog(ctx context.Context) string {
+	out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "deployment/iidp-deploy-gate", "--tail=60", "--timestamps")
+	if err != nil {
+		return fmt.Sprintf("Deploy gate log: kubectl logs failed: %v\n%s", err, out)
+	}
+	return "Deploy gate log tail:\n" + out
 }
 
 // DeveloperToken is the gh auth token fakegithub lets read shop's
@@ -314,7 +324,11 @@ const DeveloperToken = "e2e-developer-token"
 // CallStatus makes the call iidp app status makes, through Traefik, and
 // returns the status and the body.
 func (c *Cluster) CallStatus(ctx context.Context, token, application string) (int, []byte, error) {
-	return c.requestDeployGate(ctx, http.MethodGet, "/v1/status/"+application, token, nil)
+	status, data, err := c.requestDeployGate(ctx, http.MethodGet, "/v1/status/"+application, token, nil)
+	if err != nil {
+		return 0, nil, fmt.Errorf("%w\n%s", err, c.deployGateLog(ctx))
+	}
+	return status, data, nil
 }
 
 func (c *Cluster) requestDeployGate(ctx context.Context, method, path, token string, body []byte) (int, []byte, error) {
