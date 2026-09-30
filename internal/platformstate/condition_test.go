@@ -279,6 +279,176 @@ func TestStuckRules(t *testing.T) {
 	}
 }
 
+// A hook Job whose pod cannot be scheduled holds its change back for
+// good: ArgoCD waits for the hook, which has no deadline of its own. So
+// it is stuck at once, with the scheduler's words, as an Unschedulable
+// pod of the Deployment is Degraded at once (#132).
+func TestUnschedulableHookPodIsStuck(t *testing.T) {
+	const why = "Unschedulable: 0/1 nodes are available: 1 Insufficient cpu."
+	for _, tc := range []struct {
+		name  string
+		setup func() *fixture
+		want  want
+	}{
+		{"hello-pr-2 in #132: a preview's first migration, Unschedulable for 20 minutes", func() *fixture {
+			f := previewEnv(22 * time.Minute)
+			syncing(f.app, c1, "Running", "waiting for completion of hook batch/Job/shop-migration", 21*time.Minute)
+			f.jobs = []obj{migration("sha-new", 20*time.Minute, "")}
+			f.pods = []obj{unschedulableJobPod("shop-migration-x7k2p", "shop-migration")}
+			return f
+		}, want{condition: "Healthy", activity: "Arriving", stuck: true, reason: "the migration's Pod shop-migration-x7k2p is " + why, hop: platformstate.HopApplying}},
+		{"the same, 30 seconds in: at once", func() *fixture {
+			f := previewEnv(time.Minute)
+			syncing(f.app, c1, "Running", "", 50*time.Second)
+			f.jobs = []obj{migration("sha-new", 40*time.Second, "")}
+			f.pods = []obj{unschedulableJobPod("shop-migration-x7k2p", "shop-migration")}
+			return f
+		}, want{condition: "Healthy", activity: "Arriving", stuck: true, reason: "the migration's Pod shop-migration-x7k2p is " + why, hop: platformstate.HopApplying}},
+		{"a Deploy's migration", func() *fixture {
+			f := env()
+			f.events = []obj{accepted("2.0.0", c2, 2*time.Minute)}
+			looked(f.app, c2, "OutOfSync", time.Minute)
+			syncing(f.app, c2, "Running", "", time.Minute)
+			f.jobs = []obj{migration("2.0.0", 50*time.Second, "")}
+			f.pods = []obj{readyPod("shop-a", "1.0.0"), unschedulableJobPod("shop-migration-b", "shop-migration")}
+			return f
+		}, want{condition: "Healthy", activity: "Deploying", stuck: true, reason: "the migration's Pod shop-migration-b is " + why, hop: platformstate.HopApplying}},
+		{"the migration of a change that is not a Deploy", func() *fixture {
+			f := env()
+			looked(f.app, c2, "OutOfSync", time.Minute)
+			syncing(f.app, c2, "Running", "", time.Minute)
+			f.jobs = []obj{migration("1.0.0", 50*time.Second, "")}
+			f.pods = []obj{readyPod("shop-a", "1.0.0"), unschedulableJobPod("shop-migration-b", "shop-migration")}
+			return f
+		}, want{condition: "Healthy", activity: "Updating", stuck: true, reason: "the migration's Pod shop-migration-b is " + why}},
+		{"a migration's pod still getting its image", func() *fixture {
+			f := previewEnv(time.Minute)
+			syncing(f.app, c1, "Running", "", 50*time.Second)
+			f.jobs = []obj{migration("sha-new", 40*time.Second, "")}
+			f.pods = []obj{jobPod("shop-migration-x7k2p", "shop-migration", "Pending")}
+			return f
+		}, want{condition: "Healthy", activity: "Arriving", hop: platformstate.HopApplying}},
+		{"an Unschedulable pod of another Job", func() *fixture {
+			f := previewEnv(time.Minute)
+			syncing(f.app, c1, "Running", "", 50*time.Second)
+			f.jobs = []obj{migration("sha-new", 40*time.Second, "")}
+			f.pods = []obj{unschedulableJobPod("shop-migration-old", "shop-migration-old")}
+			return f
+		}, want{condition: "Healthy", activity: "Arriving", hop: platformstate.HopApplying}},
+		{"the final backup's pod", func() *fixture {
+			f := env()
+			f.app["metadata"].(obj)["deletionTimestamp"] = ago(5 * time.Minute)
+			f.jobs = []obj{job("final-backup", "1.0.0", 4*time.Minute, "")}
+			f.pods = []obj{readyPod("shop-a", "1.0.0"), unschedulableJobPod("shop-final-backup-c", "shop-final-backup")}
+			return f
+		}, want{condition: "Healthy", activity: "Leaving", stuck: true, reason: "the final backup's Pod shop-final-backup-c is " + why}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.want.check(t, tc.setup().state(t))
+		})
+	}
+}
+
+// Arriving with something on its way, and Leaving, are stuck after
+// their time limits, with what is known of why (#132).
+func TestArrivingAndLeavingAreStuckAfterTheirTimeLimits(t *testing.T) {
+	// migrating is pr-2 whose first migration was created d ago, with a
+	// pod in phase, or none when phase is "".
+	migrating := func(d time.Duration, phase string) *fixture {
+		f := previewEnv(d + 2*time.Minute)
+		syncing(f.app, c1, "Running", "", d+time.Minute)
+		f.jobs = []obj{migration("sha-new", d, "")}
+		if phase != "" {
+			f.pods = []obj{jobPod("shop-migration-x7k2p", "shop-migration", phase)}
+		}
+		return f
+	}
+	leaving := func(d time.Duration) *fixture {
+		f := env()
+		f.app["metadata"].(obj)["deletionTimestamp"] = ago(d)
+		return f
+	}
+	for _, tc := range []struct {
+		name  string
+		setup func() *fixture
+		want  want
+	}{
+		{"a first migration running for 14 minutes", func() *fixture { return migrating(14*time.Minute, "Running") },
+			want{condition: "Healthy", activity: "Arriving", hop: platformstate.HopApplying}},
+		{"a first migration running for 16 minutes", func() *fixture { return migrating(16*time.Minute, "Running") },
+			want{condition: "Healthy", activity: "Arriving", stuck: true, reason: "no progress for over 15 minutes; the migration has not finished", hop: platformstate.HopApplying}},
+		{"a first migration with no pod for 16 minutes", func() *fixture { return migrating(16*time.Minute, "") },
+			want{condition: "Healthy", activity: "Arriving", stuck: true, reason: "no progress for over 15 minutes; the migration's Pod has not started", hop: platformstate.HopApplying}},
+		{"a preview's first sync running for 16 minutes before any migration", func() *fixture {
+			f := previewEnv(17 * time.Minute)
+			syncing(f.app, c1, "Running", "", 16*time.Minute)
+			return f
+		}, want{condition: "Healthy", activity: "Arriving", stuck: true, reason: "no progress for over 15 minutes; ArgoCD's sync is still running", hop: platformstate.HopApplying}},
+		{"a first rollout with no pod ready for 14 minutes", func() *fixture {
+			f := env()
+			f.deployments = []obj{firstDeployment("1.0.0", 14*time.Minute)}
+			f.pods = []obj{notReadyPod("shop-a", "1.0.0", 14*time.Minute)}
+			return f
+		}, want{condition: "Healthy", activity: "Arriving", hop: platformstate.HopRollingOut}},
+		{"a first rollout with no pod ready for 16 minutes", func() *fixture {
+			f := env()
+			f.deployments = []obj{firstDeployment("1.0.0", 16*time.Minute)}
+			f.pods = []obj{notReadyPod("shop-a", "1.0.0", 16*time.Minute)}
+			return f
+		}, want{condition: "Healthy", activity: "Arriving", stuck: true, reason: "no progress for over 15 minutes; 0 of 1 pods ready", hop: platformstate.HopRollingOut}},
+		{"a first Deploy into an Unreleased Environment, accepted 14 minutes ago", func() *fixture {
+			f := env()
+			f.deployments, f.pods = nil, nil
+			f.events = []obj{accepted("1.0.0", c2, 14*time.Minute)}
+			return f
+		}, want{condition: "Healthy", activity: "Arriving", hop: platformstate.HopAccepted}},
+		{"a first Deploy into an Unreleased Environment, accepted 16 minutes ago", func() *fixture {
+			f := env()
+			f.deployments, f.pods = nil, nil
+			f.events = []obj{accepted("1.0.0", c2, 16*time.Minute)}
+			return f
+		}, want{condition: "Healthy", activity: "Arriving", stuck: true, reason: "no progress for over 15 minutes", hop: platformstate.HopAccepted}},
+		{"nothing on its way for 20 minutes: not stuck, and Unreleased later", func() *fixture {
+			f := env()
+			f.app["metadata"].(obj)["creationTimestamp"] = ago(20 * time.Minute)
+			f.deployments, f.pods = nil, nil
+			return f
+		}, want{condition: "Healthy", activity: "Arriving"}},
+
+		{"Leaving for 44 minutes", func() *fixture { return leaving(44 * time.Minute) },
+			want{condition: "Healthy", activity: "Leaving"}},
+		{"Leaving for 46 minutes", func() *fixture { return leaving(46 * time.Minute) },
+			want{condition: "Healthy", activity: "Leaving", stuck: true, reason: "Leaving for over 45 minutes"}},
+		{"#131: Leaving for 20 minutes with a sync running: not yet", func() *fixture {
+			f := leaving(20 * time.Minute)
+			syncing(f.app, c2, "Running", "", 30*time.Minute)
+			return f
+		}, want{condition: "Healthy", activity: "Leaving"}},
+		{"#131: Leaving for 46 minutes with a sync running", func() *fixture {
+			f := leaving(46 * time.Minute)
+			syncing(f.app, c2, "Running", "", time.Hour)
+			return f
+		}, want{condition: "Healthy", activity: "Leaving", stuck: true, reason: "Leaving for over 45 minutes; ArgoCD's sync operation is still running"}},
+		{"Leaving for 46 minutes with the final backup running", func() *fixture {
+			f := leaving(46 * time.Minute)
+			f.jobs = []obj{job("final-backup", "1.0.0", 45*time.Minute, "")}
+			f.pods = []obj{readyPod("shop-a", "1.0.0"), jobPod("shop-final-backup-c", "shop-final-backup", "Running")}
+			return f
+		}, want{condition: "Healthy", activity: "Leaving", stuck: true, reason: "Leaving for over 45 minutes; the final backup has not finished"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.setup().state(t)
+			tc.want.check(t, got)
+			// The Deploy in the Activity and in the list of Deploys agree.
+			if a := got.Activity; a != nil && a.Deploy != nil {
+				if last := got.Deploys[len(got.Deploys)-1]; last.Stuck != a.Deploy.Stuck || last.Reason != a.Deploy.Reason {
+					t.Errorf("Deploys end with %+v, want the Activity's %+v", last, *a.Deploy)
+				}
+			}
+		})
+	}
+}
+
 // A stuck change is not Degraded, and Degraded is not stuck: the two
 // layers are independent.
 func TestDegradedAndStuckAreIndependent(t *testing.T) {

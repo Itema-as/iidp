@@ -202,7 +202,9 @@ func deadlineDeployment(tag string) obj {
 // firstDeployment is the first rollout of tag, created d ago, with
 // nothing serving yet.
 func firstDeployment(tag string, d time.Duration) obj {
-	return deployment(tag, 1, 1, 1, 1, 0, progressing("True", "ReplicaSetUpdated"), false, d)
+	dep := deployment(tag, 1, 1, 1, 1, 0, progressing("True", "ReplicaSetUpdated"), false, d)
+	dep["metadata"].(obj)["creationTimestamp"] = ago(d)
+	return dep
 }
 
 func pod(name, tag string, ready bool, since time.Duration) obj {
@@ -280,6 +282,50 @@ func job(component, tag string, d time.Duration, condition string) obj {
 
 func migration(tag string, d time.Duration, condition string) obj {
 	return job("migration", tag, d, condition)
+}
+
+// jobPod is a pod named name of the Job jobName, in phase, created a
+// minute ago, labelled as the Job controller labels it.
+func jobPod(name, jobName, phase string) obj {
+	p := pod(name, "1.0.0", phase == "Running", time.Minute)
+	p["metadata"].(obj)["labels"] = obj{"iidp.itema.no/application": "shop", "batch.kubernetes.io/job-name": jobName, "job-name": jobName}
+	s := status(p)
+	s["phase"] = phase
+	if phase == "Pending" {
+		s["conditions"] = []any{obj{"type": "PodScheduled", "status": "True"}}
+		s["containerStatuses"] = []any{obj{"name": "shop", "ready": false, "state": obj{"waiting": obj{"reason": "ContainerCreating"}}}}
+	}
+	return p
+}
+
+// unschedulableJobPod is a pod of the Job jobName that the scheduler
+// cannot place on the node, as #132 saw it.
+func unschedulableJobPod(name, jobName string) obj {
+	p := jobPod(name, jobName, "Pending")
+	s := status(p)
+	s["conditions"] = []any{obj{"type": "PodScheduled", "status": "False", "reason": "Unschedulable",
+		"message": "0/1 nodes are available: 1 Insufficient cpu.", "lastTransitionTime": ago(time.Minute)}}
+	delete(s, "containerStatuses")
+	return p
+}
+
+// previewEnv is shop's Preview Environment pr-2, which its ApplicationSet
+// made the given time ago with the image tag sha-new, with nothing of its
+// own running yet.
+func previewEnv(created time.Duration) *fixture {
+	f := env()
+	f.name = "pr-2"
+	f.app = argoApp("pr-2", "OutOfSync", "Missing")
+	f.app["metadata"].(obj)["creationTimestamp"] = ago(created)
+	delete(f.app["metadata"].(obj)["labels"].(obj), "iidp.itema.no/environment")
+	f.app["spec"].(obj)["sources"] = []any{
+		obj{"repoURL": "https://github.com/Itema-as/iidp-platform.git", "ref": "values"},
+		obj{"chart": "application", "helm": obj{"valueFiles": []any{"$values/applications/shop/staging/values.yaml"},
+			"valuesObject": obj{"environment": "pr-2", "image": obj{"tag": "sha-new"}, "size": "small"}}},
+	}
+	delete(status(f.app), "history")
+	f.deployments, f.pods = nil, nil
+	return f
 }
 
 // gateEvent is the Deploy gate's Event (#117), d ago, about prod.

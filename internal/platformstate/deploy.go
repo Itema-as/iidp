@@ -162,10 +162,10 @@ func placeDeploy(d *Deploy, f facts) {
 	switch {
 	case onIt && operationRunning(f.app):
 		d.Hop = HopApplying
-		d.Reason = migrationFailedFor(f, d.Tag)
+		d.Reason = migrationStuckFor(f, d.Tag)
 	case onIt && (op.Phase == "Failed" || op.Phase == "Error"):
 		d.Hop = HopApplying
-		if d.Reason = migrationFailedFor(f, d.Tag); d.Reason == "" {
+		if d.Reason = migrationStuckFor(f, d.Tag); d.Reason == "" {
 			d.Reason = syncStuck(f.app)
 		}
 	case (d.Commit != "" && commitSynced(f.app, d.Commit)) || (running != "" && running == d.Tag):
@@ -182,7 +182,7 @@ func placeDeploy(d *Deploy, f facts) {
 		}
 	case migrationFor(f, d.Tag):
 		d.Hop = HopApplying
-		d.Reason = migrationFailedFor(f, d.Tag)
+		d.Reason = migrationStuckFor(f, d.Tag)
 	case argoCDLooked(f.app, d):
 		d.Hop = HopWaitingForArgoCD
 		if msg, ok := argoCDCondition(f.app, "ComparisonError"); ok {
@@ -217,7 +217,7 @@ func untracedDeploy(f facts, preview bool) (Deploy, bool) {
 			// It never passes the Deploy gate, so it is drawn from
 			// Applying on, whether or not ArgoCD has started.
 			d.Hop = HopApplying
-			if d.Reason = migrationFailedFor(f, want); d.Reason == "" {
+			if d.Reason = migrationStuckFor(f, want); d.Reason == "" {
 				d.Reason = syncStuck(f.app)
 			}
 			if d.Reason == "" {
@@ -230,10 +230,8 @@ func untracedDeploy(f facts, preview bool) (Deploy, bool) {
 
 	if job, ok := newestJob(f.migrations); ok {
 		if tag := jobTag(job); tag != "" && tag != running && (!jobComplete(job) || operationRunning(f.app)) {
-			d := Deploy{Tag: tag, Preview: preview, Hop: HopApplying}
-			if jobFailed(job) {
-				d.Stuck, d.Reason = true, "the migration failed"
-			}
+			d := Deploy{Tag: tag, Preview: preview, Hop: HopApplying, Reason: migrationStuck(f)}
+			d.Stuck = d.Reason != ""
 			return d, true
 		}
 	}
@@ -289,17 +287,18 @@ func migrationFor(f facts, tag string) bool {
 	return ok && jobTag(job) == tag && (!jobComplete(job) || operationRunning(f.app))
 }
 
-// migrationFailedFor is "the migration failed" when the newest migration
-// Job failed and ran tag (or any tag, if its image says none).
-func migrationFailedFor(f facts, tag string) string {
+// migrationStuckFor is why the newest migration Job makes a Deploy of tag
+// stuck, as migrationStuck, when it ran tag (or any tag, if its image
+// says none).
+func migrationStuckFor(f facts, tag string) string {
 	job, ok := newestJob(f.migrations)
-	if !ok || !jobFailed(job) {
+	if !ok {
 		return ""
 	}
 	if t := jobTag(job); t != "" && t != tag {
 		return ""
 	}
-	return "the migration failed"
+	return migrationStuck(f)
 }
 
 // operationOn reports whether ArgoCD's last sync operation is for
