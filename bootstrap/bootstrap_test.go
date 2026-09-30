@@ -69,6 +69,18 @@ func TestEveryApplicationRetriesForeverAgainstTheNewestRevision(t *testing.T) {
 	}
 }
 
+// TestArgoCDEndsASyncAfterAnHour: a sync that never ends keeps its
+// Application from being deleted, a closed pull request's Preview
+// Environment included (#131, #141). The argo-cd chart puts the value in
+// argocd-cmd-params-cm, where the application controller reads it.
+func TestArgoCDEndsASyncAfterAnHour(t *testing.T) {
+	apps := renderApplications(t, "--values", fixture)
+	argocd := get[object](t, apps["argocd"], "spec", "source", "helm", "valuesObject")
+	if got := get[int](t, argocd, "configs", "params", "controller.sync.timeout.seconds"); got != 3600 {
+		t.Errorf("argocd controller.sync.timeout.seconds = %d, want 3600", got)
+	}
+}
+
 func TestEveryChartVersionIsThePinnedOne(t *testing.T) {
 	versions := readYAML(t, "versions.yaml")
 	apps := renderApplications(t, "--values", fixture)

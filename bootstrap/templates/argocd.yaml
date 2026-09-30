@@ -70,6 +70,18 @@ spec:
           params:
             # Traefik terminates TLS with the wildcard certificate.
             server.insecure: true
+            # End any sync still running an hour after it started, its
+            # retries included. A sync that waits for ever (on a CNPG
+            # Cluster that never becomes healthy, say) holds up its
+            # Application's deletion, since ArgoCD deletes an Application
+            # only once no operation runs (#131, #141). ArgoCD has no sync
+            # timeout per Application, so this bounds every sync on the
+            # Platform. It assumes nothing legitimate syncs for an hour: the
+            # migration Job has a 30-minute deadline, and database restores
+            # are small. ArgoCD does not retry a sync it ended; it syncs
+            # again on the Application's next new revision or change, or by
+            # hand (docs/implementation-notes/141-sync-timeout.md).
+            controller.sync.timeout.seconds: 3600
           rbac:
             policy.default: role:readonly
             {{- if .Values.argocdAdminGroup }}
