@@ -44,3 +44,4 @@ Questions that came up while implementing the Phase 1 tickets (issues #2 to #18)
 | #128 | [128-e2e-image-cache.md](128-e2e-image-cache.md) |
 | #131 | [131-preview-sync-ends.md](131-preview-sync-ends.md) |
 | #132 | [132-stuck-states.md](132-stuck-states.md) |
+| #141 | [141-stuck-preview-deletion.md](141-stuck-preview-deletion.md) |
