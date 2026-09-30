@@ -2,11 +2,10 @@
 # Runs an image built from one of iidp's Create templates the way the
 # Platform does, and checks that it passes Pod Security's restricted level:
 # a kind cluster on the Kubernetes version the Platform runs, a namespace
-# that enforces, warns and audits restricted, and the application chart
-# rendered with runAsNonRoot: true, which iidp app create writes for these
-# templates. It fails on any warning from the apply, on a Pod that does not
-# become Ready, on a container running as root, and on anything but a 200
-# on / at the template's port.
+# that enforces, warns and audits restricted, as every Application namespace
+# does, and the application chart. It fails on any warning from the apply,
+# on a Pod that does not become Ready, on a container running as root, and
+# on anything but a 200 on / at the template's port.
 #
 #   test/templates/run-restricted.sh <nextjs|vite-react> <image>
 #
@@ -63,7 +62,6 @@ kind: $kind_of
 image:
   repository: $repository
   tag: "$tag"
-runAsNonRoot: true
 EOF
 
 helm template demoapp "$root/chart/application" --namespace demo --values "$work/values.yaml" >"$work/manifests.yaml"

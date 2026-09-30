@@ -22,10 +22,10 @@ platform:
   objectStorageEndpoint: http://object-storage.iidp-e2e.svc.cluster.local:7070
 kind: web-service
 image:
-  repository: docker.io/library/nginx
+  repository: docker.io/nginxinc/nginx-unprivileged
   tag: "1.30-alpine"
 size: small
-port: 80
+port: 8080
 probe:
   path: /
 env: {}

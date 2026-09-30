@@ -1,7 +1,7 @@
 # Values for notes's prod Environment: never released in the test, so the
 # chart renders nothing and ArgoCD applies only the backups-credentials
-# Secret from the sops/ source. Its image is Docker Hub's nginx, like
-# shop's, since kind has no GHCR.
+# Secret from the sops/ source. Its image is Docker Hub's unprivileged
+# nginx, like shop's, since kind has no GHCR.
 application:
   name: notes
 environment: prod
@@ -12,10 +12,10 @@ platform:
   objectStorageEndpoint: https://objectstorage.invalid
 kind: web-service
 image:
-  repository: docker.io/library/nginx
+  repository: docker.io/nginxinc/nginx-unprivileged
   tag: ""
 size: medium
-port: 80
+port: 8080
 probe:
   path: /
 env: {}
