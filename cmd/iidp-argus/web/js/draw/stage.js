@@ -17,14 +17,17 @@ import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 const HOME_DIRECTION = new THREE.Vector3(0.6, 0.5, 0.62).normalize();
 /** How long a flight takes, in ms. */
 const FLIGHT = 1600;
+/** The glow's strength at ?glow=1. */
+const GLOW = 0.45;
 
 const ease = (/** @type {number} */ q) => (q < 0.5 ? 4 * q * q * q : 1 - Math.pow(-2 * q + 2, 3) / 2);
 
 /**
  * @param {HTMLElement} container
- * @param {{reduced: boolean, onInput: (t: number) => void}} options
+ * @param {{reduced: boolean, glow?: number, onInput: (t: number) => void}} options
+ *   glow: the glow's strength, 1 by default; 0 turns it off.
  */
-export function createStage(container, { reduced, onInput }) {
+export function createStage(container, { reduced, glow = 1, onInput }) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   let pixelRatio = Math.min(globalThis.devicePixelRatio || 1, 2);
   renderer.setPixelRatio(pixelRatio);
@@ -47,7 +50,8 @@ export function createStage(container, { reduced, onInput }) {
 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.8, 0.45, 0.12);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), GLOW * glow, 0.45, 0.12);
+  bloom.enabled = glow > 0;
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
 
@@ -238,9 +242,10 @@ export function createStage(container, { reduced, onInput }) {
       return pixelRatio;
     },
 
-    /** Whether the glow is on. @param {boolean} on */
-    setGlow(on) {
-      bloom.enabled = on;
+    /** The glow's strength, 1 by default; 0 turns it off. @param {number} level */
+    setGlow(level) {
+      bloom.strength = GLOW * level;
+      bloom.enabled = level > 0;
     },
   };
 }

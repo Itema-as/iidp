@@ -15,6 +15,10 @@ import { createBanner, createChip, createEdges, createFeed, createMeter } from '
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 const params = new URLSearchParams(location.search);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// ?glow= scales the glow round the particles: 0 turns it off, 0.5 halves
+// it, 2 doubles it.
+const glowParam = parseFloat(params.get('glow') ?? '');
+const glow = Number.isFinite(glowParam) ? Math.min(Math.max(glowParam, 0), 4) : 1;
 
 const model = createModel();
 // The automatic camera is on by default, and starts off for someone who
@@ -25,7 +29,7 @@ const attention = createAttention({ enabled: !reduced });
 let drawing;
 try {
   const { createDrawing } = await import('./draw/drawing.js');
-  drawing = createDrawing($('stage'), { reduced, onInput: (t) => attention.input(t) });
+  drawing = createDrawing($('stage'), { reduced, glow, onInput: (t) => attention.input(t) });
 } catch (err) {
   console.error('Argus could not start its drawing', err);
   $('fallback').hidden = false;
