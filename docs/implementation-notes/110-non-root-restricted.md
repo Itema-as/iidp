@@ -73,7 +73,7 @@ The fixture namespaces enforce `restricted`, because their `application.yaml` fi
 
 The privileged Pod check now expects `violates PodSecurity "restricted`.
 
-The issue asked to stop if CloudNativePG's Pods didn't pass `restricted`. The #90 note had already seen no violation against `restricted` for them in the audit log; this run enforces it (see the pull request for the result).
+The issue asked to stop if CloudNativePG's Pods didn't pass `restricted`. They do. In the kind run for #146 (`TestBootstrap` passed), the fixture namespaces enforced `restricted`, and a privileged Pod was refused with `violates PodSecurity "restricted`. `shop-db-1` and `shop-db-1-initdb` were created, and both databases became healthy. The migration Jobs, the Scheduled task's Jobs, shop-staging's final Backup hook and brochure's first deploy all ran. Of 79 audited writes in the fixture namespaces, none carried a Pod Security violation, and no Pod was refused.
 
 ## What the rollout has to do
 
