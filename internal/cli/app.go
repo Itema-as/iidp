@@ -115,7 +115,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.name, "name", "", "Application name: lowercase letters, digits and dashes, starting with a letter, at most 40 characters, unique on the Platform (defaults to the repository name with --path adopt)")
 	f.StringVar(&opts.kind, "kind", "", "Kind of Application: web-service or static-site (derived from --framework with --path create, unless --framework other; required with --path adopt when the repository already has a Dockerfile or no known framework is detected)")
-	f.StringVar(&opts.path, "path", "", "How the Application repository comes to be: create (generate one) or adopt (open a pull request on an existing one). Omit to write only the Platform repository, as before this flag existed")
+	f.StringVar(&opts.path, "path", "", "How the Application repository comes to be: create (generate one) or adopt (open a pull request on an existing one). Omit to write only the Platform repository")
 	f.StringVar(&opts.repo, "repo", "", "Existing Application repository to adopt, in "+platform.Org+": "+platform.Org+"/name or a URL (--path adopt only)")
 	f.StringVar(&opts.framework, "framework", "", "Framework to generate the Application repository from (--path create only): nextjs, vite-react or other")
 	f.BoolVar(&opts.private, "private", true, "Create the Application repository as private (--path create only; default)")

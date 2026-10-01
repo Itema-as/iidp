@@ -97,7 +97,7 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 		gate = strings.TrimSuffix(strings.TrimSpace(os.Getenv(DeployGateURLEnvVar)), "/")
 	}
 	if gate == "" {
-		return fmt.Errorf("the Deploy gate's URL is not set: pass --gate-url or set %s to https://deploy.<baseDomain>. A deploy workflow generated before the Deploy gate lacks it; see docs/implementation-notes/60-deploy-gate.md for moving it over", DeployGateURLEnvVar)
+		return fmt.Errorf("the Deploy gate's URL is not set: pass --gate-url or set %s to https://deploy.<baseDomain>, as the generated deploy workflow does", DeployGateURLEnvVar)
 	}
 	if u, err := url.Parse(gate); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return fmt.Errorf("the Deploy gate's URL %q is not an http(s) URL", gate)
