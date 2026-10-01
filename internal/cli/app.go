@@ -225,8 +225,8 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		image = platform.Registry + "/" + plan.name
 	}
 	// For Adopt, kind and migrationCommand depend on the cloned repository:
-	// they are resolved for the summary by the preview, and finally by
-	// Adopter.Adopt.
+	// they are resolved for the interactive summary by Adopter.Preview, and
+	// finally by Adopter.Adopt.
 	kind := plan.kind
 	migrationCommand := plan.migrationCommand
 	if plan.path != pathAdopt {

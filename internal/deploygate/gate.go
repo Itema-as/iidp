@@ -89,10 +89,16 @@ type Response struct {
 	// File is the values file, relative to the Platform repository.
 	File string `json:"file"`
 	// Commit is the Platform repository commit, "" when Unchanged.
-	Commit                  string `json:"commit,omitempty"`
-	Unchanged               bool   `json:"unchanged,omitempty"`
-	MigrationCommandChanged bool   `json:"migrationCommandChanged,omitempty"`
-	TasksChanged            bool   `json:"tasksChanged,omitempty"`
+	Commit string `json:"commit,omitempty"`
+	// Unchanged is true when the Environment already ran Tag, with the
+	// migration command and the tasks asked for.
+	Unchanged bool `json:"unchanged,omitempty"`
+	// MigrationCommandChanged is true when Commit changed the
+	// Environment's migration command.
+	MigrationCommandChanged bool `json:"migrationCommandChanged,omitempty"`
+	// TasksChanged is true when Commit changed the Environment's
+	// Scheduled tasks.
+	TasksChanged bool `json:"tasksChanged,omitempty"`
 }
 
 // ErrorResponse is the body of every refusal.
@@ -141,14 +147,18 @@ func CredentialsFromDir(dir string) func() (AppCredentials, error) {
 
 // Gate is the Deploy gate's HTTP service.
 type Gate struct {
+	// OIDC verifies the caller's token: issuer, audience (the gate's own
+	// URL), signature and lifetime.
 	OIDC *oidc.Verifier
 	// OrgID is the numeric id of the org whose repositories may deploy.
 	// Both the token's repository_owner_id and the Application's binding
 	// must carry it.
-	OrgID        int64
+	OrgID int64
+	// PlatformRepo is the git URL of the Platform repository.
 	PlatformRepo string
 	// GitHubAPI is the GitHub REST API root; "" means the real one.
-	GitHubAPI   string
+	GitHubAPI string
+	// Credentials yields the App's credentials for each call.
 	Credentials func() (AppCredentials, error)
 	// Images checks that a tag exists before it is committed. Nil refuses
 	// every deploy: the gate never commits a tag unchecked.

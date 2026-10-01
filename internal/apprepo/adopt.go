@@ -169,7 +169,8 @@ type AdoptRequest struct {
 	Postgres bool
 	// Scopes are the developer's token's OAuth scopes, checked only when
 	// the pull request would add the deploy workflow.
-	Scopes        github.TokenScopes
+	Scopes github.TokenScopes
+	// DeployGateURL is rendered into the deploy workflow when Adopt adds one.
 	DeployGateURL string
 	// MigrationCommand and MigrationCommandSet are the developer's
 	// --migration-command, and whether it was given at all.
@@ -205,6 +206,8 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 	if err != nil {
 		return AdoptResult{}, err
 	}
+	// The CLI checked --repo as typed; this checks the owner GitHub reports,
+	// which differs when the name redirects to a transferred repository.
 	binding, err := BindingForRepository(req.Owner+"/"+req.Name, repo)
 	if err != nil {
 		return AdoptResult{}, err

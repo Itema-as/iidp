@@ -70,7 +70,9 @@ type Owner struct {
 
 // CreatedRepository is what CreateRepository reads back from GitHub.
 type CreatedRepository struct {
-	CloneURL      string
+	CloneURL string
+	// DefaultBranch is the default branch GitHub gave the repository, so
+	// the caller can tell whether SetDefaultBranch still needs to run.
 	DefaultBranch string
 	// ID is the repository's numeric id: the OIDC token's repository_id,
 	// which the Platform binds the Application to.
@@ -107,7 +109,8 @@ func (c *Client) CreateRepository(ctx context.Context, org, name string, private
 	}, nil
 }
 
-// SetDefaultBranch sets owner/name's default branch.
+// SetDefaultBranch sets owner/name's default branch, for a repository
+// created with a different default, or none.
 func (c *Client) SetDefaultBranch(ctx context.Context, owner, name, branch string) error {
 	body := map[string]any{"default_branch": branch}
 	if err := c.do(ctx, http.MethodPatch, "/repos/"+owner+"/"+name, body, nil); err != nil {

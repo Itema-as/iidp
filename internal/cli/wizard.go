@@ -120,7 +120,7 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// Previews need staging's values and secrets, and a bound repository
+	// Preview Environments need staging's values and secrets, and a bound repository
 	// whose pull requests they follow; otherwise the answer is refused.
 	if opts.staging && (opts.path == pathCreate || opts.path == pathAdopt) && !f.Changed("previews") {
 		fmt.Fprintln(out, "Preview Environments (optional)")

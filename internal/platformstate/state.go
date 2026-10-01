@@ -424,7 +424,7 @@ func newestRun(jobs []Job, pods []Pod) *Run {
 // sorted and deduplicated. ArgoCD's scheme is not kept: it writes http://
 // for an Ingress whose TLS entry names no Secret, which is every Platform
 // address since the wildcard certificate is Traefik's default, yet every
-// Application Ingress is served over HTTPS only.
+// Application Ingress is served over HTTPS; plain HTTP is only redirected.
 func addressesOf(urls []string) []string {
 	out := []string{}
 	for _, u := range urls {
