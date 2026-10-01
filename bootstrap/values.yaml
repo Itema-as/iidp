@@ -89,7 +89,7 @@ guardrails:
   validationActions: [Warn, Audit]
   # Images allowed in Application namespaces besides the Platform's own list
   # in components/guardrails. An entry ending in "/" is a prefix, any other
-  # one repository. For test Platforms whose fixtures run public images.
+  # one repository. For a test Platform whose fixtures run public images.
   extraAllowedImages: []
 
 # Where this chart lives, for the component Applications that point back at

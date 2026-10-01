@@ -41,8 +41,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # See "Releasing" in README.md.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          # Turns on the images in .goreleaser.yaml, now that this job can
-          # push them.
+          # Turns on the images in .goreleaser.yaml, which this job can push
+          # once logged in to GHCR.
           IIDP_PUBLISH_DEPLOY_GATE: "true"
           IIDP_PUBLISH_ARGUS: "true"
 

@@ -34,7 +34,7 @@ allowedImages:
   - docker.io/bitnami/kubectl
   - quay.io/jetstack/cert-manager-acmesolver
 
-# More entries, same format, for test Platforms whose fixtures run public
+# More entries, same format, for a test Platform whose fixtures run public
 # images.
 extraAllowedImages: []
 
