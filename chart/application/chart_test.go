@@ -1,6 +1,5 @@
-// Package application_test drives the generic Application chart from the
-// outside: it renders fixture values files with helm template, parses the
-// manifests, and asserts on what an Environment would receive.
+// Package application_test renders the Application chart with helm template
+// and checks what an Environment would receive.
 package application_test
 
 import (
@@ -23,11 +22,8 @@ import (
 // object is one rendered Kubernetes manifest.
 type object = map[string]any
 
-// render runs helm template on the chart with the given fixture values file
-// and returns the rendered objects keyed by "Kind/name". extraArgs, when
-// given, are appended to the helm template invocation (for example
-// --namespace, to set .Release.Namespace the way ArgoCD's Helm source
-// rendering does from an Application's destination namespace).
+// render runs helm template on the chart with a fixture values file and
+// returns the objects keyed by "Kind/name".
 func render(t *testing.T, fixture string, extraArgs ...string) map[string]object {
 	t.Helper()
 	out, err := helmTemplate(t, fixture, extraArgs...)
@@ -37,16 +33,14 @@ func render(t *testing.T, fixture string, extraArgs ...string) map[string]object
 	return parseObjects(t, out)
 }
 
-// helmTemplate runs helm template with a fixture values file and returns the
-// combined output and the command's error, so tests can assert on both
-// successful renders and refusals.
+// helmTemplate returns helm template's combined output and error for a
+// fixture values file.
 func helmTemplate(t *testing.T, fixture string, extraArgs ...string) (string, error) {
 	t.Helper()
 	return helmTemplateFile(t, filepath.Join("testdata", fixture), extraArgs...)
 }
 
-// helmTemplateFile is helmTemplate for a values file at any path, for
-// values the test produces itself rather than a fixture.
+// helmTemplateFile is helmTemplate for a values file at any path.
 func helmTemplateFile(t *testing.T, valuesFile string, extraArgs ...string) (string, error) {
 	t.Helper()
 	requireTool(t, "helm")
@@ -59,9 +53,8 @@ func helmTemplateFile(t *testing.T, valuesFile string, extraArgs ...string) (str
 	return out.String(), err
 }
 
-// parseObjects splits the multi-document stream helm template prints into
-// objects, failing on a duplicate Kind/name because that would be two
-// objects fighting over one resource in the cluster.
+// parseObjects splits helm template's output into objects keyed by
+// "Kind/name", failing on a duplicate.
 func parseObjects(t *testing.T, manifests string) map[string]object {
 	t.Helper()
 	objects := map[string]object{}
@@ -87,10 +80,8 @@ func parseObjects(t *testing.T, manifests string) map[string]object {
 	return objects
 }
 
-// requireTool skips the test when the tool is not on PATH, so go test ./...
-// stays green on machines without helm or kubeconform. CI sets
-// IIDP_REQUIRE_CHART_TOOLS so that a broken tool install fails loudly there
-// instead of skipping every assertion.
+// requireTool skips the test when the tool is not on PATH, unless
+// IIDP_REQUIRE_CHART_TOOLS is set.
 func requireTool(t *testing.T, name string) {
 	t.Helper()
 	if _, err := exec.LookPath(name); err != nil {
@@ -102,7 +93,7 @@ func requireTool(t *testing.T, name string) {
 }
 
 // get walks nested maps by key and returns the value at the end of the path
-// as T, failing the test when the path is missing or of another type.
+// as T.
 func get[T any](t *testing.T, obj any, path ...string) T {
 	t.Helper()
 	current := obj
@@ -125,8 +116,7 @@ func get[T any](t *testing.T, obj any, path ...string) T {
 	return v
 }
 
-// mustObject returns the rendered object with the given "Kind/name" key,
-// listing what was rendered when it is missing.
+// mustObject returns the rendered object with the given "Kind/name" key.
 func mustObject(t *testing.T, objects map[string]object, key string) object {
 	t.Helper()
 	obj, ok := objects[key]
@@ -156,8 +146,7 @@ func envVars(t *testing.T, c map[string]any) map[string]string {
 	return vars
 }
 
-// keys lists the rendered "Kind/name" keys in a stable order for messages
-// and comparisons.
+// keys lists the rendered "Kind/name" keys, sorted.
 func keys(objects map[string]object) []string {
 	return slices.Sorted(maps.Keys(objects))
 }
@@ -237,10 +226,8 @@ func TestProbesRequestTheProbePath(t *testing.T) {
 	}
 }
 
-// A terminating Pod waits before its container is stopped, so Traefik has
-// dropped it from its endpoints by then and a rollout answers no 502. The
-// wait comes out of the grace period, which is raised by as much so the
-// container still gets the default 30 seconds after it (#75).
+// The preStop wait comes out of the grace period, which is raised by as much
+// so the container still gets the default 30 seconds after it.
 func TestPodsDrainBeforeStopping(t *testing.T) {
 	for _, tc := range []struct{ fixture, deployment string }{
 		{"prod-small.yaml", "shop"},
@@ -350,10 +337,8 @@ func TestIngressHostFollowsTheEnvironment(t *testing.T) {
 			if len(tls) != 1 {
 				t.Fatalf("Ingress has %d tls entries, want 1", len(tls))
 			}
-			// The Platform's wildcard certificate is Traefik's default
-			// certificate (the bootstrap's TLSStore), so a Platform host
-			// names no secret: Traefik serves the default for any host
-			// without one.
+			// The wildcard is Traefik's default certificate, so a Platform host names
+			// no secret.
 			entry, _ := tls[0].(map[string]any)
 			if secret, set := entry["secretName"]; set {
 				t.Errorf("tls secretName = %v, want none (the wildcard is Traefik's default certificate)", secret)
@@ -426,16 +411,15 @@ func TestRenderingRefusesInvalidValues(t *testing.T) {
 	}
 }
 
-// k3sVersionFile is where the Platform pins the k3s release its node runs.
-// The rendered manifests are validated against that release's Kubernetes
-// minor, so there is one pin, in infra, and a k3s bump moves this test with it.
+// k3sVersionFile pins the k3s release whose Kubernetes minor the manifests
+// are validated against.
 const k3sVersionFile = "../../infra/platform/variables.tf"
 
 var k3sVersionDefault = regexp.MustCompile(`(?s)variable "k3s_version" \{.*?default\s*=\s*"v(\d+\.\d+)\.\d+\+k3s\d+"`)
 
 // kubernetesVersion returns the Kubernetes version kubeconform validates
-// against, derived from the k3s release pinned in infra: v1.36.4+k3s1 gives
-// 1.36.0, because kubeconform's schemas are published per minor.
+// against: v1.36.4+k3s1 gives 1.36.0, because kubeconform's schemas are
+// published per minor.
 func kubernetesVersion(t *testing.T) string {
 	t.Helper()
 	tf, err := os.ReadFile(k3sVersionFile)

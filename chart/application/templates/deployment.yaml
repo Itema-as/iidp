@@ -52,8 +52,6 @@ spec:
           {{- end }}
           {{- with .Values.secrets }}
           # Every key of each named Secret becomes an environment variable.
-          # The Secrets themselves are SOPS-encrypted next to the values file
-          # in the Platform repository; the chart never sees their contents.
           envFrom:
             {{- range . }}
             - secretRef:

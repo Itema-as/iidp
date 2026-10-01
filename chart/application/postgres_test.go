@@ -18,8 +18,8 @@ func objectsOfKind(objects map[string]object, kind string) []string {
 	return found
 }
 
-// envItem returns the container's env entry with the given name as rendered
-// (value or valueFrom), or nil when there is none.
+// envItem returns the container's env entry with the given name as rendered,
+// or nil when there is none.
 func envItem(t *testing.T, c map[string]any, name string) map[string]any {
 	t.Helper()
 	for _, item := range get[[]any](t, c, "env") {
@@ -141,8 +141,8 @@ func TestBackupsGoToTheBucketThroughTheBarmanCloudPlugin(t *testing.T) {
 		t.Run(tc.fixture, func(t *testing.T) {
 			objects := render(t, tc.fixture)
 
-			// The object store: where, through which endpoint, with which
-			// credentials, kept for how long.
+			// The object store: where, through which endpoint, with which credentials,
+			// kept for how long.
 			store := mustObject(t, objects, "ObjectStore/"+tc.cluster)
 			if api := get[string](t, store, "apiVersion"); api != "barmancloud.cnpg.io/v1" {
 				t.Errorf("ObjectStore apiVersion = %q, want barmancloud.cnpg.io/v1", api)
@@ -180,8 +180,8 @@ func TestBackupsGoToTheBucketThroughTheBarmanCloudPlugin(t *testing.T) {
 				t.Errorf("barmanObjectName = %q, want %q", store, tc.cluster)
 			}
 
-			// And a daily base backup through the same plugin, the first one
-			// straight away so WAL has something to apply to.
+			// And a daily base backup, the first one straight away so WAL has something
+			// to apply to.
 			scheduled := mustObject(t, objects, "ScheduledBackup/"+tc.cluster)
 			if api := get[string](t, scheduled, "apiVersion"); api != "postgresql.cnpg.io/v1" {
 				t.Errorf("ScheduledBackup apiVersion = %q, want postgresql.cnpg.io/v1", api)
@@ -207,9 +207,8 @@ func TestBackupsGoToTheBucketThroughTheBarmanCloudPlugin(t *testing.T) {
 
 func TestMigrationJobRunsTheCommandBeforeTheRolloutOnlyWhenSet(t *testing.T) {
 	t.Run("absent without a command", func(t *testing.T) {
-		// Postgres is on in this fixture, so the final Backup PreDelete
-		// hook's own Job (chart/application/templates/final-backup-job.yaml)
-		// still renders; only the migration Job depends on a command.
+		// The final Backup hook's Job still renders; only the migration Job depends
+		// on a command.
 		var migrationJobs []string
 		for _, key := range objectsOfKind(render(t, "postgres-staging.yaml"), "Job") {
 			if strings.HasSuffix(key, "-migrate") {
@@ -224,9 +223,8 @@ func TestMigrationJobRunsTheCommandBeforeTheRolloutOnlyWhenSet(t *testing.T) {
 	objects := render(t, "postgres-prod.yaml")
 	job := mustObject(t, objects, "Job/shop-migrate")
 
-	// ArgoCD runs it as a hook in a wave after the database and before the
-	// Application's objects, and does not apply those if it fails: the
-	// hook's failure is what stops the rollout.
+	// ArgoCD does not apply the Application's objects if the hook fails: that
+	// is what stops the rollout.
 	annotations := annotationsOf(t, job)
 	if hook := annotations["argocd.argoproj.io/hook"]; hook != "Sync" {
 		t.Errorf("hook = %v, want Sync", hook)
@@ -300,8 +298,7 @@ func TestMigrationJobRunsTheCommandBeforeTheRolloutOnlyWhenSet(t *testing.T) {
 }
 
 // A migration Job whose Pod never starts fails at its deadline instead of
-// holding the sync, and with it the Environment's deletion, for ever (#131).
-// Every Environment's, a Preview Environment's among them.
+// holding the sync, and with it the Environment's deletion, for ever.
 func TestEveryMigrationJobHasADeadline(t *testing.T) {
 	var seen []string
 	for _, fixture := range renderingFixtures(t) {
@@ -352,12 +349,9 @@ func TestOnlyTheDeploymentPodsMatchTheServiceAndEveryPodIsAttributed(t *testing.
 }
 
 func TestASyncNeverPrunesTheDatabase(t *testing.T) {
-	// The database's objects carry Prune=false, so a values file that
-	// stops rendering them (an image tag or postgres.enabled removed by
-	// hand) leaves the database running instead of deleting it. Nothing
-	// carries Delete=false: ArgoCD's cascade deletion honours that one,
-	// and iidp app delete must still remove the database after the final
-	// backup. See docs/implementation-notes/47-unreleased-environment.md.
+	// Prune=false keeps the database running when a values file stops rendering
+	// it. Nothing carries Delete=false, which ArgoCD's cascade deletion honours:
+	// iidp app delete must still remove the database after the final backup.
 	const syncOptions = "argocd.argoproj.io/sync-options"
 	cases := []struct {
 		fixture string
@@ -401,10 +395,8 @@ func TestRenderingRefusesPostgresValuesItCannotHonour(t *testing.T) {
 		{"refuse-env-sets-database-url.yaml", `env must not set DATABASE_URL; the Postgres Capability injects it`},
 		{"refuse-postgres-static-site.yaml", `postgres.enabled needs kind: web-service; a Static site has no server to use a database`},
 		{"refuse-postgres-final-backup-timeout.yaml", `postgres.finalBackupTimeout must be a positive whole number of seconds`},
-		// A code-review finding: `default 1800` in the validation itself
-		// would treat an explicit 0 as "unset" and silently let it through
-		// with the default substituted; the validation must see the real
-		// value.
+		// `default 1800` in the validation would treat an explicit 0 as unset and
+		// let it through.
 		{"refuse-postgres-final-backup-timeout-zero.yaml", `postgres.finalBackupTimeout must be a positive whole number of seconds, got 0`},
 	}
 	for _, tc := range cases {
@@ -421,8 +413,7 @@ func TestRenderingRefusesPostgresValuesItCannotHonour(t *testing.T) {
 }
 
 // crdSchemas is where kubeconform finds the CloudNativePG and Barman Cloud
-// plugin CRD schemas, which the default location (built-in Kubernetes types
-// only) does not carry.
+// plugin CRD schemas.
 const crdSchemas = "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 
 func TestPostgresManifestsPassKubeconformWithTheCRDSchemas(t *testing.T) {

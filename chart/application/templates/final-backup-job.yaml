@@ -42,35 +42,18 @@ metadata:
     {{- include "application.labels" . | nindent 4 }}
     app.kubernetes.io/component: final-backup
   annotations:
-    # Only the Job is a PreDelete hook. The ServiceAccount, Role and
-    # RoleBinding above are ordinary chart resources instead: they exist
-    # continuously while postgres.enabled, applied and pruned in the
-    # Application's normal sync waves the same as the Cluster or the
-    # Deployment, not created fresh at deletion time. This deliberately
-    # narrows the surface from #39's original four PreDelete hook objects
-    # to one: creating several hook resources together, each one's own
-    # creation event asking ArgoCD to refresh the Application again, was
-    # found (docs/implementation-notes/39-final-backup-predelete-hook.md)
-    # to trigger a real ArgoCD race under concurrent reconciles, where
-    # deletion proceeded without ever waiting for the hook Job's health.
-    # With one hook object there is nothing left to create a flood of
-    # refreshes, and no RBAC-before-Job ordering to get wrong: the
-    # ServiceAccount the Job's Pod mounts already exists, the same way the
-    # Cluster the Job's script talks to already exists.
+    # Only the Job is a hook; its RBAC above are ordinary resources. Several
+    # PreDelete hook objects created together trigger an ArgoCD race in which
+    # deletion goes ahead without waiting for the Job.
     #
-    # A PreDelete hook is created only when the Environment's own ArgoCD
-    # Application is deleted (never during a normal sync, even with
-    # prune), and ArgoCD waits for it to reach Healthy before it deletes
-    # anything else and only then cleans it up; a failing hook blocks the
-    # deletion with a DeletionError condition until it is fixed in git or
-    # removed by hand. So this Job is guaranteed to run, and to finish or
-    # fail, before the Cluster it targets is torn down.
+    # ArgoCD runs a PreDelete hook only when the Environment's Application is
+    # deleted, and deletes nothing else until it is Healthy; a failing hook
+    # blocks the deletion until it is fixed in git or removed by hand.
     argocd.argoproj.io/hook: PreDelete
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
-  # One attempt: a hook that failed once should be inspected (its logs kept
-  # by BeforeHookCreation/HookSucceeded only removing it after success), not
-  # retried blindly against a database that may be in a bad state.
+  # One attempt: a failed hook is kept for inspection, not retried blindly
+  # against a database that may be in a bad state.
   backoffLimit: 0
   template:
     metadata:
@@ -84,11 +67,6 @@ spec:
       restartPolicy: Never
       containers:
         - name: final-backup
-          # Pinned to the Kubernetes minor the Platform runs
-          # (bootstrap/versions.yaml's kind node image / infra's k3s pin):
-          # see application.postgres.finalBackupKubectlImage in
-          # _helpers.tpl for why bitnami/kubectl rather than the distroless
-          # registry.k8s.io/kubectl.
           image: {{ include "application.postgres.finalBackupKubectlImage" . | quote }}
           command: ["bash", "-c"]
           args:

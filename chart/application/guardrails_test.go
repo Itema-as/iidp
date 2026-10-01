@@ -9,15 +9,9 @@ import (
 	"testing"
 )
 
-// The guardrails (#90, #110): every workload the chart renders passes Pod
-// Security's restricted level; the Environment's declared domains reach the bootstrap's Ingress-host
-// policy through a ConfigMap; and every container, the database's backup
-// sidecar included, has limits.
-
 // podSpecs returns every Pod template the rendered objects carry, keyed by
-// "Kind/name", whatever the workload kind: a Deployment's or a Job's
-// spec.template, a CronJob's spec.jobTemplate.spec.template. A workload the
-// chart adds later is found here without the test changing.
+// "Kind/name", whatever the workload kind, so a workload added later is
+// checked too.
 func podSpecs(t *testing.T, objects map[string]object) map[string]map[string]any {
 	t.Helper()
 	specs := map[string]map[string]any{}
@@ -69,10 +63,8 @@ func renderingFixtures(t *testing.T) []string {
 	return fixtures
 }
 
-// Every workload in every fixture passes Pod Security's restricted level,
-// which Application namespaces enforce (#110): the Deployment, the
-// migration Job, the final Backup hook Job and the Scheduled task
-// CronJobs, and the fixtures between them render all four.
+// The fixtures between them render every workload kind: the Deployment, the
+// migration Job, the final Backup Job and the Scheduled task CronJobs.
 func TestEveryWorkloadPassesRestricted(t *testing.T) {
 	seen := map[string]bool{}
 	for _, fixture := range renderingFixtures(t) {
@@ -103,9 +95,8 @@ func componentOf(key string) string {
 	return "app"
 }
 
-// runAsNonRoot was a value before #110, and an Environment written before
-// it may still carry runAsNonRoot: false. The chart ignores it: the
-// container still runs as non-root, and a Static site still on 8080.
+// An older values file may still carry runAsNonRoot: false; the chart
+// ignores it.
 func TestALeftoverRunAsNonRootChangesNothing(t *testing.T) {
 	objects := render(t, "static-site.yaml", "--set", "runAsNonRoot=false")
 	c := container(t, objects, "brochure")
@@ -117,13 +108,10 @@ func TestALeftoverRunAsNonRootChangesNothing(t *testing.T) {
 	}
 }
 
-// restrictedViolations checks a Pod spec against the controls of Pod
-// Security's restricted level (kubernetes.io/docs/concepts/security/
-// pod-security-standards, v1.36), baseline's included, the way the
-// admission controller reads them: a container-level field wins over the
-// Pod-level one. It is the offline half of the check; the kind
-// end-to-end test and the Templates CI job apply real Pods to a namespace
-// that enforces restricted.
+// restrictedViolations checks a Pod spec against Pod Security's restricted
+// level, baseline's controls included, the way the admission controller
+// reads them: a container-level field wins over the Pod-level one. The kind
+// end-to-end test checks real Pods.
 func restrictedViolations(t *testing.T, podSpec map[string]any) []string {
 	t.Helper()
 	var out []string
@@ -202,11 +190,9 @@ func asList(v any) []any {
 	return list
 }
 
-// The declared domains reach the bootstrap's Ingress-host policy as the
-// keys of ConfigMap iidp-domains, every custom domain whichever certificate
-// it gets; an Environment without custom domains still has the ConfigMap,
-// empty, since the policy does not check an Ingress in a namespace without
-// it at all.
+// Every custom domain, whichever certificate it gets. Without custom domains
+// the ConfigMap is still there, empty, since the policy skips a namespace
+// without it.
 func TestDeclaredDomainsAreTheKeysOfTheDomainsConfigMap(t *testing.T) {
 	for _, tc := range []struct {
 		fixture string
@@ -237,9 +223,6 @@ func TestDeclaredDomainsAreTheKeysOfTheDomainsConfigMap(t *testing.T) {
 	}
 }
 
-// The Barman Cloud plugin's sidecar in the database Pod has limits, like
-// every other container in an Application namespace, with a small request
-// for the CPU-tight node and kind runner.
 func TestTheBackupSidecarHasLimits(t *testing.T) {
 	store := mustObject(t, render(t, "postgres-prod.yaml"), "ObjectStore/shop-db")
 	resources := get[map[string]any](t, store, "spec", "instanceSidecarConfiguration", "resources")

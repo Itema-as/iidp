@@ -1,8 +1,7 @@
 {{/*
-The Application's name, validated once here so every template can rely on it.
-It becomes object names and the first label of the Platform address, so it
-must be a DNS-1035 label (a Service name must start with a letter) with room
-for the -staging suffix inside the 63-character limit.
+The Application's name. It becomes object names and the first label of the
+Platform address, so it must be a DNS-1035 label (a Service name must start
+with a letter) with room for the -staging suffix inside 63 characters.
 */}}
 {{- define "application.name" -}}
 {{- $name := required "application.name is required" .Values.application.name | toString -}}
@@ -13,9 +12,7 @@ for the -staging suffix inside the 63-character limit.
 {{- end -}}
 
 {{/*
-The Environment: prod, staging, or pr-<number> for the Preview Environment
-of one pull request (docs/adr/0006-preview-environments-from-an-argocd-applicationset.md),
-which the Application's previews ApplicationSet sets over staging's values.
+The Environment: prod, staging, or pr-<number> for a Preview Environment.
 */}}
 {{- define "application.environment" -}}
 {{- $environment := .Values.environment | toString -}}
@@ -26,10 +23,9 @@ which the Application's previews ApplicationSet sets over staging's values.
 {{- end -}}
 
 {{/*
-The name every object of this Environment carries. prod is the unadorned
-Application name; staging carries the -staging suffix and a Preview
-Environment -pr-<number>, the same shape as the Platform address, so
-Environments can share a namespace.
+The name every object of this Environment carries: the Application name,
+suffixed with the Environment except for prod, so Environments can share a
+namespace.
 */}}
 {{- define "application.fullname" -}}
 {{- $name := include "application.name" . -}}
@@ -45,9 +41,8 @@ Environments can share a namespace.
 {{- end -}}
 
 {{/*
-Refuses values the chart cannot honour, with a message naming the value.
-Every template includes this first, so the refusal happens whichever object
-Helm renders first. It produces no output.
+Refuses values the chart cannot honour. Every template includes this first,
+so the refusal happens whichever object Helm renders first. No output.
 */}}
 {{- define "application.validate" -}}
 {{- $_ := include "application.kind" . -}}
@@ -77,9 +72,7 @@ Helm renders first. It produces no output.
 {{- end -}}
 {{- /*
 The checks below would otherwise only run inside the objects that use the
-value, which an Environment without its first image does not render (see
-application.released). Running them here refuses a broken values file the
-same way whether or not the Environment has been released yet.
+value, which an unreleased Environment does not render.
 */ -}}
 {{- $_ = required "image.repository is required" .Values.image.repository -}}
 {{- $_ = include "application.resources" . -}}
@@ -91,23 +84,11 @@ same way whether or not the Environment has been released yet.
 
 {{/*
 Whether the Environment has received its first image: "true" when image.tag
-is set, empty otherwise. The CLI writes every new Environment with
-image.tag: "" and only the deploy workflow's write-back (iidp ci set-image)
-ever sets it, so an empty tag means "not released yet": the moments after
-iidp app create, before an Adopt pull request is merged, and, with a staging
-Environment, prod until the first v* tag promotes staging's image.
-
-Every template renders its objects only when this is true, after
-application.validate: an Environment without an image renders nothing at
-all, which ArgoCD shows as Synced and Healthy, instead of a comparison
-error. Nothing is created ahead of the first image either, the database
-included: a Postgres Cluster with no Application to use it would hold the
-node's memory and fill the bucket with backups of nothing for as long as the
-first release takes, and a final-backup PreDelete hook would have no
-Cluster to back up. The first image makes the Environment's first sync the
-same as a brand-new Environment's today: the Cluster in wave -2, the
-migration in wave -1, the Application in wave 0.
-See docs/implementation-notes/47-unreleased-environment.md.
+is set, empty otherwise. Every template renders its objects only when this
+is true, so an Environment without an image renders nothing, which ArgoCD
+shows as Synced and Healthy instead of a comparison error. That includes the
+database: a Cluster with no Application to use it would hold the node's
+memory and fill the bucket with backups of nothing.
 */}}
 {{- define "application.released" -}}
 {{- $tag := .Values.image.tag -}}
@@ -115,87 +96,69 @@ See docs/implementation-notes/47-unreleased-environment.md.
 {{- end -}}
 
 {{/*
-The Application image, <repository>:<tag>, run by the Deployment and by the
-migration Job. Only included from objects gated on application.released, so
-the required tag is a guard against a template that forgets the gate.
+The Application image. Only included from objects gated on
+application.released, so the required tag guards against a template that
+forgets the gate.
 */}}
 {{- define "application.image" -}}
 {{- printf "%s:%s" (required "image.repository is required" .Values.image.repository | toString) (required "image.tag is required" .Values.image.tag | toString) -}}
 {{- end -}}
 
-{{/*
-Whether the Postgres Capability is on.
-*/}}
 {{- define "application.postgres.enabled" -}}
 {{- if .Values.postgres.enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*
-Whether the database is backed up: "true" with Postgres on and
-postgres.backups not false. Continuous WAL archiving, the daily base backup
-and the final Backup PreDelete hook all follow it. A Preview Environment
-turns it off: its database is empty and thrown away with the pull request,
-so it has nothing worth keeping and must not wait on a backup to be deleted.
+Whether the database is backed up. WAL archiving, the daily base backup and
+the final Backup hook all follow it. A Preview Environment turns it off: its
+database is thrown away with the pull request and must not wait on a backup
+to be deleted.
 */}}
 {{- define "application.postgres.backups" -}}
 {{- if and .Values.postgres.enabled .Values.postgres.backups -}}true{{- end -}}
 {{- end -}}
 
 {{/*
-The name of this Environment's CloudNativePG Cluster, and of the ObjectStore
-and ScheduledBackup that belong to it: <fullname>-db.
+The name of the CloudNativePG Cluster, and of its ObjectStore and
+ScheduledBackup.
 */}}
 {{- define "application.postgres.cluster" -}}
 {{- printf "%s-db" (include "application.fullname" .) -}}
 {{- end -}}
 
-{{/*
-The CNPG-I plugin that archives WAL and takes base backups: the Barman
-Cloud Plugin, which the bootstrap installs next to the operator.
-*/}}
 {{- define "application.postgres.backupPlugin" -}}
 barman-cloud.cloudnative-pg.io
 {{- end -}}
 
 {{/*
-Where this Environment's backups live in the Platform's backups bucket:
-s3://<bucket>/<application>/<environment>/, so one bucket holds every
-database and a prefix is one Environment.
+Where this Environment's backups live: one bucket holds every database and
+a prefix is one Environment.
 */}}
 {{- define "application.postgres.backupPath" -}}
 {{- printf "s3://%s/%s/%s/" (required "platform.backupsBucket is required when postgres.enabled" .Values.platform.backupsBucket | toString) (include "application.name" .) (include "application.environment" .) -}}
 {{- end -}}
 
 {{/*
-The annotation that keeps the database's objects (the Cluster, its
-ObjectStore and ScheduledBackup) when a sync would prune them. Prune=false
-applies to syncs only: ArgoCD's cascade deletion of the Environment's
-Application (the resources finalizer, what iidp app delete triggers)
-honours Delete=false, not Prune=false, so it still removes them.
+Keeps the database's objects when a sync would prune them. ArgoCD's cascade
+deletion of the Environment's Application honours Delete=false, not
+Prune=false, so iidp app delete still removes them.
 */}}
 {{- define "application.postgres.keepOnPrune" -}}
 argocd.argoproj.io/sync-options: Prune=false
 {{- end -}}
 
-{{/*
-The S3 endpoint of the backups bucket's location.
-*/}}
 {{- define "application.postgres.objectStorageEndpoint" -}}
 {{- required "platform.objectStorageEndpoint is required when postgres.enabled" .Values.platform.objectStorageEndpoint | toString -}}
 {{- end -}}
 
 {{/*
-The Secret CloudNativePG generates for the database owner, <cluster>-app,
-whose uri key is the whole DATABASE_URL. Nothing in the chart handles the
-credentials themselves.
+The Secret CloudNativePG generates for the database owner, whose uri key is
+the whole DATABASE_URL.
 */}}
 {{- define "application.postgres.appSecret" -}}
 {{- printf "%s-app" (include "application.postgres.cluster" .) -}}
 {{- end -}}
 
-{{/*
-The DATABASE_URL env entry, for the Deployment and the migration Job.
-*/}}
 {{- define "application.postgres.databaseURLEnv" -}}
 - name: DATABASE_URL
   valueFrom:
@@ -205,52 +168,30 @@ The DATABASE_URL env entry, for the Deployment and the migration Job.
 {{- end -}}
 
 {{/*
-The name shared by the final Backup PreDelete hook's ServiceAccount, Role,
-RoleBinding and Job: <fullname>-final-backup. Only the Job carries the
-PreDelete hook annotation; the RBAC are ordinary chart resources, present
-whenever postgres.enabled and pruned with everything else
-(docs/implementation-notes/39-final-backup-predelete-hook.md). The name is
-stable, not per-attempt, so argocd.argoproj.io/hook-delete-policy:
-BeforeHookCreation can replace a previous attempt's Job by name; the
-Backup object itself is named with a run-time timestamp inside the Job's
-own script instead, since it is created imperatively by kubectl and
-BeforeHookCreation only ever reaches resources the chart declares.
+The name shared by the final Backup hook's ServiceAccount, Role,
+RoleBinding and Job. It is stable, not per attempt, so BeforeHookCreation
+can replace a previous attempt's Job by name; the Backup object itself is
+named with a timestamp inside the Job's script.
 */}}
 {{- define "application.postgres.finalBackupName" -}}
 {{- printf "%s-final-backup" (include "application.fullname" .) -}}
 {{- end -}}
 
 {{/*
-The kubectl image the final Backup PreDelete hook Job runs with.
-bitnami/kubectl, not the distroless registry.k8s.io/kubectl: the hook's
-script needs a shell (bash, for GNU date's -d) to build the Backup manifest
-and poll its status, which a distroless image has no room for. Pinned by
-digest, not by a floating version tag: Docker Hub's tag API
-(hub.docker.com/v2/repositories/bitnami/kubectl/tags, checked 2026-09-22)
-shows bitnami/kubectl now publishes only "latest" plus content-addressed
-(sha256-*) attestation and signature tags -- no more per-Kubernetes-minor
-floating tags like the "1.36" this used to read, so a digest is the only
-way left to pin a reproducible build at all. This digest is "latest" as of
-that check (kubectl client v1.37.0, verified locally with `kubectl version
---client`) and is the multi-arch manifest list, not a single platform's
-image, so it pulls on both amd64 (the Platform's Hetzner node and most CI
-runners) and arm64 (Apple Silicon, kind locally) alike. Bumping it is an
-edit here, the same as any other pinned version in this repository.
+The kubectl image the final Backup hook runs. bitnami/kubectl, not the
+distroless registry.k8s.io/kubectl, because the script needs bash and GNU
+date. Pinned by digest because bitnami/kubectl only publishes "latest";
+this is the multi-arch manifest list, so it pulls on amd64 and arm64.
 */}}
 {{- define "application.postgres.finalBackupKubectlImage" -}}
 docker.io/bitnami/kubectl@sha256:6e9c5284a0dac06e84de9f4d97852d2e6513442ee7ec3a66d35009eec86e1e62
 {{- end -}}
 
 {{/*
-Refuses Scheduled tasks the chart cannot render: any on a Static site
-(nginx serving files has no command of the Application's to run), and a
-task without a DNS-label name, with a name used twice, or without a
-schedule or command. The Deploy gate refuses all of these first and checks
-the schedule's syntax too (internal/appconfig); this is the chart's own
-guard for a hand-edited values file. With runTasks, each CronJob's name
-must also fit Kubernetes' 52 characters; without it nothing is rendered,
-so the name is not checked (a Preview Environment's longer name must not
-refuse staging's tasks it does not run). It produces no output.
+Refuses Scheduled tasks the chart cannot render. The Deploy gate refuses
+these first; this guards a hand-edited values file. The CronJob name length
+is only checked with runTasks, so a Preview Environment's longer name does
+not refuse staging's tasks it does not run. No output.
 */}}
 {{- define "application.tasks.check" -}}
 {{- if and .Values.tasks (eq (include "application.kind" .) "static-site") -}}
@@ -280,7 +221,7 @@ refuse staging's tasks it does not run). It produces no output.
 
 {{/*
 The CronJob of a Scheduled task, from a list of the root context and the
-task's name: <fullname>-<task name>.
+task's name.
 */}}
 {{- define "application.tasks.name" -}}
 {{- printf "%s-%s" (include "application.fullname" (index . 0)) (index . 1) -}}
@@ -288,9 +229,8 @@ task's name: <fullname>-<task name>.
 
 {{/*
 The custom domains, validated and sorted by how they get their certificate,
-as JSON: {"wildcard": [...], "foreign": [...]}. A host directly under the
-base domain (<label>.<baseDomain>) is covered by the Platform's wildcard
-certificate; any other host is foreign and needs a certificate of its own.
+as JSON: {"wildcard": [...], "foreign": [...]}. Only a host directly under
+the base domain is covered by the wildcard certificate.
 */}}
 {{- define "application.domains" -}}
 {{- $platformHost := include "application.host" . -}}
@@ -323,10 +263,7 @@ certificate; any other host is foreign and needs a certificate of its own.
 {{- end -}}
 
 {{/*
-The domain the Itema login cookie is set for, without the leading dot:
-platform.loginCookieDomain, or the base domain when it is empty (what the
-bootstrap's oauth2-proxy uses on a Platform without a cloudflareZone, and
-on every Platform before #76).
+The domain the Itema login cookie is set for, without the leading dot.
 */}}
 {{- define "application.login.cookieDomain" -}}
 {{- .Values.platform.loginCookieDomain | default .Values.platform.baseDomain | toString -}}
@@ -334,9 +271,8 @@ on every Platform before #76).
 
 {{/*
 Refuses login.enabled when a host of the Environment is outside the login
-cookie domain: the browser would never send that host the cookie set on
-the sign-in callback, so every request would go back to sign in. Custom
-domains outside it are named. It produces no output.
+cookie domain: the browser would never send that host the cookie, so every
+request would go back to sign in. No output.
 */}}
 {{- define "application.login.checkDomains" -}}
 {{- $cookieDomain := include "application.login.cookieDomain" . -}}
@@ -358,13 +294,10 @@ domains outside it are named. It produces no output.
 {{- end -}}
 
 {{/*
-The sign-in groups, validated, as the comma-separated list oauth2-proxy's
-allowed_groups takes: Entra ID group object ids, lowercased (the form the
-ID token's groups claim and Microsoft Graph use, compared as strings by
-oauth2-proxy), in the order given. Empty without groups. Refuses groups
-without login.enabled, anything that is not a GUID (which also keeps
-anything but a GUID out of the Middleware's query string), and a group
-listed twice.
+The sign-in groups as oauth2-proxy's allowed_groups list, lowercased
+because oauth2-proxy compares them as strings with the ID token's claim.
+Only GUIDs pass, which also keeps anything else out of the Middleware's
+query string.
 */}}
 {{- define "application.login.groups" -}}
 {{- $groups := .Values.login.groups -}}
@@ -394,34 +327,20 @@ listed twice.
 {{- end -}}
 
 {{/*
-The name of the Environment's own ForwardAuth Middleware, rendered only
-with sign-in groups: <fullname>-itema-login, in the Environment's
-namespace.
+The Environment's own ForwardAuth Middleware, rendered only with sign-in
+groups.
 */}}
 {{- define "application.login.middleware" -}}
 {{- printf "%s-itema-login" (include "application.fullname" .) -}}
 {{- end -}}
 
 {{/*
-The Traefik middleware annotation of the Itema login Capability, for every
-Ingress of an Environment with login.enabled. Without sign-in groups it
-names the bootstrap's shared oauth2-proxy ForwardAuth middleware, in
-oauth2-proxy's own namespace
-(bootstrap/components/oauth2-proxy-login/middleware.yaml). With groups it
-names the Environment's own Middleware (login-middleware.yaml), in the
-Environment's namespace, which asks the same oauth2-proxy to check them as
-well. Either way an unauthenticated browser gets oauth2-proxy's own
-redirect to Entra ID. Empty without login.
+The Itema login middleware annotation: the bootstrap's shared middleware,
+or with sign-in groups the Environment's own. Empty without login.
 
-A Traefik Middleware is named <namespace>-<name>@kubernetescrd in the
-annotation, and the Environment's namespace is the one ArgoCD renders the
-chart for (.Release.Namespace, the Application's destination).
-
-cert-manager's HTTP-01 challenge for a host on the ingress-http01.yaml
-Ingress does not pass through it: the solver serves the challenge path from
-an Ingress of its own, which carries no middleware, and Traefik picks that
-router for the path because a longer rule wins
-(docs/implementation-notes/76-login-in-zone-domains.md).
+cert-manager's HTTP-01 challenge does not pass through it: the solver
+serves the challenge path from an Ingress of its own, and Traefik picks that
+router because a longer rule wins.
 */}}
 {{- define "application.login.annotation" -}}
 {{- if .Values.login.enabled -}}
@@ -435,9 +354,7 @@ traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-itema-login-auth@
 
 {{/*
 The Secret cert-manager writes a foreign host's certificate into, from a
-list of the root context and the host: <fullname>-<host with dots replaced
-by dashes>-tls. A validated host has only letters, digits, dashes and dots,
-so the result is a valid Secret name whenever it is short enough.
+list of the root context and the host.
 */}}
 {{- define "application.tlsSecretName" -}}
 {{- $root := index . 0 -}}
@@ -446,8 +363,7 @@ so the result is a valid Secret name whenever it is short enough.
 {{- end -}}
 
 {{/*
-The paths block of one Ingress rule: everything under / to the Environment's
-Service on its port. Every host of every Ingress routes the same way.
+The paths block of one Ingress rule. Every host routes the same way.
 */}}
 {{- define "application.ingressPaths" -}}
 http:
@@ -461,9 +377,6 @@ http:
             number: {{ include "application.port" . }}
 {{- end -}}
 
-{{/*
-The Kind, which must be web-service or static-site.
-*/}}
 {{- define "application.kind" -}}
 {{- $kind := .Values.kind | toString -}}
 {{- if not (has $kind (list "web-service" "static-site")) -}}
@@ -472,22 +385,14 @@ The Kind, which must be web-service or static-site.
 {{- $kind -}}
 {{- end -}}
 
-{{/*
-The Platform address of this Environment: <name>.<baseDomain> for prod and
-<name>-staging.<baseDomain> for staging.
-*/}}
 {{- define "application.host" -}}
 {{- printf "%s.%s" (include "application.fullname" .) (required "platform.baseDomain is required" .Values.platform.baseDomain) -}}
 {{- end -}}
 
 {{/*
-The port the container listens on, as an integer. A Web service listens on
-port and is told so through PORT. A Static site is an nginx image, not
-configured through the environment. Like every container here it runs as
-non-root, which cannot bind a port below 1024, so it listens on 8080, as
-the unprivileged nginx (nginxinc/nginx-unprivileged) does. port is ignored
-for a Static site, as it always was: the CLI wrote 3000 there for every
-Static site before #90, so honouring it would break them.
+The port the container listens on, as an integer. A Static site is an
+unprivileged nginx on 8080 (non-root cannot bind below 1024); its port value
+is ignored because older Static sites carry a meaningless 3000 there.
 */}}
 {{- define "application.port" -}}
 {{- if eq (include "application.kind" .) "static-site" -}}
@@ -498,14 +403,9 @@ Static site before #90, so honouring it would break them.
 {{- end -}}
 
 {{/*
-The container securityContext of every container the chart renders: the
-Deployment's, the migration Job's, the final Backup hook's and each
-Scheduled task CronJob's (and any workload added later). It is what Pod
-Security's restricted level, which Application namespaces enforce, asks of
-a container: runAsNonRoot, so the kubelet refuses to start the container
-as root (it needs a numeric USER to check that), every capability
-dropped, the RuntimeDefault seccomp profile and no privilege escalation
-(docs/implementation-notes/110-non-root-restricted.md).
+The securityContext of every container the chart renders: what Pod
+Security's restricted level, enforced in Application namespaces, asks for.
+runAsNonRoot needs the image to have a numeric USER.
 */}}
 {{- define "application.securityContext" -}}
 seccompProfile:
@@ -527,8 +427,8 @@ app.kubernetes.io/instance: {{ include "application.fullname" . }}
 {{- end -}}
 
 {{/*
-The labels every object carries. iidp.itema.no/application and
-iidp.itema.no/environment are what Grafana Alloy attributes logs by.
+The labels every object carries. Grafana Alloy attributes logs by the
+iidp.itema.no ones.
 */}}
 {{- define "application.labels" -}}
 {{ include "application.selectorLabels" . }}
@@ -538,33 +438,23 @@ iidp.itema.no/application: {{ include "application.name" . }}
 iidp.itema.no/environment: {{ include "application.environment" . }}
 {{- end -}}
 
-{{/*
-The resources a size maps to. The numbers are the Platform's convention and
-live only here (docs/design.md, "Conventions the chart encodes").
-*/}}
 {{- define "application.resources" -}}
 {{- include "application.resourcesFor" (.Values.size | toString) -}}
 {{- end -}}
 
 {{/*
-The resources of a Scheduled task's run, whatever the Application's size:
-the smallest size's, so a task Pod starting next to the Application takes
-as little of the single node as any Environment can.
+A Scheduled task's run gets the smallest size, whatever the Application's,
+so it takes as little of the single node as it can.
 */}}
 {{- define "application.tasks.resources" -}}
 {{- include "application.resourcesFor" "small" -}}
 {{- end -}}
 
 {{/*
-The resources of the size given as the context, as requests and limits.
-Memory is requested as much as it is limited: it cannot be taken back from
-a container that uses it. CPU is requested at a fifth of its limit: a
-container may still use up to the limit, but the node's scheduler books
-only the request, so idle Environments do not fill the single node with
-CPU nobody uses. When several are busy at once they share the CPU above
-their requests. Until #96 CPU was requested at its limit, and the CPX22
-ran out of CPU to book with three Environments with Postgres and a
-Preview Environment (docs/implementation-notes/96-cpu-requests.md).
+The resources of the size given as the context. Memory is requested at its
+limit because it cannot be taken back from a container. CPU is requested at
+a fifth of its limit, so idle Environments do not book the single node's
+CPU that nobody uses.
 */}}
 {{- define "application.resourcesFor" -}}
 {{- $sizes := dict

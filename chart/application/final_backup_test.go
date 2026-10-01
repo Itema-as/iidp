@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// TestFinalBackupHookRendersOnlyWithPostgres asserts the PreDelete hook and
-// its RBAC render only when Postgres is enabled: nothing here could target
-// a Cluster that does not exist.
 func TestFinalBackupHookRendersOnlyWithPostgres(t *testing.T) {
 	objects := render(t, "prod-small.yaml")
 	for _, key := range []string{
@@ -22,16 +19,9 @@ func TestFinalBackupHookRendersOnlyWithPostgres(t *testing.T) {
 	}
 }
 
-// TestFinalBackupOnlyTheJobIsAPreDeleteHook covers a deliberate design
-// choice (docs/implementation-notes/39-final-backup-predelete-hook.md):
-// only the Job carries a PreDelete hook annotation. The ServiceAccount,
-// Role and RoleBinding are ordinary chart resources -- no hook annotation,
-// no sync-wave -- present whenever postgres.enabled and pruned with the
-// rest of the Environment's resources, the same as the Cluster or the
-// Deployment. Having four hook objects instead of one, each one's own
-// creation event asking ArgoCD to refresh the Application again, was found
-// to trigger a real ArgoCD race under concurrent reconciles; with the RBAC
-// no longer hooks, deletion creates exactly one hook object.
+// TestFinalBackupOnlyTheJobIsAPreDeleteHook guards against an ArgoCD race:
+// several PreDelete hook objects created together let deletion go ahead
+// without waiting for the Job.
 func TestFinalBackupOnlyTheJobIsAPreDeleteHook(t *testing.T) {
 	objects := render(t, "postgres-prod.yaml")
 
@@ -114,11 +104,7 @@ func TestFinalBackupJobShapeAndScript(t *testing.T) {
 	cases := []struct {
 		fixture, cluster, namespace string
 	}{
-		// The namespace is .Release.Namespace: real ArgoCD renders the
-		// chart with the Environment's Application destination namespace,
-		// application-environment (shop-prod, shop-staging, from
-		// render.Environment.Name in internal/render), passed explicitly
-		// here the same way.
+		// ArgoCD renders the chart into the Application's destination namespace.
 		{"postgres-prod.yaml", "shop-db", "shop-prod"},
 		{"postgres-staging.yaml", "shop-staging-db", "shop-staging"},
 	}
