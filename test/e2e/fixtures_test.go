@@ -15,7 +15,7 @@ import (
 )
 
 // The fixture's previews ApplicationSet must be exactly what the CLI writes,
-// so the kind test proves the CLI's, not a hand-made one.
+// so the kind test exercises the CLI's ApplicationSet, not a hand-made one.
 func TestFixturePreviewsAreTheCLIsApplicationSet(t *testing.T) {
 	root := filepath.Join("fixtures", "platform-repo")
 	cfg, err := platformrepo.LoadConfig(root)

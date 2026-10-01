@@ -1,7 +1,8 @@
 # The shape iidp app create --staging --postgres --login --previews
-# writes, with shop's deviation for the chart source. notes exists for its
-# Preview Environments; its own Environments are never released, so they
-# cost the node nothing.
+# writes, except that the chart comes from iidp.git served in-cluster, as
+# for shop, because kind has no GHCR. notes exists for its Preview
+# Environments; its own Environments are never released, so they cost the
+# node nothing.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

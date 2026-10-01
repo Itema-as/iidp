@@ -76,8 +76,8 @@ func TestBootstrap(t *testing.T) {
 	if err := cluster.CreateAgeKeySecret(ctx, filepath.Join(fixtures, "age-keys.txt")); err != nil {
 		t.Fatal(err)
 	}
-	// shop-staging's ObjectStore points at it, so its final Backup can
-	// complete when testDeleteEnvironment deletes it.
+	// shop-staging's ObjectStore points at the stand-in, so its final Backup
+	// can complete when testDeleteEnvironment deletes the Environment.
 	if err := cluster.InstallObjectStorage(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,8 @@ func TestBootstrap(t *testing.T) {
 	testUnreleasedEnvironments(ctx, t, cluster)
 	testDeleteEnvironment(ctx, t, cluster)
 	// The order matters. Workloads that are added (brochure-prod's first
-	// image, a preview's database) only fit once shop-staging is deleted;
+	// image, a preview's database) only fit on the node's CPU once
+	// shop-staging is deleted;
 	// testAppStatus needs shop-prod's migration and task run; and
 	// testGuardrails checks that nothing before it tripped a guardrail.
 	testDeployGate(ctx, t, cluster, issuer)
@@ -314,7 +315,7 @@ func testAppStatus(ctx context.Context, t *testing.T, cluster *Cluster) {
 // testDeployGate proves the Deploy gate refuses a call from another
 // repository, from a ref that may not deploy, and for a tag Docker Hub does
 // not have, then deploys brochure's first image: the commit is authored by
-// the token's actor and committed by the App, and brochure-prod then
+// the token's actor and committed by the GitHub App, and brochure-prod then
 // answers HTTP 200.
 func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer *FakeIssuer) {
 	t.Helper()
@@ -401,7 +402,8 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 
 // checkDeployEvents proves a real API server accepts the gate's Events and
 // the gate may create them. Of testDeployGate's four calls, only the missing
-// tag and the deploy have brochure-prod behind them and are recorded.
+// tag and the deploy get far enough to name brochure-prod, so only those two
+// are recorded.
 func checkDeployEvents(ctx context.Context, t *testing.T, cluster *Cluster, commit string) {
 	t.Helper()
 	type event struct {
@@ -619,10 +621,10 @@ var fixtureSignIn = SignIn{
 	CSRFCookie:   "__Secure-itema_login_csrf",
 }
 
-// testDeleteEnvironment proves that deleting an Environment as iidp app
-// delete does makes ArgoCD delete its Application only after the final
-// Backup PreDelete hook completes a real Backup, and that the Deployment and
-// Cluster are gone afterwards.
+// testDeleteEnvironment deletes shop-staging as iidp app delete does and
+// proves its Deployment and Cluster are gone afterwards. It also watches the
+// chart's PreDelete hook take a final Backup first, failing only when the
+// hook's Job succeeded without a completed Backup (see the end).
 func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 
@@ -640,9 +642,10 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Deliberately not refreshed: forcing a refresh of the parent made
-	// ArgoCD run overlapping reconciles for shop-staging, one of which
-	// deleted the resources without waiting for the PreDelete hook.
+	// Deliberately not refreshed: forcing a refresh of the parent
+	// Application (applications) made ArgoCD run overlapping reconciles for
+	// shop-staging, one of which deleted the resources without waiting for
+	// the PreDelete hook.
 	//
 	// The Job and Backup are logged on every poll, once a second, because
 	// the hook's objects can be created and cleaned up within a few

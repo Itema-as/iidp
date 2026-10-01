@@ -3,11 +3,11 @@
 //
 //   - GET /.well-known/jwks: the key set the test signs its tokens with;
 //   - under /api, the GitHub REST calls the Deploy gate makes, checking the
-//     App JWT against APP_PUBLIC_KEY_FILE;
+//     GitHub App's JWT against APP_PUBLIC_KEY_FILE;
 //   - under /api/v3, GitHub Enterprise's API path, the calls ArgoCD's Pull
 //     Request generator makes;
-//   - GET /api/repositories/{id}, the access check made with a developer's
-//     token;
+//   - GET /api/repositories/{id}, which the Deploy gate's status endpoint
+//     calls with a developer's token to check they may read the repository;
 //   - PUT /e2e/pulls/{owner}/{repo}, which the test calls to set the pull
 //     requests.
 //
@@ -147,8 +147,9 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", logRequests(mux)))
 }
 
-// pullRequest has every field ArgoCD's generator reads; it dereferences
-// each one.
+// pullRequest has every field ArgoCD's Pull Request generator reads. The
+// generator dereferences each one without a nil check, so none may be left
+// out.
 type pullRequest struct {
 	Number int     `json:"number"`
 	Title  string  `json:"title"`

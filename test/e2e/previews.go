@@ -118,7 +118,8 @@ func (c *Cluster) ApplicationSetConditions(ctx context.Context, name string) (ma
 
 // WaitForApplicationSetUpToDate polls until the named ApplicationSet has
 // generated its Applications without an error. On a Pull Request generator
-// that proves the controller listed the pull requests with the App.
+// that proves the controller listed the pull requests with the GitHub App's
+// credential.
 func (c *Cluster) WaitForApplicationSetUpToDate(ctx context.Context, name string, timeout time.Duration) error {
 	var last map[string]string
 	return pollUntil(ctx, timeout, 5*time.Second,

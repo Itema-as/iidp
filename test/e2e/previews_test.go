@@ -19,8 +19,8 @@ import (
 const previewHeadSHA = "5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f"
 
 // testPreviewEnvironments proves notes's previews ApplicationSet:
-//   - lists the pull requests with the App credential and makes a preview
-//     only for the open one labelled preview;
+//   - lists the pull requests with the GitHub App's credential and makes a
+//     preview only for the open one labelled preview;
 //   - runs its image in a namespace the guardrails bind to, with a database
 //     and staging's migration and secrets but no backups and no Scheduled
 //     task, behind Itema login;

@@ -41,9 +41,10 @@ const (
 
 	gitServerImage = "iidp-e2e.local/git-server:dev"
 
-	// objectStorageImage is the harness-only S3 stand-in, so the final
-	// Backup PreDelete hook can really complete in kind. versitygw rather
-	// than MinIO because MinIO's images no longer allow anonymous pulls.
+	// objectStorageImage is the harness-only S3 stand-in, so the chart's
+	// PreDelete hook that takes a final Backup of a deleted Environment's
+	// database can really complete in kind. versitygw rather than MinIO
+	// because MinIO's images no longer allow anonymous pulls.
 	objectStorageImage = "ghcr.io/versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499"
 	// ObjectStorageAccessKey and ObjectStorageSecretKey are the stand-in's
 	// root credentials (not secret: the cluster never leaves the machine).
@@ -430,9 +431,10 @@ func (c *Cluster) InstallTraefik(ctx context.Context) error {
 }
 
 // InstallArgoCD installs ArgoCD as cloud-init does: helm template of the
-// argo-cd chart, applied server-side, with the values the argocd bootstrap
-// Application's takeover relies on (fullnameOverride, crds.install) so its
-// first sync only patches what is already running. Then waits for ArgoCD.
+// argo-cd chart, applied server-side, with fullnameOverride and crds.install
+// set as the bootstrap's argocd Application sets them, so that Application's
+// first sync, when it starts managing the running ArgoCD, only patches what
+// is already there. Then it waits for ArgoCD.
 func (c *Cluster) InstallArgoCD(ctx context.Context) error {
 	a := c.Versions.ArgoCD
 	c.Log("installing ArgoCD by rendering the argo-cd chart %s", a.Chart)
@@ -928,8 +930,8 @@ func (c *Cluster) checkACMEChallengeServed(ctx context.Context, host, path strin
 		return err
 	}
 
-	// The Location's port is whatever the chart publishes, so it is not
-	// checked.
+	// The Location carries the websecure port the Traefik chart publishes,
+	// not the host port kind maps, so only scheme, host and path are checked.
 	return c.pollGETAt(ctx, fmt.Sprintf("http://127.0.0.1:%d%s", c.HTTPPort, path), host, timeout, func(resp *http.Response) (ok, retry bool, message string) {
 		location := resp.Header.Get("Location")
 		target, err := url.Parse(location)
@@ -1385,8 +1387,9 @@ func (c *Cluster) logNodeAllocatedResources(ctx context.Context) {
 }
 
 // DumpDiagnostics logs enough about the named Applications, ArgoCD and the
-// cluster to diagnose a failed run, including the argocd self-takeover race,
-// without a kept cluster.
+// cluster to diagnose a failed run without a kept cluster. That includes a
+// stalled sync of the argocd Application, which replaces ArgoCD's own
+// components, the application controller running the sync among them.
 func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]ApplicationStatus, names []string) {
 	for _, name := range names {
 		app, ok := apps[name]
@@ -1403,7 +1406,7 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 		c.Log("pods not running:\n%s", out)
 	}
 	// Ages and restart counts show whether the application controller is
-	// mid-replacement, which is the takeover race.
+	// being replaced, which is when the argocd Application's sync can stall.
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "get", "pods", "-o", "wide"); err == nil {
 		c.Log("argocd namespace pods:\n%s", out)
 	} else {
@@ -1431,9 +1434,9 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	} else {
 		c.Log("argocd-application-controller log tail: kubectl logs failed: %v\n%s", err, out)
 	}
-	// The redis-secret-init PreSync hook is where the takeover has stalled
-	// before: its status and log tell a slow Job from a controller that
-	// stopped reporting it.
+	// The argocd Application's sync has stalled on the redis-secret-init
+	// PreSync hook before: the Job's status and log tell a slow Job from a
+	// controller that stopped reporting it.
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "get", "job", "argocd-redis-secret-init", "-o", "yaml"); err == nil {
 		c.Log("argocd-redis-secret-init Job:\n%s", out)
 	} else {

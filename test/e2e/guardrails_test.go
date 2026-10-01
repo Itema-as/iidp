@@ -35,8 +35,9 @@ func testGuardrails(ctx context.Context, t *testing.T, cluster *Cluster) {
 	for _, ns := range fixtureNamespaces {
 		out, err := cluster.Kubectl(ctx, "get", "namespace", ns, "-o", "jsonpath={.metadata.labels}")
 		if err != nil {
-			// shop-staging was deleted by testDeleteEnvironment, and ArgoCD
-			// does not delete the namespace it created.
+			// shop-staging's namespace is expected here too: ArgoCD keeps a
+			// namespace it created when testDeleteEnvironment deletes the
+			// Environment.
 			t.Fatalf("read namespace %s: %v\n%s", ns, err, out)
 		}
 		var labels map[string]string
@@ -85,7 +86,8 @@ func testGuardrails(ctx context.Context, t *testing.T, cluster *Cluster) {
 			created[e.ObjectRef.Resource+"/"+e.ObjectRef.Namespace+"/"+e.ObjectRef.Name] = true
 		}
 	}
-	// Proof that CloudNativePG's own Pods were admitted under restricted.
+	// Proof that CloudNativePG's instance Pod and initdb Job were admitted
+	// under restricted.
 	for _, want := range []string{"pods/shop-prod/shop-db-1", "jobs/shop-prod/shop-db-1-initdb"} {
 		if !created[want] {
 			t.Errorf("the audit log has no successful create of %s under Pod Security restricted", want)
