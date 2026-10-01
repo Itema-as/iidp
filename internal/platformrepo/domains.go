@@ -6,18 +6,14 @@ import (
 	"strings"
 )
 
-// hostnamePattern is the same shape
-// chart/application/templates/_helpers.tpl's application.domains helper
-// requires at render time: lowercase letters, digits and dashes in
-// dot-separated labels, at least two labels. Kept in sync by hand; the
-// chart is the source of truth (docs/implementation-notes/08-chart-static-domains-secrets.md
-// "What is refused?").
+// hostnamePattern is the shape the chart's application.domains helper
+// (chart/application/templates/_helpers.tpl) requires: lowercase letters,
+// digits and dashes in dot-separated labels, at least two labels. Kept in
+// sync by hand; the chart is the source of truth.
 var hostnamePattern = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
-// DomainPlan is one validated custom domain and how it will be served, for
-// printing in the closing summary.
+// DomainPlan is one validated custom domain and how it will be served.
 type DomainPlan struct {
-	// Host is the hostname, as given.
 	Host string
 	// Wildcard is true when the Platform's wildcard certificate for
 	// baseDomain covers Host (a single label directly under it); false
@@ -31,17 +27,10 @@ type DomainPlan struct {
 	Automated bool
 }
 
-// ValidateDomains validates candidate custom domains for a prod Environment
-// against the same rules the chart enforces at render time (a valid
-// lowercase DNS hostname of at least two labels, no duplicates), plus one
-// only the CLI can check: none may equal a Platform address of any
-// Environment the Application has. platformAddresses are those addresses'
-// bare hostnames (no scheme), prod and staging alike.
-//
-// It takes baseDomain, cloudflareZone and platformAddresses as plain values
-// rather than a Config and an Application, so issue #17's add-capability
-// can call it again for an Environment that already exists, not only a
-// fresh one.
+// ValidateDomains validates custom domains for a prod Environment against
+// the chart's rules (valid lowercase hostnames of at least two labels, no
+// duplicates), and refuses any that equals one of platformAddresses, the
+// bare hostnames of the Application's Environments.
 func ValidateDomains(domains []string, baseDomain, cloudflareZone string, platformAddresses []string) ([]DomainPlan, error) {
 	seen := make(map[string]bool, len(domains))
 	plans := make([]DomainPlan, 0, len(domains))

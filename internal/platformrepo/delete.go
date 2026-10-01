@@ -17,27 +17,20 @@ import (
 )
 
 // FinalBackupRetentionDays is how long the Platform keeps the final Postgres
-// backup the ArgoCD PreDelete hook takes when iidp app delete removes an
-// Environment: docs/design.md's "final backup kept 30 days on delete", the
-// same number as postgres.backupRetention's own default
-// (docs/implementation-notes/07-chart-postgres.md). The CLI never writes
-// this Backup or observes whether the hook succeeds (ADR-0002: it never
-// talks to Kubernetes); it is used only in the confirmation prompt and the
-// closing summary. See
-// docs/implementation-notes/39-final-backup-predelete-hook.md.
+// backup the chart's PreDelete hook takes, the same as
+// postgres.backupRetention's default. The CLI only prints it: it never
+// talks to Kubernetes.
 const FinalBackupRetentionDays = 30
 
 // DeleteResult is what DeleteApplication removed.
 type DeleteResult struct {
 	// Deleted lists the Environment directories DeleteApplication removed
-	// application.yaml from, relative to the Platform repository root --
-	// not the directories themselves, which still hold values.yaml (and
-	// any secrets); see DeleteApplication's own doc comment for why.
+	// application.yaml from, relative to the Platform repository root. The
+	// directories themselves stay.
 	Deleted []string
 	// PostgresEnabled is true when at least one removed Environment had
-	// postgres.enabled: true, so the caller knows whether to say anything
-	// about the final Backup PreDelete hook (there is nothing for it to say
-	// when no Environment ever had a database).
+	// postgres.enabled: true, so the caller knows whether to mention the
+	// final backup.
 	PostgresEnabled bool
 	// Previews is true when the Application had Preview Environments,
 	// whose ApplicationSet was removed with the rest.
@@ -45,38 +38,17 @@ type DeleteResult struct {
 }
 
 // DeleteApplication removes application from the Platform repository in one
-// commit: each Environment's application.yaml (applications/<name>/prod/
-// and .../staging/, whichever exist) and the Application's repository
-// binding (RepositoryFile), when it has one. Its own ArgoCD Application carries
-// the resources finalizer, so ArgoCD deletes the Environment's resources
-// once it notices application.yaml is gone -- but only after every ArgoCD
-// PreDelete hook the chart renders for that Environment (the final
-// Postgres Backup, when postgres.enabled, plus its ServiceAccount, Role and
-// RoleBinding, chart/application/templates/final-backup-job.yaml) reaches
-// Healthy. ArgoCD, not commit ordering, is what guarantees the final backup
-// happens before deletion.
+// commit: each Environment's application.yaml, the repository binding and
+// the previews ApplicationSet. ArgoCD then deletes each Environment's
+// resources, but only after the chart's PreDelete hooks (the final
+// Postgres backup) are Healthy.
 //
-// values.yaml (and any sops/ secrets) are deliberately left in place: an
-// ArgoCD PreDelete hook is only discovered by rendering the Environment's
-// own Application at deletion time, and that render needs the same
-// values.yaml the Application's Helm source already points at
-// (application.yaml's own targetRevision tracks main, a moving branch, so
-// removing values.yaml in the same commit that triggers deletion leaves
-// nothing for that render to succeed against -- confirmed against a real
-// kind cluster, where the resulting DeletionError condition blocks
-// deletion forever; ArgoCD's own FAQ names exactly this class of problem,
-// "I've deleted/corrupted my repo and can't delete my app"). Developers
-// never edit the Platform repository by hand
-// (docs/platform-repository.md), so this leftover directory must not need
-// one either: checkApplicationAbsent in writer.go treats it as available
-// (only a live application.yaml blocks a create), and attemptCreate clears
-// it itself, in the same commit as the new Environment's files, if the
-// same Application name is used again. See
-// docs/implementation-notes/39-final-backup-predelete-hook.md for the full
-// reasoning and docs/implementation-notes/17-cli-add-capability-delete.md
-// for the two-commit design this replaced. A push refused because main
-// moved is retried once from a fresh clone, exactly as CreateApplication
-// does.
+// values.yaml and any sops/ secrets are left in place: ArgoCD finds the
+// PreDelete hook by rendering the Environment at deletion time from main,
+// and without values.yaml that render fails with a DeletionError that
+// blocks deletion forever. attemptCreate clears the leftover directory if
+// the name is used again. A push refused because main moved is retried
+// once from a fresh clone.
 func (w *Writer) DeleteApplication(ctx context.Context, application string, out io.Writer) (DeleteResult, error) {
 	return runWithRetry(ctx, func(ctx context.Context, retry bool) (DeleteResult, error) {
 		return w.attemptDelete(ctx, application, out, retry)
@@ -123,19 +95,15 @@ func (w *Writer) attemptDelete(ctx context.Context, application string, out io.W
 	}
 
 	if len(removeFiles) == 0 {
-		// appDir exists (checked above) but neither Environment has a live
-		// application.yaml: either a previous iidp app delete already ran
-		// (its own leftover values.yaml is still there, on purpose -- see
-		// DeleteApplication's doc comment) or a hand edit removed it. Refuse
-		// with the same clear message as "never existed", rather than
-		// proceeding to a git rm with nothing to remove.
+		// Only a leftover directory, from an earlier delete or a hand edit:
+		// refuse as for an Application that never existed, rather than run
+		// git rm with nothing to remove.
 		return DeleteResult{}, fmt.Errorf("%w: %q has no Environment with a live application.yaml under %s/ in %s", ErrApplicationMissing, application, ApplicationsDir, platform.Repository)
 	}
 
 	// The repository binding goes in the same commit: nothing renders
-	// from it, so ArgoCD's PreDelete hook does not need it, and a deleted
-	// Application must not stay deployable through the Deploy gate by its
-	// old repository (docs/implementation-notes/58-repository-binding.md).
+	// from it, and a deleted Application must not stay deployable through
+	// the Deploy gate by its old repository.
 	switch _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(RepositoryBindingPath(application)))); {
 	case err == nil:
 		removeFiles = append(removeFiles, RepositoryBindingPath(application))
@@ -178,9 +146,7 @@ func (w *Writer) attemptDelete(ctx context.Context, application string, out io.W
 }
 
 // environmentHasPostgres reads postgres.enabled out of an Environment's
-// values.yaml, so DeleteApplication knows whether to mention the final
-// Backup PreDelete hook -- it never writes anything Postgres-specific
-// itself (docs/implementation-notes/39-final-backup-predelete-hook.md).
+// values.yaml.
 func environmentHasPostgres(valuesPath string) (bool, error) {
 	data, err := os.ReadFile(valuesPath)
 	if err != nil {
