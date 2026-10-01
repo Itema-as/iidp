@@ -60,8 +60,8 @@ func u(o obj) *unstructured.Unstructured {
 }
 
 // shopProd is shop's prod Environment serving 1.0.0: its ArgoCD
-// Application, its Deployment and its one pod, whose Ready condition is ready
-// and last changed at since.
+// Application, its Deployment and its one pod. The pod's Ready condition is
+// True when ready, and last changed since from now.
 func shopProd(ready bool, since time.Duration) []*unstructured.Unstructured {
 	status := "False"
 	if ready {
