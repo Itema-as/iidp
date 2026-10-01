@@ -11,21 +11,17 @@ import (
 // straight into an internal/sops.Encryptor.
 type Secret struct {
 	// Name is the Secret's object name: <fullname>-<key-slug>.
-	Name string
-	// Application and Environment are the identity labels every object of
-	// the Environment carries.
+	Name        string
 	Application string
 	Environment string
-	// Key and Value are the single entry the Secret's stringData holds.
-	Key   string
-	Value string
+	Key         string
+	Value       string
 }
 
-// SecretDocument renders the plaintext Kubernetes Secret manifest for s. The
-// annotations are what the migration Job's sync-wave ordering needs (see
-// notes for #7): needs-hash off, so the name stays what values.yaml and
-// ksops.yaml reference, and sync-wave -2 so the Secret exists a wave before
-// the migration Job that may need it.
+// SecretDocument renders the plaintext Kubernetes Secret manifest for s.
+// needs-hash is off so the name stays what values.yaml and ksops.yaml
+// reference, and sync-wave -2 makes the Secret exist a wave before the
+// migration Job that may need it.
 func SecretDocument(s Secret) ([]byte, error) {
 	doc := secretDoc{
 		APIVersion: "v1",
@@ -53,9 +49,8 @@ type secretDoc struct {
 	Kind       string         `yaml:"kind"`
 	Metadata   secretMetadata `yaml:"metadata"`
 	Type       string         `yaml:"type"`
-	// StringData holds exactly one key: one SOPS document per key, because
-	// the CLI has no private key and cannot merge into an existing
-	// encrypted document (docs/platform-repository.md, "Secrets").
+	// StringData holds exactly one key: the CLI has no private key, so it
+	// cannot merge into an existing encrypted document.
 	StringData map[string]string `yaml:"stringData"`
 }
 
@@ -66,8 +61,7 @@ type secretMetadata struct {
 }
 
 // SopsKustomization is the kustomization.yaml every Environment's sops/
-// directory gets: a generator pointing at ksops.yaml, the same shape
-// bootstrap/sops uses.
+// directory gets.
 func SopsKustomization() []byte {
 	return []byte("apiVersion: kustomize.config.k8s.io/v1beta1\n" +
 		"kind: Kustomization\n" +
@@ -76,8 +70,7 @@ func SopsKustomization() []byte {
 }
 
 // KsopsGenerator renders the KSOPS generator for an Environment's sops/
-// directory, listing every encrypted file name. files is sorted so the
-// output is deterministic regardless of directory listing order.
+// directory, listing every encrypted file name, sorted.
 func KsopsGenerator(name string, files []string) []byte {
 	sorted := append([]string(nil), files...)
 	sort.Strings(sorted)
@@ -92,8 +85,7 @@ func KsopsGenerator(name string, files []string) []byte {
 		},
 		Files: sorted,
 	}
-	// doc's shape is fixed and always marshals; yaml.Marshal only fails on
-	// unsupported Go types.
+	// doc's shape is fixed, so it always marshals.
 	out, err := yaml.Marshal(doc)
 	if err != nil {
 		panic(err)

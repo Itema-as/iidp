@@ -1,7 +1,6 @@
-// Package render produces the two files that define one Environment of an
-// Application in the Platform repository: the ArgoCD Application and the
-// values file for the generic chart. The layout of those files is described
-// in docs/platform-repository.md.
+// Package render produces and edits the files that define an Application's
+// Environments in the Platform repository: the ArgoCD Application and the
+// values file for the generic chart.
 package render
 
 import (
@@ -23,33 +22,25 @@ type Environment struct {
 	Port            int
 	ProbePath       string
 	// Domains are the custom domains served beside the Platform address.
-	// Only prod carries any: staging keeps its Platform address (see
-	// docs/implementation-notes/13-cli-capabilities.md).
+	// Only prod carries any.
 	Domains []string
 	// PostgresEnabled, MigrationCommand, BackupsBucket and
 	// ObjectStorageEndpoint are the Postgres Capability. BackupsBucket and
-	// ObjectStorageEndpoint are set only when PostgresEnabled: the chart
-	// requires them only then, and they otherwise carry nothing the
-	// developer chose. The CLI leaves MigrationCommand empty: the Deploy
-	// gate writes it with each deploy, from the Application repository's
-	// iidp.yaml (docs/implementation-notes/66-migration-command-in-repo.md).
+	// ObjectStorageEndpoint are set only when PostgresEnabled. The CLI leaves
+	// MigrationCommand empty: the Deploy gate writes it from iidp.yaml.
 	PostgresEnabled       bool
 	MigrationCommand      string
 	BackupsBucket         string
 	ObjectStorageEndpoint string
-	// Login is the Itema login Capability: written the same in every
-	// Environment, since one oauth2-proxy cookie covers both
-	// (docs/implementation-notes/18-itema-login.md).
+	// Login is the Itema login Capability: the same in every Environment,
+	// since one oauth2-proxy cookie covers both.
 	Login bool
-	// LoginCookieDomain is platform.loginCookieDomain, the domain the login
-	// cookie is set for: platform.yaml's cloudflareZone, or BaseDomain
-	// without one. Set only with Login, the one Capability the chart needs
-	// it for (docs/implementation-notes/76-login-in-zone-domains.md).
+	// LoginCookieDomain is the domain the login cookie is set for:
+	// platform.yaml's cloudflareZone, or BaseDomain without one. Set only
+	// with Login.
 	LoginCookieDomain string
 	// LoginGroups are the sign-in groups, Entra ID group object ids: with
-	// any, only their members get past Itema login. Written the same in
-	// every Environment, and always, empty included, like domains
-	// (docs/implementation-notes/92-sign-in-groups.md).
+	// any, only their members get past Itema login.
 	LoginGroups []string
 }
 
@@ -59,22 +50,15 @@ func (e Environment) Name() string {
 	return e.Application + "-" + e.Environment
 }
 
-// ApplicationNamespaceLabel is the Namespace label that marks an
-// Application namespace. Every Environment's namespace carries it, with
-// the Environment's Application as its value, and the bootstrap's
-// guardrails bind their admission policies to namespaces that have it
-// (bootstrap/components/guardrails). Platform namespaces never carry it.
+// ApplicationNamespaceLabel marks an Application namespace, with the
+// Application as its value. The bootstrap's guardrails bind their admission
+// policies to namespaces that have it; Platform namespaces never carry it.
 const ApplicationNamespaceLabel = "iidp.itema.no/application"
 
-// NamespaceLabels are the labels ArgoCD sets on an Environment's namespace
-// (syncPolicy.managedNamespaceMetadata): the Environment's identity, the
-// same two labels its ArgoCD Application and every chart object carry,
-// and Pod Security Admission's levels. restricted is enforced, so no Pod
-// runs as root, keeps a capability or escalates its privileges; it is
-// warned about and audited too, which Pod Security also does for the
-// workloads that make Pods, so a Deployment whose Pods would be refused
-// says so when ArgoCD applies it (docs/implementation-notes/90-guardrails.md,
-// docs/implementation-notes/110-non-root-restricted.md).
+// NamespaceLabels are the labels ArgoCD sets on an Environment's namespace:
+// the Environment's identity and Pod Security Admission's levels. warn and
+// audit also apply to the workloads that make Pods, so a Deployment whose
+// Pods would be refused says so when ArgoCD applies it.
 func NamespaceLabels(application, environment string) map[string]string {
 	return map[string]string{
 		ApplicationNamespaceLabel:            application,
@@ -85,9 +69,8 @@ func NamespaceLabels(application, environment string) map[string]string {
 	}
 }
 
-// Chart names the generic chart an ArgoCD Application installs: its OCI
-// repository (without the oci:// scheme, as ArgoCD wants it), chart name
-// and version.
+// Chart names the generic chart an ArgoCD Application installs. RepoURL
+// has no oci:// scheme, as ArgoCD wants it.
 type Chart struct {
 	RepoURL string
 	Name    string
@@ -133,19 +116,13 @@ func ArgoCDApplication(env Environment, chart Chart, platformRepoURL, valuesPath
 			SyncPolicy: syncPolicy{
 				Automated:   automated{Prune: true, SelfHeal: true},
 				SyncOptions: []string{"CreateNamespace=true"},
-				// ArgoCD applies these to the namespace CreateNamespace
-				// creates, and to the existing one on every sync. They are
-				// what the guardrails select Application namespaces by.
 				ManagedNamespaceMetadata: &namespaceMetadata{
 					Labels: NamespaceLabels(env.Application, env.Environment),
 				},
-				// The same policy as the Platform's own Applications
-				// (bootstrap/templates/_helpers.tpl): retry until it works,
-				// each time against the newest commit. Without refresh, a
-				// failing sync (a migration, say) keeps retrying the commit
-				// it started on while the fix already sits in the Platform
-				// repository (#75). Preview Environments retry a limited
-				// number of times instead (PreviewRetryLimit).
+				// Retry until it works, each time against the newest commit.
+				// Without refresh, a failing sync (a migration, say) keeps
+				// retrying the commit it started on while the fix already
+				// sits in the Platform repository.
 				Retry: retry{
 					Limit:   -1,
 					Refresh: true,
@@ -157,10 +134,8 @@ func ArgoCDApplication(env Environment, chart Chart, platformRepoURL, valuesPath
 	return marshal("The ArgoCD Application for the "+env.Environment+" Environment of "+env.Application+".", app)
 }
 
-// defaultBackupRetention is postgres.backupRetention's value: how long
-// backups and WAL are kept in the bucket. There is no flag for it yet; it
-// is written the same as the chart's own default so the file states it
-// explicitly, the same reasoning as size, port and probe.path.
+// defaultBackupRetention is the chart's own default, written so the values
+// file states it explicitly.
 const defaultBackupRetention = "30d"
 
 // Values renders the chart values file for env.
@@ -216,14 +191,10 @@ type argocdApplication struct {
 }
 
 type metadata struct {
-	Name      string            `yaml:"name"`
-	Namespace string            `yaml:"namespace"`
-	Labels    map[string]string `yaml:"labels"`
-	// Finalizers is omitted (rather than rendered as an empty list) when
-	// there are none. Every Environment's Application carries the
-	// resources finalizer; nothing in this package renders one without it
-	// today, but the field stays optional rather than hard-coded.
-	Finalizers []string `yaml:"finalizers,omitempty"`
+	Name       string            `yaml:"name"`
+	Namespace  string            `yaml:"namespace"`
+	Labels     map[string]string `yaml:"labels"`
+	Finalizers []string          `yaml:"finalizers,omitempty"`
 }
 
 type applicationSpec struct {
@@ -320,10 +291,8 @@ type probeValues struct {
 	Path string `yaml:"path"`
 }
 
-// loginValues is the Itema login Capability: one shared oauth2-proxy in
-// front of every Ingress of the Environment. Written in full, even when
-// disabled, the same convention postgres and domains already follow
-// (docs/implementation-notes/13-cli-capabilities.md).
+// loginValues is the Itema login Capability, written in full even when
+// disabled, like postgres and domains.
 type loginValues struct {
 	Enabled bool     `yaml:"enabled"`
 	Groups  []string `yaml:"groups"`
