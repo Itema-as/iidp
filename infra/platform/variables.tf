@@ -10,7 +10,7 @@ variable "server_name" {
 }
 
 variable "server_type" {
-  description = "Machine size. CPX22 (2 vCPU, 4 GB) is the agreed Phase 1 size; CPX32 is the first step up."
+  description = "Machine size. CPX22 (2 vCPU, 4 GB) is the default; CPX32 is the first step up."
   type        = string
   default     = "cpx22"
 }
@@ -41,7 +41,7 @@ variable "ssh_public_key" {
 # place by re-running iidp-bootstrap on the node (see infra/README.md).
 
 variable "k3s_version" {
-  description = "k3s release to install, in the form vX.Y.Z+k3sN. Default is the k3s stable channel as of 2026-09-21."
+  description = "k3s release to install, in the form vX.Y.Z+k3sN. Default is a k3s stable-channel release."
   type        = string
   default     = "v1.36.4+k3s1"
 
@@ -52,7 +52,7 @@ variable "k3s_version" {
 }
 
 variable "argocd_chart_version" {
-  description = "argo-cd Helm chart version cloud-init renders with helm template and applies; the argocd bootstrap Application then manages ArgoCD with the same chart and version. Must match bootstrap/versions.yaml argocd.chart. Default is the newest stable release as of 2026-09-21."
+  description = "argo-cd Helm chart version cloud-init renders with helm template and applies; the argocd bootstrap Application then manages ArgoCD with the same chart and version. Must match bootstrap/versions.yaml argocd.chart. Default is a stable release."
   type        = string
   default     = "10.9.2"
 
@@ -63,7 +63,7 @@ variable "argocd_chart_version" {
 }
 
 variable "helm_version" {
-  description = "Helm release cloud-init downloads (linux amd64) to render the argo-cd chart, in the form vX.Y.Z. Must match bootstrap/versions.yaml helm.version. Default is the newest stable v3 release as of 2026-09-21."
+  description = "Helm release cloud-init downloads (linux amd64) to render the argo-cd chart, in the form vX.Y.Z. Must match bootstrap/versions.yaml helm.version. Default is a stable v3 release."
   type        = string
   default     = "v3.22.0"
 

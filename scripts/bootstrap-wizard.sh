@@ -1100,7 +1100,7 @@ tfvars_write_github_app() {
     pem_content="$(cat "$pem_path")"
   fi
   tfvar_set_multiline "$file" platform_repo_github_app_private_key "$pem_content"
-  log_choice "ArgoCD reads the Platform repository with the same App's credential (infra/README.md, docs/implementation-notes/41-argocd-platform-repo-credential.md)"
+  log_choice "ArgoCD reads the Platform repository with the same App's credential (infra/README.md)"
 }
 
 stage_github_app() {
@@ -1121,7 +1121,7 @@ stage_github_app() {
     fi
 
     say "ArgoCD also needs this App's private key, to read the Platform repository."
-    say "(No PEM found in $tfvars -- either this is its first run since #41, or the key was never saved there.)"
+    say "(No PEM found in $tfvars: the key was never saved there.)"
     ask_path PEM_PATH "Path to the App's downloaded private key .pem file:"
     require_pem_file PEM_PATH
     tfvars_write_github_app "$tfvars" "$GITHUB_APP_ID" "$GITHUB_APP_INSTALLATION_ID" "$PEM_PATH"
@@ -1223,7 +1223,7 @@ verify_ghcr_pull_token() {
 stage_ghcr() {
   stage "GHCR pull token"
   local tfvars="$INFRA_PLATFORM_DIR/terraform.tfvars" existing
-  say "Applications' images are private in GHCR (ADR-0005). The node pulls them with one"
+  say "Applications' images are private in GHCR. The node pulls them with one"
   say "classic personal access token that can only read packages; ghcr.io refuses GitHub App"
   say "and fine-grained tokens for pulls. OpenTofu hands it to cloud-init, which writes it into"
   say "k3s's registries.yaml before k3s first starts."
@@ -1233,7 +1233,7 @@ stage_ghcr() {
     GHCR_PULL_TOKEN="$existing"
     note "keeping the existing token; checking GitHub still accepts it"
   else
-    say "Signed in to GitHub as yourself (the Platform admin; #56 moves this to a machine user),"
+    say "Signed in to GitHub as yourself (the Platform admin),"
     say "create a classic token:"
     print_url "https://github.com/settings/tokens/new?scopes=read:packages&description=iidp%20node%20GHCR%20pull"
     step "That is Settings > Developer settings > Personal access tokens > Tokens (classic) > Generate new token (classic)."
