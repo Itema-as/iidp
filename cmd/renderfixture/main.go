@@ -1,8 +1,6 @@
-// Command renderfixture renders one of iidp's built-in Create templates
-// into a directory, so CI (and a developer, locally) can docker build and
-// run it without going through the full CLI. It is not part of the
-// released iidp binary; see the "templates" job in
-// .github/workflows/ci.yaml and docs/implementation-notes/11-cli-create-path.md.
+// Command renderfixture renders one of iidp's built-in Create templates into
+// a directory, so CI can docker build and run it without the full CLI. It is
+// not part of the released iidp binary.
 package main
 
 import (
