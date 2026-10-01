@@ -1,11 +1,6 @@
 # Let's Encrypt through Cloudflare DNS-01, the only challenge that can issue
-# a wildcard. Its one use is the Platform's wildcard certificate for
-# *.<baseDomain> and <baseDomain> (certificate.yaml). Custom domains never
-# use it: one directly under baseDomain is covered by the wildcard, and any
-# other gets its own certificate from letsencrypt-http01, even inside
-# cloudflareZone. The solver has no selector; with one solver and one
-# Certificate there is nothing to choose between
-# (docs/implementation-notes/72-custom-domain-docs.md).
+# a wildcard. Its one use is the Platform's wildcard certificate; custom
+# domains get theirs from letsencrypt-http01, even inside cloudflareZone.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:

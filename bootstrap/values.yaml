@@ -1,11 +1,6 @@
-# Values for the Platform bootstrap. On the Platform these come from
-# platform.yaml at the root of the Platform repository, which the Application
-# `platform-components` passes as a Helm value file (see README.md). The
-# defaults here describe a Platform that does not exist; every field the
-# bootstrap reads is listed so the file doubles as documentation.
-#
-# platform.yaml also carries fields only the CLI reads (chartVersion,
-# githubApp, agePublicKey, backupsBucket). Helm ignores them.
+# On the Platform these values come from platform.yaml in the Platform
+# repository, which also carries fields only the CLI reads; Helm ignores them.
+# Every field the bootstrap reads is listed here.
 
 # The domain Applications are served under: <application>.<baseDomain>. The
 # wildcard certificate covers *.<baseDomain> and <baseDomain>.
@@ -13,8 +8,7 @@ baseDomain: app.itma.no
 
 # The Cloudflare zone that contains baseDomain. external-dns only manages
 # records in this zone. It is also the domain the Itema login cookie is set
-# for (templates/_helpers.tpl, iidp-bootstrap.loginCookieDomain); empty
-# means baseDomain. A baseDomain outside it fails rendering.
+# for; empty means baseDomain. A baseDomain outside it fails rendering.
 cloudflareZone: itma.no
 
 # Where ArgoCD is served. Its host must be covered by the wildcard
@@ -46,20 +40,12 @@ clusterName: iidp
 # only for a second Platform sharing the same zone.
 dnsOwnerId: iidp
 
-# The Itema login Capability's oauth2-proxy. skipOIDCDiscovery is for a
-# cloud-less test cluster only (kind has no route to
-# login.microsoftonline.com): it makes oauth2-proxy skip the OIDC discovery
-# call at startup and use the manual endpoints below instead, so the pod
-# still starts with a dummy tenant and client id. A real Platform leaves it
-# false and gets normal OIDC discovery against Entra ID.
+# skipOIDCDiscovery is for kind only, which has no route to
+# login.microsoftonline.com: oauth2-proxy then starts with dummy endpoints.
 oauth2Proxy:
   skipOIDCDiscovery: false
 
-# The Deploy gate (templates/deploy-gate.yaml), served at
-# https://deploy.<baseDomain>. Everything here has a working default for the
-# Platform; the kind harness's fixture platform.yaml overrides the image,
-# the OIDC issuer, the GitHub API and the Platform repository with its own
-# stand-ins.
+# The Deploy gate, served at https://deploy.<baseDomain>.
 deployGate:
   # Itema-as's numeric GitHub org id. A deploy's OIDC token
   # (repository_owner_id) and the Application's binding
@@ -78,20 +64,14 @@ deployGate:
   # Empty: https://api.github.com.
   githubAPI: ""
   platformRepository: https://github.com/Itema-as/iidp-platform.git
-  # ArgoCD's credential for the Platform repository, in the argocd
-  # namespace, written by cloud-init: the gate reads the iidp-deploy App's
-  # id, installation id and key from it.
+  # ArgoCD's credential for the Platform repository, written by cloud-init:
+  # the iidp-deploy App's id, installation id and key.
   appSecret: platform-repo-github-app
-  # The GHCR pull token (keys username and token), in the argocd
-  # namespace, written by cloud-init from the same OpenTofu variables as
-  # the node's registries.yaml: the gate checks that an image tag exists
-  # with it before committing the tag.
+  # The GHCR pull token (keys username and token), written by cloud-init.
+  # The gate uses it to check that an image tag exists before committing it.
   ghcrSecret: ghcr-pull-token
 
-# Argus (templates/argus.yaml), the live, read-only view of the Platform,
-# served at https://argus.<baseDomain> behind Itema login. false renders
-# nothing: no Deployment, RBAC, Ingress or DNS record. The kind harness's
-# fixture platform.yaml turns it off.
+# Argus, the read-only live view of the Platform at https://argus.<baseDomain>.
 argus:
   enabled: true
   image:
@@ -101,27 +81,20 @@ argus:
     tag: ""
     pullPolicy: IfNotPresent
 
-# The guardrails on Application namespaces (templates/guardrails.yaml,
-# README.md "Guardrails"): four ValidatingAdmissionPolicies whose bindings
-# take these actions when a check fails.
+# The guardrails on Application namespaces (see README.md, "Guardrails").
 guardrails:
-  # Warn and Audit: a failed check is reported to the client and recorded
-  # in the API server's audit log, and the request still goes through.
-  # Switching them on for real is this one line becoming [Deny, Audit],
-  # here for every Platform (a bootstrap release), or in platform.yaml for
-  # one. Deny and Warn together are refused.
+  # What the policy bindings do when a check fails. Warn and Audit let the
+  # request through; [Deny, Audit] enforces. Deny and Warn together are
+  # refused.
   validationActions: [Warn, Audit]
-  # Images allowed in Application namespaces besides the Platform's own
-  # list (bootstrap/components/guardrails/values.yaml): ghcr.io/itema-as/,
-  # the CloudNativePG images, the chart's kubectl image and cert-manager's
-  # HTTP-01 solver. An entry ending in "/" is a prefix, any other one
-  # repository. For a test Platform whose fixture Applications run public
-  # images; the Platform leaves it empty.
+  # Images allowed in Application namespaces besides the Platform's own list
+  # in components/guardrails. An entry ending in "/" is a prefix, any other
+  # one repository. For test Platforms whose fixtures run public images.
   extraAllowedImages: []
 
 # Where this chart lives, for the component Applications that point back at
-# it (bootstrap/components/*). The Platform repository sets both from ArgoCD's
-# build environment so they always match the pinned bootstrap revision.
+# it. The Platform repository sets both from ArgoCD's build environment so
+# they match the pinned bootstrap revision.
 bootstrap:
   repoURL: https://github.com/Itema-as/iidp.git
   targetRevision: HEAD

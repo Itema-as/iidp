@@ -1,18 +1,7 @@
-# The Deploy gate (cmd/iidp-deploy-gate). It runs in the namespace of the
-# Secret it reads, ArgoCD's credential for the Platform repository, and
-# mounts that Secret as a volume: a pod can only mount a Secret of its own
-# namespace, and a volume needs no Kubernetes API access
-# (docs/implementation-notes/60-deploy-gate.md). Its service account token
-# is for iidp app status, which lists ArgoCD Applications and the
-# Environments' workloads (docs/implementation-notes/94-app-status.md), and
-# for the gate's two writes in argocd: the ArgoCD refresh after each commit
-# (docs/implementation-notes/114-argocd-refresh.md) and an Event for each
-# Deploy (docs/implementation-notes/117-deploy-events.md). Nothing else
-# (rbac.yaml). It mounts the GHCR pull
-# token's Secret the same way, to check that an image tag exists before
-# committing it (docs/implementation-notes/61-image-check.md). The files are
-# read on every call, so a rotated key or token is picked up without a
-# restart.
+# The gate mounts its Secrets as volumes rather than reading them through the
+# API, so its service account needs no access to Secrets; a pod can only
+# mount a Secret of its own namespace, hence argocd. The files are read on
+# every call, so a rotated key or token is picked up without a restart.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,8 +26,7 @@ spec:
     spec:
       serviceAccountName: iidp-deploy-gate
       automountServiceAccountToken: true
-      # A deploy in flight (a clone and a push) finishes before the pod
-      # stops; the gate waits up to two minutes for it on SIGTERM.
+      # The gate waits up to two minutes for a deploy in flight on SIGTERM.
       terminationGracePeriodSeconds: 150
       securityContext:
         runAsNonRoot: true

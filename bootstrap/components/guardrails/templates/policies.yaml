@@ -1,15 +1,11 @@
-# The four guardrails on Application namespaces, one
-# ValidatingAdmissionPolicy per rule, each with one binding. Kubernetes
-# evaluates them in the API server (CEL), so nothing runs on the node for
-# them (ADR-0004's Phase 2 note). Pod Security, the other half of the
-# guardrails, is not here: it is the namespace labels the CLI writes
-# (docs/platform-repository.md). See bootstrap/README.md, "Guardrails".
+# The guardrails on Application namespaces, one ValidatingAdmissionPolicy
+# per rule. Pod Security is the other half: the namespace labels the CLI
+# writes.
 #
-# Every policy fails closed (failurePolicy: Fail): an expression that
-# cannot be evaluated counts as a failed check, which the bindings' actions
-# then report or deny like any other.
+# Every policy fails closed: an expression that cannot be evaluated counts as
+# a failed check, which the bindings' actions then report or deny.
 #
-# 1. Images only from the allowed list (values.yaml, allowedImages).
+# Images only from the allowed list.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -45,7 +41,7 @@ spec:
 ---
 {{ include "guardrails.binding" (list . "iidp-images") }}
 ---
-# 2. CPU and memory limits on every container, init containers included.
+# CPU and memory limits on every container, init containers included.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -77,10 +73,10 @@ spec:
 ---
 {{ include "guardrails.binding" (list . "iidp-limits") }}
 ---
-# 3. No Service of type NodePort or LoadBalancer: Applications are reached
+# No Service of type NodePort or LoadBalancer: Applications are reached
 # through Traefik only. cert-manager's HTTP-01 solver Service would be a
-# NodePort by default; the bootstrap's letsencrypt-http01 ClusterIssuer
-# makes it a ClusterIP (bootstrap/components/tls).
+# NodePort by default; the letsencrypt-http01 ClusterIssuer makes it a
+# ClusterIP.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -107,12 +103,9 @@ spec:
 ---
 {{ include "guardrails.binding" (list . "iidp-service-types") }}
 ---
-# 4. Ingress hosts only under baseDomain or among the Environment's own
-# declared domains. The declared domains are the keys of the ConfigMap the
-# application chart renders into the namespace (declaredDomainsConfigMap),
-# found through the binding's paramRef, which, with no namespace of its
-# own, looks in the namespace of the Ingress being checked. A namespace
-# without that ConfigMap is not checked: see the binding below.
+# Ingress hosts only under baseDomain or among the Environment's declared
+# domains, the keys of the declaredDomainsConfigMap in the Ingress's own
+# namespace.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -161,21 +154,13 @@ metadata:
 spec:
   policyName: iidp-ingress-hosts
   validationActions: {{ include "guardrails.validationActions" . }}
-  # The Environment's declared domains, from the ConfigMap in the
-  # Ingress's own namespace (no namespace here means that one).
+  # With no namespace, paramRef looks in the Ingress's own namespace.
   #
-  # Allow when it is missing, which skips the policy for that Ingress. Deny
-  # would refuse the request outright, whatever validationActions say (the
-  # API server treats a missing param as a binding it cannot configure,
-  # not as a failed check; seen on k3s v1.36.4, see
-  # docs/implementation-notes/90-guardrails.md), and every Environment
-  # still on a chart from before #90 has no such ConfigMap: its next
-  # Ingress update would be refused while the guardrails only warn. The
-  # cost is that an Application namespace without the ConfigMap has its
-  # Ingress hosts unchecked. The chart renders it for every Environment
-  # with an image, so once each Environment runs a chart from #90 on, the
-  # only Ingresses left unchecked are those in a namespace someone emptied
-  # of it by hand.
+  # A missing ConfigMap skips the policy for that Ingress. Deny would refuse
+  # the request outright whatever validationActions say, because the API
+  # server treats a missing param as a misconfigured binding, not a failed
+  # check; an Environment rendered by an older chart without the ConfigMap
+  # would then have every Ingress update refused.
   paramRef:
     name: {{ .Values.declaredDomainsConfigMap }}
     parameterNotFoundAction: Allow

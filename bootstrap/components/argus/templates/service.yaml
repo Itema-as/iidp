@@ -13,12 +13,8 @@ spec:
       targetPort: http
       protocol: TCP
 ---
-# https://argus.<baseDomain>, behind Itema login: the bootstrap's shared
-# ForwardAuth middleware (bootstrap/components/oauth2-proxy-login), the
-# same annotation the application chart puts on a protected Environment's
-# Ingress, so anyone in the Entra tenant can open it (#101). TLS with no
-# secret of its own, so Traefik serves the default store's wildcard
-# certificate. external-dns makes its DNS record from the host.
+# Behind Itema login, so anyone in the Entra tenant can open it. TLS with no
+# secret of its own: Traefik serves the default store's wildcard certificate.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

@@ -1,23 +1,10 @@
 {{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
 {{- $host := include "iidp-bootstrap.argocdHost" . }}
 # ArgoCD managing itself. cloud-init installs ArgoCD by rendering this same
-# argo-cd chart with helm template (fullnameOverride: argocd, crds.install:
-# true, the same minimum values as below) and applying the output
-# server-side; from the first sync of this Application the chart just keeps
-# managing what it already stood up: Dex with the Entra ID connector, RBAC,
-# the ingress, and the KSOPS tooling in the repo server.
-#
-# This used to install from the upstream install.yaml instead, whose
-# Deployments and StatefulSet select pods differently from the chart's (a
-# selector is immutable), so the first sync had to delete and recreate them
-# (Replace=true,Force=true), including the application controller's own
-# StatefulSet. That takeover raced the controller's replacement of itself
-# against the repo server's, and lost often enough on a 2-vCPU runner to
-# make `kind bootstrap` flaky even with the controller deferred to its own
-# sync wave (docs/implementation-notes/04-bootstrap.md, "The takeover race"
-# and "Installing from the chart, not the upstream manifests"). Installing
-# from the chart from the start means every object already has the shape
-# the chart expects, so a sync only ever patches: no Replace, no sync wave.
+# chart with helm template, so every object already has the shape this
+# Application expects and a sync only ever patches. Installing from the
+# upstream install.yaml instead would leave Deployments with different
+# (immutable) selectors, which the first sync would have to replace.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -32,10 +19,7 @@ spec:
     helm:
       releaseName: argocd
       valuesObject:
-        # Name resources argocd-<component>, matching the initial install
-        # (both cloud-init and the harness render this same chart with
-        # fullnameOverride: argocd), so the selectors this sync sees are the
-        # ones already running and it only ever patches.
+        # Matches the initial install by cloud-init and the kind harness.
         fullnameOverride: argocd
         global:
           domain: {{ $host }}
@@ -44,7 +28,7 @@ spec:
           keep: true
         configs:
           cm:
-            # Nobody logs in with a local account (docs/design.md, Access).
+            # Everyone logs in through Entra ID.
             admin.enabled: false
             # KSOPS is a kustomize exec plugin; kustomize refuses to run
             # plugins without both flags.
@@ -86,14 +70,9 @@ spec:
               # TLS with no secret of its own: Traefik serves the default
               # store's wildcard certificate (see platform-tls).
               traefik.ingress.kubernetes.io/router.tls: "true"
-        # The ApplicationSet controller, which the chart runs by default,
-        # kept on explicitly: each Application's Preview Environments are an
-        # ApplicationSet with a Pull Request generator
-        # (docs/adr/0006-preview-environments-from-an-argocd-applicationset.md).
-        # A small request, since the node and the kind runner are near their
-        # CPU request ceiling; it polls GitHub every few minutes and renders
-        # a handful of Applications. The limit keeps a leak from starving the
-        # node.
+        # Kept on explicitly: Preview Environments are ApplicationSets. A
+        # small request because the node and the kind runner are near their
+        # CPU request ceiling; the limit keeps a leak from starving the node.
         applicationSet:
           replicas: 1
           resources:
@@ -105,8 +84,7 @@ spec:
         repoServer:
           # KSOPS: the init container copies ksops and its kustomize into an
           # emptyDir that shadows the repo server's kustomize; sops reads the
-          # age private key that cloud-init generated into the Secret
-          # sops-age (key keys.txt).
+          # age key cloud-init put in the Secret sops-age.
           initContainers:
             - name: install-ksops
               image: {{ $v.ksops.image }}

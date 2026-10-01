@@ -1,6 +1,5 @@
 {{/*
-The gate's host and URL: deploy.<baseDomain>, which the Platform's wildcard
-certificate covers. The URL is the OIDC audience too.
+The gate's URL is the OIDC audience too.
 */}}
 {{- define "deploy-gate.host" -}}
 {{- printf "deploy.%s" (required "baseDomain is required" .Values.baseDomain) -}}
@@ -11,11 +10,9 @@ certificate covers. The URL is the OIDC audience too.
 {{- end -}}
 
 {{/*
-The image tag: image.tag when set, otherwise the bootstrap release version
-(bootstrapRevision v1.2.3 gives 1.2.3), the tag the release workflow
-publishes the gate under. A revision that is not a release tag (a branch, a
-commit) names no published image, so rendering fails with a message saying
-so; only this Application fails, not the rest of the bootstrap.
+The image tag: image.tag when set, otherwise bootstrapRevision without its
+v. A revision that is not a release tag names no published image, so
+rendering fails; only this Application fails, not the rest of the bootstrap.
 */}}
 {{- define "deploy-gate.tag" -}}
 {{- if .Values.image.tag -}}

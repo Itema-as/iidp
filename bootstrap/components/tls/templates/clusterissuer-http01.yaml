@@ -1,9 +1,6 @@
 # Let's Encrypt through HTTP-01 on Traefik, for every custom domain the
-# Platform's wildcard doesn't cover (anything not directly under
-# baseDomain), wherever its DNS is, cloudflareZone included: the
-# application chart asks for a per-host certificate from this issuer, which
-# succeeds once the host resolves to the Platform (the record external-dns
-# creates inside cloudflareZone, or the owner's CNAME anywhere else).
+# wildcard doesn't cover, wherever its DNS is. Issuing succeeds once the host
+# resolves to the Platform.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -21,7 +18,5 @@ spec:
           ingress:
             ingressClassName: traefik
             # The solver's Service lives in the Application's namespace,
-            # where the guardrails refuse NodePort Services
-            # (bootstrap/components/guardrails). cert-manager's default is
-            # NodePort; Traefik reaches a ClusterIP Service just the same.
+            # where the guardrails refuse cert-manager's default, NodePort.
             serviceType: ClusterIP

@@ -13,8 +13,8 @@ import (
 	"github.com/Itema-as/iidp/internal/render"
 )
 
-// guardrailPolicies are the four ValidatingAdmissionPolicies, one per rule,
-// and the resource each one checks.
+// guardrailPolicies maps each ValidatingAdmissionPolicy to the resource it
+// checks.
 var guardrailPolicies = map[string]string{
 	"iidp-images":        "pods",
 	"iidp-limits":        "pods",
@@ -22,9 +22,6 @@ var guardrailPolicies = map[string]string{
 	"iidp-ingress-hosts": "ingresses",
 }
 
-// The guardrails Application follows the bootstrap pin like platform-tls,
-// and hands the component the base domain, the actions and the extra
-// images from platform.yaml.
 func TestGuardrailsFollowTheBootstrapAndThePlatformValues(t *testing.T) {
 	apps := renderApplications(t, "--values", fixture,
 		"--set", "bootstrap.repoURL=https://example.test/iidp.git",
@@ -53,8 +50,8 @@ func TestGuardrailsFollowTheBootstrapAndThePlatformValues(t *testing.T) {
 		t.Errorf("extraAllowedImages = %s, want the fixture's nginx", got)
 	}
 
-	// The Platform's own values add no image, and the one-line switch to
-	// Deny reaches the component.
+	// The Platform's own values add no image, and Deny reaches the
+	// component.
 	values = get[object](t, renderApplications(t, "--values", "values.yaml",
 		"--set", "guardrails.validationActions={Deny,Audit}")["guardrails"], "spec", "source", "helm", "valuesObject")
 	if _, has := values["extraAllowedImages"]; has {
@@ -65,9 +62,6 @@ func TestGuardrailsFollowTheBootstrapAndThePlatformValues(t *testing.T) {
 	}
 }
 
-// The component renders the four policies and a binding for each, all
-// with Warn and Audit, all on Application namespaces only, rendered with
-// exactly the values the bootstrap's Application passes it.
 func TestGuardrailsComponentRendersFourPoliciesBoundToApplicationNamespaces(t *testing.T) {
 	objects := renderGuardrails(t, fixture)
 	for name, resource := range guardrailPolicies {
@@ -109,8 +103,6 @@ func TestGuardrailsComponentRendersFourPoliciesBoundToApplicationNamespaces(t *t
 		if len(exprs) != 1 {
 			t.Fatalf("binding %s has %d namespace expressions, want 1: %v", name, len(exprs), exprs)
 		}
-		// The label the CLI writes on every Environment's namespace and
-		// nothing puts on a Platform namespace.
 		if got := fmt.Sprint(exprs[0]); got != fmt.Sprint(object{"key": render.ApplicationNamespaceLabel, "operator": "Exists"}) {
 			t.Errorf("binding %s namespace selector = %s, want %s Exists", name, got, render.ApplicationNamespaceLabel)
 		}
@@ -120,10 +112,6 @@ func TestGuardrailsComponentRendersFourPoliciesBoundToApplicationNamespaces(t *t
 	}
 }
 
-// The image policy allows ghcr.io/itema-as/, the images the chart and
-// CloudNativePG run, and a test Platform's extras, as a CEL list; the
-// Ingress policy knows the base domain and finds the declared domains in
-// the ConfigMap the application chart renders.
 func TestGuardrailsComponentCarriesThePlatformsValues(t *testing.T) {
 	objects := renderGuardrails(t, fixture)
 
@@ -141,8 +129,6 @@ func TestGuardrailsComponentCarriesThePlatformsValues(t *testing.T) {
 			t.Errorf("allowed images %s lack %s", allowed, want)
 		}
 	}
-	// The final Backup hook's image is pinned in the application chart;
-	// the policy must allow the repository it names.
 	helpers, err := os.ReadFile("../chart/application/templates/_helpers.tpl")
 	if err != nil {
 		t.Fatal(err)
@@ -177,8 +163,6 @@ func TestGuardrailsComponentCarriesThePlatformsValues(t *testing.T) {
 	}
 }
 
-// Deny with Warn, which the API server refuses, and an image entry that
-// could break out of its CEL string are refused at render time.
 func TestGuardrailsComponentRefusesBadValues(t *testing.T) {
 	requireHelm(t)
 	for _, tc := range []struct {

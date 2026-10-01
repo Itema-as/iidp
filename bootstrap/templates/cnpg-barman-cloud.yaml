@@ -1,8 +1,6 @@
 {{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
-# The CloudNativePG Barman Cloud plugin: continuous backups of every
-# Application database to Object Storage, which the application chart's
-# Postgres Capability configures per Cluster. The plugin's TLS between
-# operator and plugin comes from cert-manager, so this waits for its CRDs.
+# The plugin's TLS to the operator comes from cert-manager, so this skips the
+# dry run and retries until the cert-manager CRDs exist.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

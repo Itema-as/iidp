@@ -1,9 +1,7 @@
 {{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
-# Grafana Alloy shipping pod logs, node metrics and kube-state metrics to
-# Grafana Cloud, through Grafana's k8s-monitoring chart. Endpoints and
-# credentials come from the Secret grafana-cloud in this namespace
-# (SOPS-encrypted in the Platform repository, see README.md); nothing about
-# the Grafana Cloud stack is in git in the clear.
+# Grafana Alloy shipping logs and metrics to Grafana Cloud. Endpoints and
+# credentials come from the Secret grafana-cloud in this namespace, which the
+# Platform repository holds SOPS-encrypted.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
