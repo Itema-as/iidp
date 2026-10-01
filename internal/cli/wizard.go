@@ -88,8 +88,8 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 			}
 		}
 	} else if opts.path == "" && !f.Changed("kind") {
-		// The wizard never offers the bare path itself, but --path "" can
-		// still reach here.
+		// The wizard never offers writing only the Platform repository, but
+		// an explicit --path "" still reaches here.
 		if err := askKind(f, p); err != nil {
 			return err
 		}
@@ -120,8 +120,9 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// Preview Environments need staging's values and secrets, and a bound repository
-	// whose pull requests they follow; otherwise the answer is refused.
+	// Asked only with staging and an Application repository: a preview uses
+	// staging's values and secrets and follows the repository's pull
+	// requests, so without them a yes would only be refused.
 	if opts.staging && (opts.path == pathCreate || opts.path == pathAdopt) && !f.Changed("previews") {
 		fmt.Fprintln(out, "Preview Environments (optional)")
 		fmt.Fprintln(out, "Every open pull request labelled "+render.PreviewLabel+" gets an Environment of its own at")

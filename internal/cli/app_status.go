@@ -266,7 +266,7 @@ func runText(run platformstate.Run) string {
 	}
 }
 
-// statusTime prints t in UTC, so it reads the same on every machine.
+// statusTime formats t in UTC, so it reads the same on every machine.
 func statusTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04 UTC")
 }
