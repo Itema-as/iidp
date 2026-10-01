@@ -58,9 +58,9 @@ const (
 
 // sources are Argus's informers. Certificates are watched everywhere:
 // cert-manager's ingress-shim makes them from the chart's Ingress, so Argus
-// does not rely on them carrying its labels, and they are few. Events are
-// every one in argocd (the Deploy gate's carry no labels) and Warnings
-// elsewhere. They are read through core v1, whose field selector knows type;
+// does not rely on them carrying its labels, and they are few. Events are read
+// in full in argocd, where the Deploy gate's carry no labels, and only Warnings
+// elsewhere, through core v1, whose field selector knows type;
 // events.k8s.io/v1 serves the same objects.
 var sources = []source{
 	{name: "applications", gvr: applicationsGVR, namespace: argocdNamespace, keep: keepArgoCD},
