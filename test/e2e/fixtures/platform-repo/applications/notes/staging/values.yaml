@@ -1,10 +1,7 @@
-# Values for notes's staging Environment, never released in the test: the
-# base its Preview Environments render from. Each Capability here is one a
-# preview must keep (the database, its migration command, sign-in groups)
-# or override (the size, the Scheduled task, which previews must not run;
-# the Environment and image tag, which are the pull request's). backups
-# are on, as for every staging, and previews turn them off. The migration
-# command and the task are what a deploy of staging would have written.
+# Never released; the base notes's Preview Environments render from. Each
+# setting here is one a preview must keep (database, migration command,
+# sign-in groups) or override (size, Scheduled task, backups, Environment,
+# image tag).
 application:
   name: notes
 environment: staging

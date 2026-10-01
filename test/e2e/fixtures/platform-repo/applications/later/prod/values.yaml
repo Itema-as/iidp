@@ -1,10 +1,6 @@
-# Values for later's prod Environment: an Environment that has not received
-# its first image yet, the state iidp app create --postgres leaves prod in
-# until its first deploy through the Deploy gate (with --staging, until the
-# first v* tag). image.tag is the "" the CLI writes, so the chart renders
-# nothing: no Cluster, no migration Job, no final-backup hook, no workload.
-# The only object ArgoCD applies is the backups-credentials Secret from the
-# sops/ source. See docs/implementation-notes/47-unreleased-environment.md.
+# No image yet, as iidp app create --postgres leaves prod until its first
+# deploy, so the chart renders nothing. ArgoCD applies only the
+# backups-credentials Secret from the sops/ source.
 application:
   name: later
 environment: prod

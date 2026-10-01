@@ -11,11 +11,9 @@ import (
 	"time"
 )
 
-// Preview Environments in kind (#95): ArgoCD's Pull Request generator asks
-// the harness's fakegithub (test/e2e/testdata/fakegithub) for an
-// Application repository's pull requests, as it would ask GitHub
-// Enterprise, authenticating with the App credential the harness writes in
-// place of cloud-init's. The test sets the pull requests the fake serves.
+// For Preview Environments, ArgoCD's Pull Request generator asks fakegithub
+// for pull requests as it would ask GitHub Enterprise; the test sets what it
+// serves.
 
 // FakePullRequest is a pull request the fake GitHub serves.
 type FakePullRequest struct {
@@ -23,13 +21,13 @@ type FakePullRequest struct {
 	Branch  string
 	HeadSHA string
 	Labels  []string
-	// Closed pull requests are listed only for state=closed or all, never
-	// to the generator, which asks for open ones.
+	// Closed pull requests are never listed to the generator, which asks
+	// for open ones.
 	Closed bool
 }
 
 // SetPullRequests replaces the pull requests the fake GitHub serves for
-// owner/repo, through a port-forward to it.
+// owner/repo.
 func (c *Cluster) SetPullRequests(ctx context.Context, owner, repo string, prs []FakePullRequest) error {
 	type label struct {
 		Name string `json:"name"`
@@ -85,9 +83,8 @@ func (c *Cluster) SetPullRequests(ctx context.Context, owner, repo string, prs [
 	})
 }
 
-// RefreshApplicationSet asks ArgoCD's ApplicationSet controller to run the
-// named ApplicationSet's generators now rather than at its requeue time,
-// the annotation ArgoCD documents for that.
+// RefreshApplicationSet asks ArgoCD to run the named ApplicationSet's
+// generators now rather than at its requeue time.
 func (c *Cluster) RefreshApplicationSet(ctx context.Context, name string) error {
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "annotate", "applicationset", name, "argocd.argoproj.io/application-set-refresh=true", "--overwrite"); err != nil {
 		return fmt.Errorf("refresh ApplicationSet %s: %w\n%s", name, err, out)
@@ -120,9 +117,8 @@ func (c *Cluster) ApplicationSetConditions(ctx context.Context, name string) (ma
 }
 
 // WaitForApplicationSetUpToDate polls until the named ApplicationSet has
-// generated its Applications without an error: ResourcesUpToDate True and
-// no ErrorOccurred True. On a Pull Request generator that proves the
-// controller listed the repository's pull requests with the App.
+// generated its Applications without an error. On a Pull Request generator
+// that proves the controller listed the pull requests with the App.
 func (c *Cluster) WaitForApplicationSetUpToDate(ctx context.Context, name string, timeout time.Duration) error {
 	var last map[string]string
 	return pollUntil(ctx, timeout, 5*time.Second,
@@ -142,7 +138,7 @@ func (c *Cluster) WaitForApplicationSetUpToDate(ctx context.Context, name string
 }
 
 // WaitForApplicationGone polls until ArgoCD no longer has the named
-// Application: its resources finalizer has deleted everything it owned.
+// Application, so its finalizer has deleted everything it owned.
 func (c *Cluster) WaitForApplicationGone(ctx context.Context, name string, timeout time.Duration) error {
 	return pollUntil(ctx, timeout, 5*time.Second,
 		func() (bool, error) {
@@ -159,13 +155,10 @@ func (c *Cluster) WaitForApplicationGone(ctx context.Context, name string, timeo
 		})
 }
 
-// TagNodeImage gives an image the kind node already has a second name,
-// inside the node's containerd, so a Pod asking for target starts without
-// a pull. Preview Environments run the image tagged with the pull
-// request's head SHA, which no registry kind reaches has: this stands in
-// for the deploy workflow pushing it. source is pulled first if the node
-// does not have it yet; PreloadImages normally has loaded it, and crictl
-// pull would ask the registry even then.
+// TagNodeImage tags source as target inside the node's containerd, standing
+// in for the deploy workflow pushing a Preview's head-SHA image. source is
+// pulled only when missing, since crictl pull would ask the registry even
+// for a preloaded image.
 func (c *Cluster) TagNodeImage(ctx context.Context, source, target string) error {
 	node := c.Name + "-control-plane"
 	steps := [][]string{{"exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force", source, target}}

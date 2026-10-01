@@ -1,7 +1,5 @@
-# The ArgoCD Application for notes's staging Environment, which has no
-# image yet. Its Preview Environments (previews/applicationset.yaml) render
-# from it: the same chart source, staging's values file as the base, and
-# its sops/ source for staging's secrets. See prod/application.yaml.
+# notes's Preview Environments render from this: its chart source, values
+# and sops/ source.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

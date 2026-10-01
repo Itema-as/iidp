@@ -23,17 +23,11 @@ import (
 	"github.com/Itema-as/iidp/internal/appconfig"
 )
 
-// The Deploy gate in kind (docs/implementation-notes/60-deploy-gate.md).
-// The bootstrap installs the gate like every other Platform component; the
-// harness supplies what kind lacks: the gate's image, built from this
-// working tree and loaded into the node rather than pulled from GHCR; the
-// GitHub App credential cloud-init would have written; and fakegithub
-// (test/e2e/testdata/fakegithub), an in-cluster stand-in for both GitHub
-// Actions' OIDC issuer and the three GitHub REST calls the gate makes. The
-// fixture Platform repository's platform.yaml points the gate at all three.
-// The image check is not stood in for: the gate asks Docker Hub itself
-// whether brochure's nginx tag exists, the registry the node pulls it
-// from.
+// The bootstrap installs the Deploy gate; the harness supplies what kind
+// lacks: the gate's image built from this working tree, the GitHub App
+// credential cloud-init would write, and fakegithub, a stand-in for GitHub
+// Actions' OIDC issuer and the GitHub API. The image check is real: the gate
+// asks Docker Hub about brochure's nginx tag.
 const (
 	deployGateImage = "iidp-e2e.local/deploy-gate:dev"
 	fakeGitHubImage = "iidp-e2e.local/fake-github:dev"
@@ -48,8 +42,7 @@ const (
 	// OrgID is Itema-as's GitHub org id, which the bootstrap pins.
 	OrgID = 1230559
 
-	// The App credential's ids, and what fakegithub answers for its bot
-	// (test/e2e/testdata/fakegithub).
+	// The App credential's ids, and what fakegithub answers for its bot.
 	fakeAppID          = 1
 	fakeInstallationID = 1
 	FakeBotIdentity    = "iidp-deploy[bot] <41898282+iidp-deploy[bot]@users.noreply.github.com>"
@@ -62,9 +55,8 @@ type FakeIssuer struct {
 	kid string
 }
 
-// Claims are a valid token's claims for repository (bound by
-// repositoryID) pushing to ref, as GitHub Actions issues them: the ids as
-// decimal strings.
+// Claims are a valid token's claims for repository pushing to ref, as
+// GitHub Actions issues them, with the ids as decimal strings.
 func (f *FakeIssuer) Claims(repository string, repositoryID int64, ref string) map[string]any {
 	now := time.Now()
 	return map[string]any{
@@ -102,15 +94,11 @@ func (f *FakeIssuer) Sign(claims map[string]any) (string, error) {
 	return input + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
-// InstallDeployGateStandIns builds the gate's image from this working tree
-// and loads it into the node, creates the GitHub App credential Secret
-// cloud-init writes on the Platform (argocd/platform-repo-github-app, but
-// without the label that would make ArgoCD use it: the harness's git server
-// takes no credential) and the GHCR pull token Secret
-// (argocd/ghcr-pull-token, with a token that is never used), and runs
-// fakegithub with a fresh OIDC signing key
-// and App key. It runs before the root Application, so the gate's first
-// pod finds everything it needs.
+// InstallDeployGateStandIns builds and loads the gate's image, creates the
+// Secrets cloud-init writes for it, and runs fakegithub with fresh keys. It
+// must run before the root Application, so the gate's first pod finds
+// everything it needs. The App credential Secret lacks the ArgoCD
+// repository label, since the harness's git server takes no credential.
 func (c *Cluster) InstallDeployGateStandIns(ctx context.Context) (*FakeIssuer, error) {
 	c.Log("building the Deploy gate and fakegithub images with %s", c.Provider)
 	if err := c.BuildLocalImage(ctx, deployGateImage, "./cmd/iidp-deploy-gate", "iidp-deploy-gate", filepath.Join("cmd", "iidp-deploy-gate", "Dockerfile")); err != nil {
@@ -168,11 +156,8 @@ func (c *Cluster) InstallDeployGateStandIns(ctx context.Context) (*FakeIssuer, e
 	if err := c.Apply(ctx, secret); err != nil {
 		return nil, err
 	}
-	// The GHCR pull token cloud-init writes for the gate. The gate needs
-	// it to start, but never sends it here: the only images it checks in
-	// kind are brochure's, on Docker Hub, which it asks anonymously, and
-	// it sends the token to ghcr.io alone
-	// (docs/implementation-notes/61-image-check.md).
+	// The gate needs a GHCR pull token to start, but only sends it to
+	// ghcr.io, which it never asks in kind.
 	pullSecret, err := c.Kubectl(ctx, "-n", "argocd", "create", "secret", "generic", "ghcr-pull-token",
 		"--from-literal=username=iidp-e2e", "--from-literal=token=ghp_notarealtoken",
 		"--dry-run=client", "-o", "yaml")
@@ -206,11 +191,9 @@ func (c *Cluster) InstallDeployGateStandIns(ctx context.Context) (*FakeIssuer, e
 	return issuer, nil
 }
 
-// BuildLocalImage cross-compiles the Go package pkg for the node's
-// architecture into <context>/linux/<arch>/<binary>, the layout GoReleaser's
-// dockers_v2 gives the same Dockerfiles, builds dockerfile (relative to the
-// repository root) with the container engine, and loads the image into the
-// node.
+// BuildLocalImage cross-compiles pkg into <context>/linux/<arch>/<binary>,
+// the layout GoReleaser gives the same Dockerfiles, builds dockerfile
+// (relative to the repository root) and loads the image into the node.
 func (c *Cluster) BuildLocalImage(ctx context.Context, image, pkg, binary, dockerfile string) error {
 	arch, err := c.nodeArch(ctx)
 	if err != nil {
@@ -235,10 +218,9 @@ func (c *Cluster) BuildLocalImage(ctx context.Context, image, pkg, binary, docke
 	return c.loadImage(ctx, image)
 }
 
-// loadImage loads an image from the container engine into the kind node,
-// as an archive rather than with kind load docker-image: the latter looks
-// the image up in the engine's store under a name the podman provider does
-// not always resolve.
+// loadImage loads an image into the node as an archive, because kind load
+// docker-image looks it up under a name the podman provider does not always
+// resolve.
 func (c *Cluster) loadImage(ctx context.Context, image string) error {
 	archive, err := writeTemp("iidp-e2e-image-*.tar", nil)
 	if err != nil {
@@ -255,8 +237,7 @@ func (c *Cluster) loadImage(ctx context.Context, image string) error {
 }
 
 // WaitForDeployGate polls the gate's health check through Traefik until it
-// answers, so a call right after it is not refused by a route still being
-// set up.
+// answers, so the next call does not hit a route still being set up.
 func (c *Cluster) WaitForDeployGate(ctx context.Context, timeout time.Duration) error {
 	var last string
 	return pollUntil(ctx, timeout, 3*time.Second,
@@ -274,17 +255,15 @@ func (c *Cluster) WaitForDeployGate(ctx context.Context, timeout time.Duration) 
 		})
 }
 
-// CallDeployGate makes the deploy call CI makes, through Traefik on the
-// host port, with Host set to the gate's, and returns the status and the
-// decoded body.
+// CallDeployGate makes the deploy call CI makes, through Traefik, and
+// returns the status and the decoded body.
 func (c *Cluster) CallDeployGate(ctx context.Context, token, application, environment, tag string) (int, map[string]any, error) {
 	return c.CallDeployGateWithIidpYAML(ctx, token, application, environment, tag, nil, nil)
 }
 
-// CallDeployGateWithIidpYAML is CallDeployGate carrying a migration
-// command and Scheduled tasks, as iidp ci set-image sends them when the
-// deployed commit has an iidp.yaml; nil sends no migration command, and
-// no tasks leaves the key out.
+// CallDeployGateWithIidpYAML is CallDeployGate carrying what iidp ci
+// set-image sends from an iidp.yaml. A nil migrationCommand or no tasks
+// leaves the key out.
 func (c *Cluster) CallDeployGateWithIidpYAML(ctx context.Context, token, application, environment, tag string, migrationCommand *string, tasks []appconfig.Task) (int, map[string]any, error) {
 	request := map[string]any{"application": application, "environment": environment, "tag": tag}
 	if migrationCommand != nil {
@@ -305,10 +284,9 @@ func (c *Cluster) CallDeployGateWithIidpYAML(ctx context.Context, token, applica
 	return status, decoded, nil
 }
 
-// deployGateLog is the tail of the gate's own log, for a call that failed
-// without an answer from it (#128). The gate logs every call it finishes,
-// refused or not, so a call with no line of its own never finished, and a
-// start-up line after the earlier calls means the gate restarted.
+// deployGateLog is the tail of the gate's log, for a call that got no
+// answer. The gate logs every call it finishes, so a call with no line never
+// finished, and a start-up line after earlier calls means it restarted.
 func (c *Cluster) deployGateLog(ctx context.Context) string {
 	out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "deployment/iidp-deploy-gate", "--tail=60", "--timestamps")
 	if err != nil {
@@ -318,11 +296,10 @@ func (c *Cluster) deployGateLog(ctx context.Context) string {
 }
 
 // DeveloperToken is the gh auth token fakegithub lets read shop's
-// repository and nothing else (test/e2e/testdata/fakegithub).
+// repository and nothing else.
 const DeveloperToken = "e2e-developer-token"
 
-// CallStatus makes the call iidp app status makes, through Traefik, and
-// returns the status and the body.
+// CallStatus makes the call iidp app status makes, through Traefik.
 func (c *Cluster) CallStatus(ctx context.Context, token, application string) (int, []byte, error) {
 	status, data, err := c.requestDeployGate(ctx, http.MethodGet, "/v1/status/"+application, token, nil)
 	if err != nil {
@@ -358,8 +335,7 @@ func (c *Cluster) requestDeployGate(ctx context.Context, method, path, token str
 	return resp.StatusCode, buf.Bytes(), nil
 }
 
-// ReadRepository clones the named repository through a port-forward to the
-// in-cluster git server and hands fn the clone.
+// ReadRepository clones the named served repository and hands fn the clone.
 func (c *Cluster) ReadRepository(ctx context.Context, name string, fn func(dir string) error) error {
 	return c.withGitServerPortForward(ctx, name, func(ctx context.Context, url string) error {
 		work, err := os.MkdirTemp("", "iidp-e2e-read-*")
@@ -375,8 +351,8 @@ func (c *Cluster) ReadRepository(ctx context.Context, name string, fn func(dir s
 	})
 }
 
-// RefreshApplication asks ArgoCD to compare an Application with git now
-// rather than at its next poll, the way the UI's Refresh button does.
+// RefreshApplication asks ArgoCD to compare an Application with git now, as
+// the UI's Refresh button does.
 func (c *Cluster) RefreshApplication(ctx context.Context, name string) error {
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "annotate", "application", name, "argocd.argoproj.io/refresh=normal", "--overwrite"); err != nil {
 		return fmt.Errorf("refresh %s: %w\n%s", name, err, out)
@@ -384,10 +360,6 @@ func (c *Cluster) RefreshApplication(ctx context.Context, name string) error {
 	return nil
 }
 
-// fakeGitHubManifest runs fakegithub in GitServerNamespace, with its key
-// set and the App's public key from the fake-github ConfigMap. Its CPU
-// request is a few millicores for the same reason as the Object Storage
-// stand-in's (objectStorageManifest).
 func fakeGitHubManifest() string {
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment

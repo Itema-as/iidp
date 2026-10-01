@@ -1,10 +1,7 @@
-# The ArgoCD Application for notes's prod Environment, which has no image
-# yet, in the shape iidp app create --path create --staging --postgres
-# --login --previews writes. notes is the fixture's Application with Preview
-# Environments (TestBootstrap's testPreviewEnvironments); neither of its
-# own Environments is ever released, so they cost the node nothing. The
-# one deviation from what the CLI writes is shop's: the chart from this
-# repository's iidp.git, since kind has no GHCR.
+# The shape iidp app create --staging --postgres --login --previews
+# writes, with shop's deviation for the chart source. notes exists for its
+# Preview Environments; its own Environments are never released, so they
+# cost the node nothing.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

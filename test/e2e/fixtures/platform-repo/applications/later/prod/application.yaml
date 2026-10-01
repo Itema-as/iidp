@@ -1,7 +1,4 @@
-# The ArgoCD Application for later's prod Environment, which has no image
-# yet (values.yaml). The same shape as shop's, including the one deviation
-# from what the CLI writes (the chart from this repository's iidp.git, since
-# kind has no GHCR) and the sops/ source iidp app create --postgres adds.
+# The same shape as shop's.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

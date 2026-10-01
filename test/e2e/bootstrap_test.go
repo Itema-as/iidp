@@ -19,59 +19,19 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// TestBootstrap proves that, given a Platform repository, ArgoCD installs
-// every Phase 1 Platform component: a kind cluster set up like the node,
-// the fixture Platform repository served from inside the cluster, the root
-// Application applied the way cloud-init applies it, and every component
-// Application reaching Synced and Healthy. Components that cannot work
-// without a cloud account (the TLS issuer and certificate, external-dns,
-// the Grafana Cloud shipper) only have to reach Synced. It then proves the
-// whole Platform path (testFixtureApplication): the fixture Platform
-// repository's Application shop, with Postgres enabled on a prod and a
-// staging Environment, deployed through the real bootstrap and chart, its
-// migration run, and an HTTP 200 through Traefik for both hosts. Next
-// (testUnreleasedEnvironments) it proves that two Environments with no
-// image yet, later-prod and brochure-prod, are Synced and Healthy with
-// nothing of the chart's in their namespaces. Finally
-// (testDeleteEnvironment) it proves #39: pushing a commit that removes
-// shop's staging Environment directory, the way iidp app delete itself
-// does, makes ArgoCD delete the shop-staging Application only after its
-// final Backup PreDelete hook completes a real Backup against the
-// harness's own S3 server, and leaves the namespace's Deployment and Cluster
-// gone afterwards. Last (testDeployGate) it proves #60: a deploy through the
-// Deploy gate, authenticated by an OIDC token from the harness's fake
-// issuer, lands in the Platform repository and brochure-prod syncs it,
-// while a call from another repository, one from a disallowed ref and
-// (#61) one with a tag Docker Hub does not have are refused. After it
-// (testMigrationCommandFromIidpYAML) it proves #66 and #91: a deploy of
-// shop carrying the migration command and a Scheduled task from its
-// Application repository's iidp.yaml sets them with the tag, the migration
-// Job runs the command, and the task's CronJob runs a Job that succeeds.
-// Then (testAppStatus) it proves #94: the gate's status endpoint shows
-// shop-prod, Synced and Healthy, to a developer token fakegithub says can
-// read shop's repository, and refuses brochure to it.
-// Then (testPreviewEnvironments) it proves #95: a pull request labelled
-// preview on notes's repository, served by the harness's fake GitHub to
-// ArgoCD's Pull Request generator, gets a Preview Environment behind
-// Itema login and listed by the status endpoint, and closing it removes
-// the preview with its namespace.
-// Last (testGuardrails) it proves #90: nothing the fixture Applications did,
-// the Scheduled task's Jobs included, failed a guardrail, a NodePort Service
-// is warned about and audited but not denied, and Pod Security refuses a
-// privileged Pod.
+// TestBootstrap bootstraps a kind cluster from the fixture Platform
+// repository, waits for every Platform component (only Synced for those
+// that need a cloud account), then runs the end-to-end scenarios below in
+// order on the same cluster.
 //
 // Run with:
 //
 //	go test -tags e2e ./test/e2e/... -run TestBootstrap -v -timeout 30m
 //
 // Needs kind, kubectl, helm, git and docker (or podman with
-// KIND_EXPERIMENTAL_PROVIDER=podman). Set IIDP_E2E_KEEP=1 to keep the
-// cluster for inspection; delete it with `kind delete cluster --name
-// iidp-e2e` (or the name IIDP_E2E_CLUSTER set). IIDP_E2E_CLUSTER overrides
-// the kind cluster name, so a machine can run more than one instance of
-// this test at once without one deleting another's cluster; the in-cluster
-// git server's namespace and hostnames are a fixed "iidp-e2e" regardless,
-// since they never leave the cluster they are served from.
+// KIND_EXPERIMENTAL_PROVIDER=podman). IIDP_E2E_KEEP=1 keeps the cluster for
+// inspection; IIDP_E2E_CLUSTER overrides its name (default iidp-e2e), so
+// several runs can share a machine.
 func TestBootstrap(t *testing.T) {
 	ctx := context.Background()
 	clusterName := "iidp-e2e"
@@ -98,9 +58,6 @@ func TestBootstrap(t *testing.T) {
 	// Runs before the cluster is deleted: cleanups run last registered first.
 	t.Cleanup(func() { cluster.LogImageSources(context.Background()) })
 
-	// Everything from a rate-limited registry the node would pull: the
-	// Platform components' images and the fixture Applications' nginx
-	// (docs/implementation-notes/128-e2e-image-cache.md).
 	images, err := cluster.RegistryImages(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -119,29 +76,19 @@ func TestBootstrap(t *testing.T) {
 	if err := cluster.CreateAgeKeySecret(ctx, filepath.Join(fixtures, "age-keys.txt")); err != nil {
 		t.Fatal(err)
 	}
-	// A harness-only Object Storage stand-in, not part of the bootstrap or
-	// the chart: shop-staging's ObjectStore points at it, so its final
-	// Backup PreDelete hook can genuinely complete when testDeleteEnvironment
-	// deletes it (docs/implementation-notes/39-final-backup-predelete-hook.md).
+	// shop-staging's ObjectStore points at it, so its final Backup can
+	// complete when testDeleteEnvironment deletes it.
 	if err := cluster.InstallObjectStorage(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// What the Deploy gate needs that kind lacks: its image built from this
-	// working tree, the App credential cloud-init writes, and a stand-in
-	// for GitHub's OIDC issuer and API (testDeployGate).
 	issuer, err := cluster.InstallDeployGateStandIns(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// The Platform repository pins the bootstrap by pointing at this
-	// repository, so both are served: iidp.git holds the working tree's
-	// bootstrap directory and chart (the fixture Application's Environments
-	// take the application chart from here, path chart/application, since
-	// kind has no GHCR to pull the OCI chart from; see
-	// docs/implementation-notes/09-e2e-fixture-application.md),
-	// iidp-platform.git the fixture Platform repository, which also holds
-	// the fixture Application shop (applications/shop/{prod,staging}).
+	// The Platform repository points at this repository for the bootstrap,
+	// so both are served. The fixture Environments also take the chart from
+	// iidp.git rather than GHCR, which kind cannot reach.
 	err = cluster.ServeGitRepositories(ctx,
 		Repository{Name: "iidp", Files: map[string]string{
 			"bootstrap": filepath.Join(cluster.RepoRoot, "bootstrap"),
@@ -157,20 +104,6 @@ func TestBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// kind has no cloud Object Storage: unlike before #42, the harness no
-	// longer creates the backups-credentials Secret by hand in either of
-	// the fixture Application's Environment namespaces. Both Environments'
-	// own applications/shop/<environment>/sops/backups-credentials.enc.yaml
-	// (a byte-for-byte copy of bootstrap/templates/backups-credentials.enc.yaml, the
-	// same file iidp app create --postgres itself copies) is applied by
-	// their own ArgoCD Application, at the same sync-wave as the Cluster
-	// and ObjectStore that reference it. prod's endpoint stays unreachable
-	// (objectstorage.invalid; nothing ever authenticates with these
-	// credentials there); staging's points at the harness's own S3 server
-	// (versitygw), whose root credentials
-	// (ObjectStorageAccessKey/ObjectStorageSecretKey) are exactly
-	// what that file decrypts to. See
-	// docs/implementation-notes/42-backups-credentials.md.
 	want := map[string]Expectation{
 		"platform":            Healthy,
 		"platform-components": Healthy,
@@ -179,17 +112,11 @@ func TestBootstrap(t *testing.T) {
 		"cert-manager":        Healthy,
 		"cloudnative-pg":      Healthy,
 		"cnpg-barman-cloud":   Healthy,
-		// The dummy Entra credentials and platform.yaml's
-		// oauth2Proxy.skipOIDCDiscovery (bootstrap/README.md) are enough for
-		// the pod itself to come up Healthy in kind; only a real sign-in
-		// would need real credentials.
+		// Dummy Entra credentials and skipOIDCDiscovery are enough for the
+		// pod to come up; only a real sign-in would need real ones.
 		"oauth2-proxy": Healthy,
-		// Healthy against the harness's image, App credential and fake
-		// GitHub (InstallDeployGateStandIns).
-		"deploy-gate": Healthy,
-		// The four admission policies and their bindings: API objects
-		// only, nothing that runs.
-		"guardrails": Healthy,
+		"deploy-gate":  Healthy,
+		"guardrails":   Healthy,
 		// Cloud-dependent: configured, applied, but nothing to talk to.
 		"platform-tls": Synced,
 		"external-dns": Synced,
@@ -202,18 +129,14 @@ func TestBootstrap(t *testing.T) {
 	testFixtureApplication(ctx, t, cluster)
 	testUnreleasedEnvironments(ctx, t, cluster)
 	testDeleteEnvironment(ctx, t, cluster)
-	// Last, once shop-staging's CPU requests are gone: brochure-prod's
-	// first image adds a workload to the node.
+	// The order matters. Workloads that are added (brochure-prod's first
+	// image, a preview's database) only fit once shop-staging is deleted;
+	// testAppStatus needs shop-prod's migration and task run; and
+	// testGuardrails checks that nothing before it tripped a guardrail.
 	testDeployGate(ctx, t, cluster, issuer)
 	testMigrationCommandFromIidpYAML(ctx, t, cluster, issuer)
-	// Once shop-prod has a migration and a Scheduled task run to show.
 	testAppStatus(ctx, t, cluster)
-	// Once shop-staging's requests are gone too: a preview runs a small
-	// Application and a database while it is open.
 	testPreviewEnvironments(ctx, t, cluster)
-	// Last, once every fixture Environment has been created, deployed,
-	// migrated and (shop-staging) deleted: nothing any of that did may
-	// have tripped a guardrail.
 	testGuardrails(ctx, t, cluster)
 }
 
@@ -224,31 +147,23 @@ const (
 	shopRepositoryID     = 700000002
 )
 
-// fixtureImages are the images the fixture Applications run: nginx at the
-// fixture's tag, which the Deploy gate also deploys to brochure and a
-// preview is tagged from, and at shopDeployTag.
+// fixtureImages are the images the fixture Applications run.
 var fixtureImages = []string{
 	"docker.io/nginxinc/nginx-unprivileged:1.30-alpine",
 	"docker.io/nginxinc/nginx-unprivileged:" + shopDeployTag,
 }
 
-// shopDeployTag is the image testMigrationCommandFromIidpYAML deploys to
-// shop-prod: another nginx Alpine tag than the fixture's 1.30-alpine, so
-// the Deployment changes too. ArgoCD leaves hooks out of its diff, so a
-// commit that changed only the migration Job would not sync on its own; a
-// real deploy always changes the tag with it. It must exist on Docker Hub:
-// the gate checks every new tag against the image's registry (#61).
+// shopDeployTag differs from the fixture's 1.30-alpine so the Deployment
+// changes too: ArgoCD leaves hooks out of its diff, so a commit changing
+// only the migration Job would not sync. It must exist on Docker Hub, since
+// the gate checks every new tag.
 const shopDeployTag = "1.30.0-alpine"
 
-// testMigrationCommandFromIidpYAML proves #66 and #91 end to end: the
-// migration command and the Scheduled task in shop's Application
-// repository (the fixture test/e2e/fixtures/shop-repository/iidp.yaml,
-// read with the code iidp ci set-image uses) travel with a deploy through
-// the Deploy gate and land in shop's prod values.yaml in the same commit
-// as the tag. The migration Job then runs the command, and the task's
-// CronJob, on its every-minute schedule, runs a Job that succeeds with
-// DATABASE_URL set. A command for brochure, which has no Postgres, and
-// tasks for brochure, a Static site, are refused first.
+// testMigrationCommandFromIidpYAML proves the migration command and
+// Scheduled task in shop's iidp.yaml travel with a deploy into the same
+// commit as the tag, the migration Job runs the command, and the task's
+// CronJob runs a Job with DATABASE_URL set. A command or tasks for
+// brochure, a Static site without Postgres, are refused first.
 func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster *Cluster, issuer *FakeIssuer) {
 	t.Helper()
 	appConfig, ok, err := appconfig.Read(filepath.Join(cluster.RepoRoot, "test", "e2e", "fixtures", "shop-repository"))
@@ -270,19 +185,16 @@ func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster
 		return status, body
 	}
 
-	// brochure has no Postgres: nothing to migrate, so nothing is written.
 	status, body := call("Itema-as/brochure", brochureRepositoryID, "brochure", "1.30-alpine", &command, nil)
 	if msg, _ := body["error"].(string); status != http.StatusConflict || !strings.Contains(msg, "Add the Postgres Capability first") {
 		t.Errorf("a migration command for brochure: HTTP %d %v, want 409 asking for the Postgres Capability first", status, body)
 	}
-	// brochure is a Static site: no command of its own to schedule.
 	status, body = call("Itema-as/brochure", brochureRepositoryID, "brochure", "1.30-alpine", nil, appConfig.Tasks)
 	if msg, _ := body["error"].(string); status != http.StatusConflict || !strings.Contains(msg, "is a Static site") {
 		t.Errorf("tasks for brochure: HTTP %d %v, want 409 saying it is a Static site", status, body)
 	}
 
-	// shop's deploy. Its staging Environment was deleted
-	// (testDeleteEnvironment), so main deploys to prod.
+	// staging was deleted by testDeleteEnvironment, so main deploys to prod.
 	status, body = call("Itema-as/shop", shopRepositoryID, "shop", shopDeployTag, &command, appConfig.Tasks)
 	if status != http.StatusOK || body["environment"] != "prod" || body["migrationCommandChanged"] != true || body["tasksChanged"] != true {
 		t.Fatalf("the deploy of shop with its iidp.yaml: HTTP %d %v, want 200, prod and the migration command and tasks changed", status, body)
@@ -314,8 +226,6 @@ func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster
 		t.Fatal(err)
 	}
 
-	// shop-prod syncs the commit: the migration Job, recreated for the
-	// sync, runs the command from iidp.yaml before the new image rolls out.
 	if err := cluster.RefreshApplication(ctx, "shop-prod"); err != nil {
 		t.Fatal(err)
 	}
@@ -330,9 +240,6 @@ func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster
 		t.Fatal(err)
 	}
 
-	// The same sync applied the task's CronJob. On its every-minute
-	// schedule a run starts within a minute or two; Forbid keeps it to one
-	// small Pod at a time on the runner.
 	logs, err = cluster.WaitForScheduledTaskRun(ctx, "shop-prod", task.Name, 5*time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -342,15 +249,10 @@ func testMigrationCommandFromIidpYAML(ctx context.Context, t *testing.T, cluster
 	}
 }
 
-// testAppStatus proves #94 end to end: the gate's service, called the way
-// iidp app status calls it with a developer's token, clones the Platform
-// repository with that token, asks fakegithub whether the token can read
-// shop's bound repository, and reads shop-prod from the cluster through its
-// read-only service account: Synced and Healthy, the image deployed by
-// testMigrationCommandFromIidpYAML and when, a ready pod, the migration
-// and the Scheduled task's run. brochure's repository is one the token
-// cannot read, which fakegithub answers with 404 as GitHub does for a
-// private repository, and the gate refuses it.
+// testAppStatus proves the gate's status endpoint, called as iidp app status
+// calls it with a developer's token, reports shop-prod's sync, health,
+// image, pods, migration and task run, and refuses brochure, whose
+// repository the token cannot read.
 func testAppStatus(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 	var status platformstate.Status
@@ -409,16 +311,11 @@ func testAppStatus(ctx context.Context, t *testing.T, cluster *Cluster) {
 	}
 }
 
-// testDeployGate proves #60 end to end: the Deploy gate the bootstrap
-// installed, reached through Traefik at deploy.<baseDomain> with a token
-// from the harness's fake issuer, refuses a call from another repository
-// of the org, a call from a ref that may not deploy and (#61) a tag its
-// image repository does not have, then deploys brochure's first image
-// from main, a tag the gate has checked on Docker Hub. The commit lands in
-// the Platform repository authored by the token's actor and committed by
-// the App, and
-// brochure-prod syncs it: the Environment that rendered nothing
-// (testUnreleasedEnvironments) now answers HTTP 200.
+// testDeployGate proves the Deploy gate refuses a call from another
+// repository, from a ref that may not deploy, and for a tag Docker Hub does
+// not have, then deploys brochure's first image: the commit is authored by
+// the token's actor and committed by the App, and brochure-prod then
+// answers HTTP 200.
 func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer *FakeIssuer) {
 	t.Helper()
 	if err := cluster.WaitForDeployGate(ctx, 2*time.Minute); err != nil {
@@ -441,31 +338,25 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 		return status, fmt.Sprint(body["environment"])
 	}
 
-	// Another repository of the org, calling for brochure.
 	status, msg := call(issuer.Claims("Itema-as/impostor", 700000099, "refs/heads/main"), "1.30-alpine")
 	if status != http.StatusForbidden || !strings.Contains(msg, "repository id 700000099") {
 		t.Errorf("a call from another repository: HTTP %d %q, want 403 naming its repository id", status, msg)
 	}
-	// brochure's own repository, from a branch other than main.
 	status, msg = call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/feature"), "1.30-alpine")
 	if status != http.StatusForbidden || !strings.Contains(msg, "refs/heads/feature") {
 		t.Errorf("a call from refs/heads/feature: HTTP %d %q, want 403 naming the ref", status, msg)
 	}
-	// brochure's own repository, from main, with a tag Docker Hub does not
-	// have: the gate's image check (#61) asks the real registry, as it
-	// does for the deploy below.
 	status, msg = call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/main"), "iidp-e2e-no-such-tag")
 	if status != http.StatusUnprocessableEntity || !strings.Contains(msg, "docker.io/nginxinc/nginx-unprivileged:iidp-e2e-no-such-tag does not exist") {
 		t.Errorf("a tag that was never pushed: HTTP %d %q, want 422 naming the image", status, msg)
 	}
 
-	// The deploy. brochure has no staging, so main deploys to prod.
+	// brochure has no staging, so main deploys to prod.
 	status, env := call(issuer.Claims("Itema-as/brochure", brochureRepositoryID, "refs/heads/main"), "1.30-alpine")
 	if status != http.StatusOK || env != "prod" {
 		t.Fatalf("the deploy from main: HTTP %d %q, want 200 and prod", status, env)
 	}
 
-	// Refused calls committed nothing; the deploy committed one change.
 	var head string
 	err := cluster.ReadRepository(ctx, "iidp-platform", func(dir string) error {
 		git := func(args ...string) string {
@@ -495,9 +386,8 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 	}
 	checkDeployEvents(ctx, t, cluster, head)
 
-	// brochure-prod syncs the new image. A refresh saves waiting out
-	// ArgoCD's three-minute poll; this is a plain sync, not the deletion
-	// testDeleteEnvironment must not hurry.
+	// A refresh saves waiting out ArgoCD's three-minute poll. Safe here,
+	// unlike for the deletion in testDeleteEnvironment.
 	if err := cluster.RefreshApplication(ctx, "brochure-prod"); err != nil {
 		t.Fatal(err)
 	}
@@ -509,11 +399,9 @@ func testDeployGate(ctx context.Context, t *testing.T, cluster *Cluster, issuer 
 	}
 }
 
-// checkDeployEvents proves #117 against a real API server: its validation of
-// the gate's Events, and the gate's RBAC to create them in argocd. Of
-// testDeployGate's four calls, the missing tag and the deploy have
-// brochure-prod behind them and are recorded; the other repository's call
-// and the feature branch's are not.
+// checkDeployEvents proves a real API server accepts the gate's Events and
+// the gate may create them. Of testDeployGate's four calls, only the missing
+// tag and the deploy have brochure-prod behind them and are recorded.
 func checkDeployEvents(ctx context.Context, t *testing.T, cluster *Cluster, commit string) {
 	t.Helper()
 	type event struct {
@@ -573,15 +461,10 @@ func checkDeployEvents(ctx context.Context, t *testing.T, cluster *Cluster, comm
 	}
 }
 
-// testUnreleasedEnvironments proves #47's item 13: an Environment the deploy
-// workflow has not written an image into yet (image.tag: "", what the CLI
-// writes on create) is Synced and Healthy in ArgoCD, with no comparison
-// error, and nothing of the chart's runs in it. later-prod has Postgres on
-// and the sops/ source iidp app create --postgres adds, so its only
-// resource is the backups-credentials Secret; brochure-prod has no
-// Capability and no secret, so it has no resources at all, the case whose
-// status comes from ArgoCD alone. Neither adds a workload to the node. See
-// docs/implementation-notes/47-unreleased-environment.md.
+// testUnreleasedEnvironments proves an Environment with no image yet
+// (image.tag: "") is Synced and Healthy with no comparison error and
+// nothing of the chart's in it. later-prod's only resource is its
+// backups-credentials Secret; brochure-prod has none at all.
 func testUnreleasedEnvironments(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 	want := map[string]Expectation{
@@ -603,9 +486,7 @@ func testUnreleasedEnvironments(ctx context.Context, t *testing.T, cluster *Clus
 		{"later-prod", "later-prod", []string{"Secret/backups-credentials"}},
 		{"brochure-prod", "brochure-prod", nil},
 	} {
-		// A ComparisonError is what an unreleased Environment showed
-		// before: the sync status alone could hide one behind a stale
-		// Synced, so the conditions are checked too.
+		// A stale Synced can hide a ComparisonError, so check conditions.
 		if conditions := apps[env.application].Conditions; len(conditions) != 0 {
 			t.Errorf("%s has conditions %v, want none", env.application, conditions)
 		}
@@ -619,8 +500,6 @@ func testUnreleasedEnvironments(ctx context.Context, t *testing.T, cluster *Clus
 			t.Errorf("%s manages %v, want %v", env.application, got, env.resources)
 		}
 
-		// And nothing of the chart's exists in the namespace: no
-		// workload, no database, no hook.
 		out, err = cluster.Kubectl(ctx, "-n", env.namespace, "get",
 			"deployments,services,ingresses,jobs,clusters.postgresql.cnpg.io,objectstores.barmancloud.cnpg.io,scheduledbackups.postgresql.cnpg.io",
 			"-o", "name")
@@ -641,18 +520,11 @@ func testUnreleasedEnvironments(ctx context.Context, t *testing.T, cluster *Clus
 	}
 }
 
-// testFixtureApplication proves the whole Platform path from the bootstrap
-// ticket onward: the fixture Application shop, with a prod and a staging
-// Environment and Postgres enabled, deployed through the real bootstrap and
-// chart, its migration run, and an HTTP request through Traefik answered
-// with 200 for both hosts. staging also has the Itema login Capability on
-// (docs/implementation-notes/18-itema-login.md), so an unauthenticated
-// request to its host, and to its custom domain inside the fixture zone,
-// is asserted to be redirected straight to the provider's sign-in,
-// carrying the URL to come back to, while that custom domain's ACME
-// challenge path is not (#76), and prod, unprotected, still answers 200
-// (docs/implementation-notes/77-login-redirect.md), and keeps answering 200
-// throughout a rollout (#75).
+// testFixtureApplication proves shop's prod and staging Environments, with
+// Postgres, deploy through the real bootstrap and chart and run their
+// migrations. prod answers 200, also throughout a rollout. staging has
+// Itema login, so its host and its custom domain redirect straight to the
+// provider's sign-in, except for the custom domain's ACME challenge path.
 func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 	want := map[string]Expectation{
@@ -684,20 +556,13 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 			t.Fatal(err)
 		}
 	}
-	// shop-staging has a sign-in group, so the redirect above came through
-	// its own Middleware, which asks oauth2-proxy for allowed_groups, named
-	// on both its Ingresses (#92). A signed-in user outside the group
-	// would get a 403 from it; kind cannot sign anyone in to show that
-	// (docs/implementation-notes/92-sign-in-groups.md).
+	// kind cannot sign anyone in to show a user outside the sign-in group
+	// gets a 403, so check the Middleware that would refuse them.
 	if err := checkSignInGroupMiddleware(ctx, cluster); err != nil {
 		t.Fatal(err)
 	}
-	// shop-staging's custom domain inside the fixture zone, on the chart's
-	// HTTP-01 Ingress, is protected the same way: the login cookie and the
-	// redirect allowlist cover the whole zone, so the state carries its own
-	// URL and the CSRF cookie is for the zone
-	// (docs/implementation-notes/76-login-in-zone-domains.md). Its ACME
-	// HTTP-01 challenge path is not.
+	// The login cookie and redirect allowlist cover the whole zone, so a
+	// custom domain inside it is protected the same way.
 	if err := cluster.CheckSignInRedirect(ctx, shopStagingCustomDomain, signInPath, fixtureSignIn, 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -709,9 +574,9 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 	}
 }
 
-// checkSignInGroupMiddleware checks that shop-staging's sign-in group
-// reached the cluster: its Middleware asks oauth2-proxy's root address
-// with the group as allowed_groups, and both its Ingresses name it.
+// checkSignInGroupMiddleware checks that shop-staging's Middleware passes
+// its sign-in group to oauth2-proxy as allowed_groups, and both its
+// Ingresses use it.
 func checkSignInGroupMiddleware(ctx context.Context, cluster *Cluster) error {
 	const (
 		address    = "http://oauth2-proxy.oauth2-proxy.svc.cluster.local/?allowed_groups=0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b"
@@ -736,21 +601,17 @@ func checkSignInGroupMiddleware(ctx context.Context, cluster *Cluster) error {
 	return nil
 }
 
-// shopStagingCustomDomain is the custom domain the fixture's shop-staging
-// lists: inside the fixture's cloudflareZone, example.test, not under its
-// baseDomain.
+// shopStagingCustomDomain is inside the fixture's cloudflareZone but not
+// under its baseDomain.
 const shopStagingCustomDomain = "shop-staging.example.test"
 
 // signInPath is a path with a query, so the sign-in check proves both
 // survive the round trip through the provider.
 const signInPath = "/account/orders?page=2&sort=date"
 
-// fixtureSignIn is the sign-in redirect the fixture Platform gives: its
-// oauth2-proxy skips OIDC discovery and uses a fixed, never-reached
-// authorize endpoint (bootstrap/templates/oauth2-proxy.yaml, platform.yaml's
-// oauth2Proxy.skipOIDCDiscovery). The callback stays on the auth address
-// under baseDomain; the CSRF cookie is for the fixture's cloudflareZone,
-// the login cookie domain, under the bootstrap's cookie name.
+// fixtureSignIn is the fixture Platform's sign-in redirect. Its
+// oauth2-proxy skips OIDC discovery and uses a never-reached authorize
+// endpoint.
 var fixtureSignIn = SignIn{
 	LoginURL:     "https://oauth2-proxy-entra.invalid/authorize",
 	Callback:     "https://auth.app.example.test/oauth2/callback",
@@ -758,25 +619,16 @@ var fixtureSignIn = SignIn{
 	CSRFCookie:   "__Secure-itema_login_csrf",
 }
 
-// testDeleteEnvironment proves #39's design end to end: pushing a commit to
-// the fixture Platform repository that removes an Environment's directory
-// (what iidp app delete itself does) makes ArgoCD delete that Environment's
-// ArgoCD Application only after its final Backup PreDelete hook
-// (chart/application/templates/final-backup-job.yaml) reaches Healthy --
-// its Backup genuinely completes, since shop-staging's ObjectStore points
-// at the harness's S3 server (InstallObjectStorage, unlike prod's, which stays
-// unreachable and is not touched here) -- and that the namespace's
-// Deployment and Cluster are gone afterwards. See
-// docs/implementation-notes/39-final-backup-predelete-hook.md.
+// testDeleteEnvironment proves that deleting an Environment as iidp app
+// delete does makes ArgoCD delete its Application only after the final
+// Backup PreDelete hook completes a real Backup, and that the Deployment and
+// Cluster are gone afterwards.
 func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 
-	// Removes only application.yaml, matching iidp app delete's own actual
-	// behaviour (internal/platformrepo/delete.go): values.yaml is left in
-	// place deliberately, since ArgoCD needs it to render the Environment's
-	// PreDelete hook at deletion time -- removing the whole directory here
-	// reproduces the DeletionError this design change exists to avoid; see
-	// docs/implementation-notes/39-final-backup-predelete-hook.md.
+	// Like iidp app delete, remove only application.yaml: ArgoCD still
+	// needs values.yaml to render the PreDelete hook, and removing it too
+	// causes a DeletionError.
 	err := cluster.PushToRepository(ctx, "iidp-platform", "test: iidp app delete shop (staging only)",
 		func(dir string) (bool, error) {
 			applicationYAML := filepath.Join(dir, "applications", "shop", "staging", "application.yaml")
@@ -788,50 +640,15 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Deliberately not hard-refreshed. An earlier version of this test
-	// called Cluster.RefreshApplication(ctx, "applications") here, the same
-	// annotation `argocd app get --hard-refresh` sets, to avoid waiting out
-	// ArgoCD's default ~3-minute poll interval. It reproduced a genuine
-	// ArgoCD-level race every time: the parent's own sync (triggered
-	// immediately by the forced refresh) fired a burst of overlapping,
-	// concurrent reconciles for shop-staging -- visible in the
-	// argocd-application-controller's own log as repeated "Hook resource
-	// ... already exists, skipping" warnings within the same second -- one
-	// of which proceeded straight to "Deleting resources" without ever
-	// waiting for the just-created hook Job to reach Healthy, deleting the
-	// Cluster and Deployment in well under ten seconds, long before a
-	// Job's Pod could even pull an image. Removing the forced refresh and
-	// letting ArgoCD's own, unhurried poll trigger the deletion made the
-	// hook wait correctly every time in testing; see
-	// docs/implementation-notes/39-final-backup-predelete-hook.md for the
-	// evidence and the reasoning kept here.
+	// Deliberately not refreshed: forcing a refresh of the parent made
+	// ArgoCD run overlapping reconciles for shop-staging, one of which
+	// deleted the resources without waiting for the PreDelete hook.
 	//
-	// The Application is only removed once the PreDelete hook Job's Backup
-	// reaches phase completed (or the hook fails and blocks deletion, in
-	// which case this times out with diagnostics naming why). This is also
-	// proof the Cluster and every other resource are gone: ArgoCD does not
-	// finish deleting an Application, and so does not remove it from this
-	// list, until the resources-finalizer has removed everything it owns.
-	// Logging the Job's and the Backup's own state on every poll (not just
-	// on timeout) is what makes that distinction -- "the hook ran and
-	// finished" versus "the hook never ran at all" -- visible in the
-	// output at all, given how briefly the hook's own objects exist.
-	// Polls every second, not every five: the ArgoCD race documented above
-	// (found, not caused, by this test -- see the implementation notes) can
-	// take the hook's ServiceAccount/Role/RoleBinding/Job from "just
-	// created" to "cleaned up by its own HookSucceeded policy" in well
-	// under a five-second gap, which is indistinguishable from the hook
-	// never running at all through external polling alone. A one-second
-	// poll does not guarantee catching that window either, but it is the
-	// best this test can do without watching the namespace's events
-	// directly (a bigger lift this ticket does not take on).
-	//
-	// The Backup is observed here, during the deletion, because it does not
-	// survive it: CloudNativePG removes a Backup together with the Cluster
-	// it references, and the Cluster is torn down as soon as the hook
-	// reports Healthy. So the proof that the hook did its job is a Backup
-	// seen reaching phase completed while the Application was still being
-	// deleted, recorded across polls, never a Backup found afterwards.
+	// The Job and Backup are logged on every poll, once a second, because
+	// the hook's objects can be created and cleaned up within a few
+	// seconds, and the Backup is removed along with the Cluster. A Backup
+	// seen reaching completed during the deletion is the proof the hook did
+	// its job.
 	start := time.Now()
 	deadline := start.Add(9 * time.Minute)
 	jobEverObserved := false
@@ -851,12 +668,8 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 				jobEverSucceeded = true
 			}
 		}
-		// Only the hook's own Backup counts. The Environment's
-		// ScheduledBackup has been creating its own, named after the
-		// Cluster (shop-staging-db-<timestamp>), since the Environment
-		// was created; the hook names its Backup <fullname>-final-<timestamp>
-		// (chart/application/templates/final-backup-job.yaml). Counting
-		// any Backup would let a scheduled one decide this assertion.
+		// Only the hook's own Backup counts, not the ScheduledBackup's
+		// (shop-staging-db-<timestamp>).
 		phases, _ := cluster.BackupPhases(ctx, "shop-staging")
 		for name, phase := range phases {
 			if !strings.HasPrefix(name, "shop-staging-final-") {
@@ -884,20 +697,10 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 		}
 	}
 
-	// Three outcomes, told apart by what the polls recorded:
-	//
-	//   - A Backup reached completed: the hook did its job. What this test
-	//     exists to prove.
-	//   - The hook Job succeeded but no Backup ever completed: the Job's
-	//     own script claimed success without the backup finishing, which
-	//     is a bug in this repository's chart. A hard failure.
-	//   - Otherwise the Environment was deleted while the hook was still
-	//     pending, or without the hook running at all: ArgoCD did not wait
-	//     for its own PreDelete hook, argoproj/argo-cd#29100 (a stale-cache
-	//     race in the controller, open upstream, about one local run in
-	//     three). Nothing here can fix that, so it is named loudly rather
-	//     than failing the run on an upstream bug; the resource-gone
-	//     assertions below still hold either way.
+	// A Job that succeeded without a completed Backup is a bug in the
+	// chart. Otherwise ArgoCD did not wait for its PreDelete hook, an
+	// upstream race (argoproj/argo-cd#29100) hit in about one run in three,
+	// so it is logged rather than failed.
 	switch {
 	case completedBackup != "":
 		t.Logf("final Backup %s completed before the Cluster was deleted", completedBackup)
@@ -910,8 +713,6 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 
 	for _, res := range []struct{ kind, name string }{
 		{"deployment", "shop-staging"},
-		// <fullname>-db, the chart's naming convention for the Cluster
-		// (docs/implementation-notes/07-chart-postgres.md).
 		{"cluster.postgresql.cnpg.io", "shop-staging-db"},
 	} {
 		if err := cluster.WaitForResourceGone(ctx, res.kind, "shop-staging", res.name, time.Minute); err != nil {

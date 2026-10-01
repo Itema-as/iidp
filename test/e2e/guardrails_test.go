@@ -11,38 +11,24 @@ import (
 	"time"
 )
 
-// validationFailure is the audit annotation a ValidatingAdmissionPolicy
-// binding with the Audit action puts on the request's audit event
+// validationFailure and podSecurityAuditViolations are the audit
+// annotations a ValidatingAdmissionPolicy's Audit action and Pod Security's
+// audit mode set
 // (kubernetes.io/docs/reference/labels-annotations-taints/audit-annotations).
 const validationFailure = "validation.policy.admission.k8s.io/validation_failure"
 
-// podSecurityAuditViolations is the audit annotation Pod Security's audit
-// mode puts on a request whose Pod, or workload's Pod template, fails the
-// namespace's audit level (kubernetes.io/docs/reference/labels-annotations-taints/audit-annotations).
 const podSecurityAuditViolations = "pod-security.kubernetes.io/audit-violations"
 
-// fixtureNamespaces are the Application namespaces the fixture Platform
-// repository's Environments are installed into.
 var fixtureNamespaces = []string{"shop-prod", "shop-staging", "brochure-prod", "later-prod"}
 
-// testGuardrails proves #90 and #110 on the cluster:
-//   - every fixture Environment's namespace carries the labels the CLI
-//     writes through managedNamespaceMetadata: the Application namespace
-//     label the guardrails' bindings select on, and Pod Security's levels,
-//     restricted enforced;
-//   - nothing the fixture Applications did during the whole test (the
-//     Deployments, Services and Ingresses, CloudNativePG's database Pods and
-//     Jobs with the Barman Cloud sidecar, the migration Jobs, the Scheduled
-//     task's Jobs, shop-staging's final Backup hook, brochure's first
-//     deploy) failed a guardrail: no
-//     audit event in a fixture namespace carries a validation failure or a
-//     Pod Security violation, and no Pod was refused there;
-//   - CloudNativePG's instance Pod and initdb Job were created under
-//     restricted, so they pass it;
-//   - a NodePort Service applied by hand in a fixture namespace is warned
-//     about and audited, and still created: the bindings Warn and Audit,
-//     they do not Deny yet;
-//   - Pod Security's restricted is enforced: a privileged Pod is refused.
+// testGuardrails proves that:
+//   - every fixture namespace carries the CLI's labels: the one the
+//     guardrails select on, and Pod Security restricted;
+//   - nothing the fixture Applications did during the whole test failed a
+//     guardrail or Pod Security, judged from the audit log;
+//   - a NodePort Service is warned about and audited but still created,
+//     since the bindings Warn and Audit rather than Deny;
+//   - a privileged Pod is refused.
 func testGuardrails(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 
@@ -89,8 +75,6 @@ func testGuardrails(ctx context.Context, t *testing.T, cluster *Cluster) {
 		if failure, ok := e.Annotations[validationFailure]; ok {
 			t.Errorf("%s %s/%s in %s failed a guardrail: %s", e.Verb, e.ObjectRef.Resource, e.ObjectRef.Name, e.ObjectRef.Namespace, failure)
 		}
-		// Pod Security audits restricted on Pods and on the workloads
-		// that make them, and refuses a Pod that fails it.
 		if violations, ok := e.Annotations[podSecurityAuditViolations]; ok {
 			t.Errorf("%s %s/%s in %s violates Pod Security restricted: %s", e.Verb, e.ObjectRef.Resource, e.ObjectRef.Name, e.ObjectRef.Namespace, violations)
 		}
@@ -101,17 +85,14 @@ func testGuardrails(ctx context.Context, t *testing.T, cluster *Cluster) {
 			created[e.ObjectRef.Resource+"/"+e.ObjectRef.Namespace+"/"+e.ObjectRef.Name] = true
 		}
 	}
-	// CloudNativePG names both itself: they were admitted, so they pass
-	// restricted. Its other Jobs and the Barman Cloud sidecar in the
-	// instance Pod are covered by the checks above.
+	// Proof that CloudNativePG's own Pods were admitted under restricted.
 	for _, want := range []string{"pods/shop-prod/shop-db-1", "jobs/shop-prod/shop-db-1-initdb"} {
 		if !created[want] {
 			t.Errorf("the audit log has no successful create of %s under Pod Security restricted", want)
 		}
 	}
-	// The audit policy logs writes to Pods, Services, Ingresses and the
-	// workloads; the fixture namespaces saw dozens of them. None would mean
-	// the log is not being written, and the check above proved nothing.
+	// Too few events would mean the log is not being written, and the
+	// checks above proved nothing.
 	if seen < 10 {
 		t.Fatalf("the audit log has %d events in the fixture namespaces, want the fixture Applications' writes", seen)
 	}
@@ -169,8 +150,7 @@ spec:
 		t.Error(err)
 	}
 
-	// Pod Security enforces restricted: a privileged Pod never gets in. A
-	// server-side dry run goes through admission and creates nothing.
+	// A server-side dry run goes through admission and creates nothing.
 	privileged := `apiVersion: v1
 kind: Pod
 metadata:

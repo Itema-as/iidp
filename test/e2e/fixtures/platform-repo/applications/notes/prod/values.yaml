@@ -1,7 +1,5 @@
-# Values for notes's prod Environment: never released in the test, so the
-# chart renders nothing and ArgoCD applies only the backups-credentials
-# Secret from the sops/ source. Its image is Docker Hub's unprivileged
-# nginx, like shop's, since kind has no GHCR.
+# Never released, so ArgoCD applies only the backups-credentials Secret
+# from the sops/ source.
 application:
   name: notes
 environment: prod

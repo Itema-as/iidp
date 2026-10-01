@@ -3,8 +3,8 @@
 # in platform.yaml); only data and stringData are encrypted so names,
 # namespaces and labels stay readable and diffable.
 #
-# This is the fixture for the kind harness: the matching private key is
-# checked in as test/e2e/fixtures/age-keys.txt and protects nothing.
+# The matching private key is checked in as test/e2e/fixtures/age-keys.txt
+# and protects nothing.
 creation_rules:
   - path_regex: bootstrap/sops/.*\.enc\.yaml$
     encrypted_regex: ^(data|stringData)$

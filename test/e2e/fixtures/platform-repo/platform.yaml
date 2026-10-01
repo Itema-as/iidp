@@ -1,7 +1,7 @@
 # Platform-wide settings. The bootstrap reads it as Helm values (see
 # bootstrap/README.md in the iidp repository for every field); the CLI reads
-# the fields marked so. This is the fixture for the kind harness: a Platform
-# under example.test that no cloud account knows about.
+# the fields marked so. This fixture's Platform, under example.test, is
+# known to no cloud account.
 
 # Applications are served under <application>.<baseDomain>; the wildcard
 # certificate covers it. Read by the CLI.
@@ -20,8 +20,8 @@ chartVersion: 0.1.0
 
 # The GitHub API the Preview Environments' pull request generator asks,
 # written into each previews ApplicationSet (applications/notes/previews/).
-# Read by the CLI. The harness's fake GitHub, in the path GitHub
-# Enterprise's API has, since kind has no route to GitHub.
+# Read by the CLI. Here the harness's fake GitHub, at GitHub Enterprise's
+# API path.
 githubAPI: http://fake-github.iidp-e2e.svc.cluster.local/api/v3
 
 # The org GitHub App the Deploy gate commits deploys as (documentation only).
@@ -46,20 +46,15 @@ acme:
 argocdAdminGroup: 00000000-0000-0000-0000-000000000003
 clusterName: iidp-e2e
 
-# kind has no route to login.microsoftonline.com: oauth2-proxy would
-# otherwise fail its startup OIDC discovery call against the dummy tenant in
-# bootstrap/sops/oauth2-proxy-entra.enc.yaml and never become Ready, which
-# would turn Traefik's ForwardAuth into a 5xx instead of the redirect
-# TestBootstrap asserts. See bootstrap/README.md.
+# kind has no route to login.microsoftonline.com, so OIDC discovery at
+# startup would fail and oauth2-proxy would never become Ready, turning the
+# sign-in redirect into a 5xx.
 oauth2Proxy:
   skipOIDCDiscovery: true
 
-# kind has no GHCR, no GitHub and no GitHub Actions: the Deploy gate runs
-# the image the harness builds from this repository and loads into the
-# node, trusts the harness's fake OIDC issuer, mints its App token from the
-# harness's fake GitHub, and writes to the in-cluster git server. The
-# harness creates the App credential Secret itself. See
-# docs/implementation-notes/60-deploy-gate.md.
+# kind has no GHCR, GitHub or GitHub Actions: the Deploy gate runs the
+# image the harness builds, talks to the harness's fake GitHub, and writes
+# to the in-cluster git server.
 deployGate:
   image:
     repository: iidp-e2e.local/deploy-gate
@@ -70,16 +65,14 @@ deployGate:
   githubAPI: http://fake-github.iidp-e2e.svc.cluster.local/api
   platformRepository: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
 
-# Argus is off here: the harness does not build its image, and the 2-vCPU
-# runner has no room to spare (docs/implementation-notes/118-argus-backend.md).
+# Off: the harness does not build Argus's image, and the 2 vCPU runner has
+# no room to spare.
 argus:
   enabled: false
 
-# kind has no GHCR: the fixture Applications run the unprivileged nginx from
-# Docker Hub (applications/*/*/values.yaml), which the guardrails' image
-# policy would otherwise report on every Pod. The Platform itself allows
-# only ghcr.io/itema-as/ and the images the chart and CloudNativePG run
-# (bootstrap/README.md, "Guardrails").
+# kind has no GHCR, so the fixture Applications run Docker Hub's
+# unprivileged nginx, which the image guardrail would otherwise report on
+# every Pod.
 guardrails:
   extraAllowedImages:
     - docker.io/nginxinc/nginx-unprivileged

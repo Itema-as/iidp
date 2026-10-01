@@ -1,15 +1,6 @@
-# Values for brochure's prod Environment: a Static site with no Capability
-# and no secret that has not received its first image yet. image.tag is the
-# "" the CLI writes, so the chart renders nothing and the ArgoCD
-# Application has no resources at all. See
-# docs/implementation-notes/47-unreleased-environment.md.
-#
-# TestBootstrap then deploys its first image through the Deploy gate
-# (testDeployGate), which writes image.tag. kind has no GHCR, so the image
-# repository is the unprivileged nginx, which listens on 8080 like every
-# Static site, and which shop's Environments have already pulled. The gate
-# checks the tag on Docker Hub before committing it, anonymously, the way it
-# checks a public image (docs/implementation-notes/61-image-check.md).
+# A Static site with no Capability and no image yet, so its Application
+# has no resources at all until testDeployGate deploys one. kind has no
+# GHCR, so the image is Docker Hub's unprivileged nginx.
 application:
   name: brochure
 environment: prod

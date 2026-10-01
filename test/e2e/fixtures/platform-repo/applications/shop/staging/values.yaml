@@ -1,24 +1,16 @@
-# Values for shop's staging Environment. See prod/values.yaml for what each
-# key is for; only the Environment, the read-write Service the migration
-# checks (shop-staging-db-rw, staging's own CloudNativePG Cluster), and
-# login (see below) differ.
+# Like prod/values.yaml, plus login, a custom domain and a reachable
+# backup endpoint.
 application:
   name: shop
 environment: staging
 platform:
   baseDomain: app.example.test
-  # The login cookie's domain the CLI writes with login.enabled:
-  # platform.yaml's cloudflareZone, so the custom domain below can be
+  # platform.yaml's cloudflareZone, so the custom domain below is
   # protected too.
   loginCookieDomain: example.test
   backupsBucket: iidp-backups
-  # Unlike prod's (see prod/values.yaml), this Environment's endpoint is a
-  # real, in-cluster S3-compatible store (test/e2e's harness runs a small
-  # versitygw server with this bucket, Cluster.InstallObjectStorage) rather
-  # than the unreachable objectstorage.invalid: TestBootstrap deletes this
-  # Environment and needs its final Backup PreDelete hook to genuinely
-  # complete, not merely run (docs/implementation-notes/39-final-backup-predelete-hook.md,
-  # docs/implementation-notes/71-e2e-s3-server.md).
+  # The harness's in-cluster S3 stand-in: TestBootstrap deletes this
+  # Environment and needs its final Backup to really complete.
   objectStorageEndpoint: http://object-storage.iidp-e2e.svc.cluster.local:7070
 kind: web-service
 image:
@@ -33,32 +25,18 @@ postgres:
   enabled: true
   migrationCommand: >-
     test -n "$DATABASE_URL" && nc -z -w 5 shop-staging-db-rw 5432 && echo "migrated: DATABASE_URL set, shop-staging-db-rw:5432 reachable"
-  # The chart's default (1800s/30 minutes) is far more than a real backup
-  # against the harness's S3 server needs, but also far more than
-  # TestBootstrap's own fifteen-minute budget can spend waiting on one that
-  # is stuck; a small, empty database backing up in-cluster typically finishes in
-  # well under a minute.
+  # The chart's 30-minute default would outlast the test's budget if the
+  # backup got stuck; an empty database backs up in well under a minute.
   finalBackupTimeout: 120
-# The Itema login Capability, on staging only: TestBootstrap proves an
-# unauthenticated request to a protected Platform address gets redirected
-# to the provider's sign-in while the unprotected prod address still answers 200
-# (docs/implementation-notes/18-itema-login.md), reusing this Environment
-# rather than adding a third Application.
-# With a sign-in group, so the redirect goes through the Environment's own
-# Middleware (allowed_groups) rather than the shared one: TestBootstrap
-# proves an unauthenticated request is still sent to sign-in (#92). The
-# group is a made-up GUID; kind never completes a sign-in.
+# On staging only, so prod shows an unprotected address still answers 200.
+# The group, a made-up GUID, routes sign-in through the Environment's own
+# Middleware rather than the shared one.
 login:
   enabled: true
   groups:
     - 0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b
-# A custom domain inside the fixture zone (example.test) but not under the
-# base domain, so it goes on the chart's HTTP-01 Ingress: TestBootstrap
-# proves it redirects to sign-in too, and that cert-manager's challenge
-# path on it does not (docs/implementation-notes/76-login-in-zone-domains.md).
-# The CLI writes custom domains for prod only; the chart takes them on any
-# Environment, and this one is the fixture's protected one. Let's Encrypt
-# staging never issues for .test, so the host keeps Traefik's default
-# certificate, which the harness does not verify anyway.
+# Inside the zone but not under the base domain, so it goes on the chart's
+# HTTP-01 Ingress. The CLI writes custom domains for prod only, but the
+# chart takes them anywhere, and this is the protected Environment.
 domains:
   - shop-staging.example.test
