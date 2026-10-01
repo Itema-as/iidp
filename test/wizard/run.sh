@@ -426,7 +426,7 @@ assert_success "$?"
 # ── Grafana Cloud push URLs and the credential probe ────────────────────
 
 # The Cloud Portal shows Loki's URL as a bare host; pasted as shown, Alloy
-# pushed to "/" and got 405 on every batch.
+# would push to "/" and get 405 on every batch.
 t_start "grafana_push_url appends the Loki push path to a bare host"
 out=$(in_wizard "grafana_push_url loki 'https://logs-prod-025.grafana.net'")
 assert_eq "$out" "https://logs-prod-025.grafana.net/loki/api/v1/push"
