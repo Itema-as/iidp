@@ -13,13 +13,10 @@ import (
 	"strings"
 )
 
-// DefaultBaseURL is the GitHub REST API tests point elsewhere.
+// DefaultBaseURL is the GitHub REST API root.
 const DefaultBaseURL = "https://api.github.com"
 
-// Client is a small GitHub REST API client for what the CLI needs beyond
-// git: reading the token's scopes, reading and creating Application
-// repositories and opening Adopt's pull request. BaseURL and HTTPClient are
-// injectable so tests run against an in-process fake server.
+// Client is a small GitHub REST API client for what the CLI needs beyond git.
 type Client struct {
 	// BaseURL is the API root. Empty means DefaultBaseURL.
 	BaseURL string
@@ -29,8 +26,7 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// NewClient makes a Client for the real GitHub API, authenticated with
-// token.
+// NewClient makes a Client for the real GitHub API.
 func NewClient(token string) *Client {
 	return &Client{Token: token}
 }
@@ -52,8 +48,7 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &se) && se.status == http.StatusNotFound
 }
 
-// RepositoryExists reports whether owner/name already exists
-// (GET /repos/{owner}/{name}).
+// RepositoryExists reports whether owner/name already exists.
 func (c *Client) RepositoryExists(ctx context.Context, owner, name string) (bool, error) {
 	err := c.do(ctx, http.MethodGet, "/repos/"+owner+"/"+name, nil, nil)
 	switch {
@@ -73,28 +68,19 @@ type Owner struct {
 	ID    int64  `json:"id"`
 }
 
-// CreatedRepository is what CreateRepository reads back from GitHub about
-// the repository it made.
+// CreatedRepository is what CreateRepository reads back from GitHub.
 type CreatedRepository struct {
-	// CloneURL is the git URL the first commit is pushed to.
-	CloneURL string
-	// DefaultBranch is the default branch GitHub gave the repository, so
-	// the caller can tell whether SetDefaultBranch still needs to run.
+	CloneURL      string
 	DefaultBranch string
-	// ID is the repository's numeric id: what a GitHub Actions OIDC token
-	// carries as repository_id, and what the Platform binds the
-	// Application to (docs/platform-repository.md).
+	// ID is the repository's numeric id: the OIDC token's repository_id,
+	// which the Platform binds the Application to.
 	ID int64
 	// Owner is the org the repository was created in; its ID is the OIDC
 	// token's repository_owner_id.
 	Owner Owner
 }
 
-// CreateRepository creates a new repository named name in org
-// (POST /orgs/{org}/repos) and returns what GitHub reports about it. It
-// sets auto_init to false: Create always pushes its own first commit.
-// Application repositories are only ever created in an org
-// (docs/adr/0005-private-application-repositories-on-github-free.md).
+// CreateRepository creates an empty repository named name in org.
 func (c *Client) CreateRepository(ctx context.Context, org, name string, private bool) (CreatedRepository, error) {
 	body := map[string]any{
 		"name":      name,
@@ -121,9 +107,7 @@ func (c *Client) CreateRepository(ctx context.Context, org, name string, private
 	}, nil
 }
 
-// SetDefaultBranch sets owner/name's default branch. Create calls it after
-// pushing the initial commit, in case the repository was created with a
-// different default (or none) than main.
+// SetDefaultBranch sets owner/name's default branch.
 func (c *Client) SetDefaultBranch(ctx context.Context, owner, name, branch string) error {
 	body := map[string]any{"default_branch": branch}
 	if err := c.do(ctx, http.MethodPatch, "/repos/"+owner+"/"+name, body, nil); err != nil {
@@ -132,20 +116,15 @@ func (c *Client) SetDefaultBranch(ctx context.Context, owner, name, branch strin
 	return nil
 }
 
-// Repository is what GetRepository reads about an existing repository: the
-// fields the Adopt path needs (docs/implementation-notes/15-cli-adopt-path.md)
-// and the ids the Platform binds an Application to
-// (docs/implementation-notes/58-repository-binding.md). CanPush is
-// GitHub's own view of the authenticated token's permission, present in
-// the response only because the request is authenticated.
+// Repository is what GetRepository reads about an existing repository.
 type Repository struct {
-	// FullName is owner/name as GitHub reports it now. It differs from
-	// what was asked for when the repository was renamed or transferred,
-	// since GitHub redirects the old name to the new one.
+	// FullName is owner/name as GitHub reports it now, which differs from
+	// what was asked for after a rename or transfer.
 	FullName      string
 	DefaultBranch string
 	CloneURL      string
-	CanPush       bool
+	// CanPush is whether the authenticated token may push.
+	CanPush bool
 	// ID is the repository's numeric id, the OIDC token's repository_id.
 	ID int64
 	// Owner is the repository's owner; its ID is the OIDC token's
@@ -153,11 +132,7 @@ type Repository struct {
 	Owner Owner
 }
 
-// GetRepository reads owner/name (GET /repos/{owner}/{name}): its current
-// full name, default branch, clone URL, numeric ids, and whether the
-// authenticated developer has push access to it. Adopt uses this to
-// validate --repo (existence, owner, permission) and to know which branch
-// to clone; Adopt and iidp app bind record its ids.
+// GetRepository reads owner/name as the authenticated developer sees it.
 func (c *Client) GetRepository(ctx context.Context, owner, name string) (Repository, error) {
 	var repo struct {
 		FullName      string `json:"full_name"`
@@ -189,10 +164,9 @@ type ReadableRepository struct {
 	CanPull  bool
 }
 
-// RepositoryByID reads a repository by its numeric id
-// (GET /repositories/{id}), which survives renames and transfers, as the
-// authenticated user sees it. For a private repository the user cannot
-// see, GitHub answers 404 rather than 403, and IsNotFound matches it.
+// RepositoryByID reads a repository by its numeric id, which survives
+// renames and transfers. For a private repository the user cannot see,
+// GitHub answers 404 rather than 403.
 func (c *Client) RepositoryByID(ctx context.Context, id int64) (ReadableRepository, error) {
 	var repo struct {
 		FullName    string `json:"full_name"`
@@ -213,10 +187,7 @@ func IsUnauthorized(err error) bool {
 	return errors.As(err, &se) && se.status == http.StatusUnauthorized
 }
 
-// BranchExists reports whether branch already exists on owner/name
-// (GET /repos/{owner}/{name}/branches/{branch}). Adopt uses this to refuse
-// rather than push over a branch a previous run (or anything else) left
-// behind.
+// BranchExists reports whether branch already exists on owner/name.
 func (c *Client) BranchExists(ctx context.Context, owner, name, branch string) (bool, error) {
 	err := c.do(ctx, http.MethodGet, "/repos/"+owner+"/"+name+"/branches/"+branch, nil, nil)
 	switch {
@@ -237,8 +208,7 @@ type PullRequest struct {
 	Body  string
 }
 
-// CreatePullRequest opens a pull request on owner/name
-// (POST /repos/{owner}/{name}/pulls) and returns its web ("html") URL.
+// CreatePullRequest opens a pull request on owner/name and returns its web URL.
 func (c *Client) CreatePullRequest(ctx context.Context, owner, name string, pr PullRequest) (string, error) {
 	body := map[string]any{
 		"title": pr.Title,
@@ -258,31 +228,24 @@ func (c *Client) CreatePullRequest(ctx context.Context, owner, name string, pr P
 	return resp.HTMLURL, nil
 }
 
-// TokenScopes is what GitHub reports about the OAuth scopes of the token a
-// Client authenticates with
-// (docs/implementation-notes/47-workflow-scope.md).
+// TokenScopes is what GitHub reports about the OAuth scopes of a Client's
+// token.
 type TokenScopes struct {
-	// Known is false when GitHub reported no scopes at all: fine-grained
-	// personal access tokens and GitHub App tokens carry permissions
-	// rather than scopes, and GitHub sends no X-OAuth-Scopes header for
-	// them, so what they may push cannot be read up front.
-	Known bool
-	// Scopes are the token's scopes as GitHub listed them. Empty with
-	// Known true is a classic token with no scopes at all.
+	// Known is false for fine-grained personal access tokens and GitHub App
+	// tokens: they carry permissions rather than scopes, and GitHub sends no
+	// X-OAuth-Scopes header for them.
+	Known  bool
 	Scopes []string
 }
 
-// Has reports whether s lists scope. It is always false when Known is
-// false.
+// Has reports whether s lists scope.
 func (s TokenScopes) Has(scope string) bool {
 	return slices.Contains(s.Scopes, scope)
 }
 
-// TokenScopes reads the token's OAuth scopes from the X-OAuth-Scopes
-// header GitHub sends on every authenticated response to a classic OAuth
-// or personal access token (gh auth login's own token is one), here from
-// the API root (GET /), which answers any token. gh auth status reads the
-// same header the same way.
+// TokenScopes reads the token's OAuth scopes from the X-OAuth-Scopes header
+// on a request to the API root, which answers any token. gh auth status does
+// the same.
 func (c *Client) TokenScopes(ctx context.Context) (TokenScopes, error) {
 	header, err := c.send(ctx, http.MethodGet, "/", nil, nil)
 	if err != nil {
@@ -319,9 +282,7 @@ func (c *Client) AppSlug(ctx context.Context) (string, error) {
 	return app.Slug, nil
 }
 
-// UserID reads the numeric id of the account login (GET /users/{login}).
-// The Deploy gate uses it for the App's bot account, <slug>[bot], whose id
-// is part of the noreply address GitHub links commits to.
+// UserID reads the numeric id of the account login.
 func (c *Client) UserID(ctx context.Context, login string) (int64, error) {
 	var user struct {
 		ID int64 `json:"id"`
@@ -335,12 +296,9 @@ func (c *Client) UserID(ctx context.Context, login string) (int64, error) {
 	return user.ID, nil
 }
 
-// CreateInstallationToken creates an installation access token for
-// installationID (POST /app/installations/{installation_id}/access_tokens).
-// Token must be a JWT signed with the GitHub App's private key
-// (internal/githubapp.SignJWT): this is the one request in this client
-// authenticated as the App itself rather than as a user or an installation.
-// Installation tokens expire one hour after creation.
+// CreateInstallationToken creates an installation access token, valid for
+// an hour, for installationID. Token must be a JWT signed with the GitHub
+// App's private key (githubapp.SignJWT).
 func (c *Client) CreateInstallationToken(ctx context.Context, installationID int64) (string, error) {
 	var resp struct {
 		Token string `json:"token"`
@@ -369,16 +327,14 @@ func (c *Client) httpClient() *http.Client {
 	return c.HTTPClient
 }
 
-// do sends a request to path and, on a 2xx response with a non-empty body,
-// decodes it into respBody. A non-2xx response is returned as a
-// *statusError; callers match it with IsNotFound.
+// do sends a request to path and decodes a 2xx response's body into
+// respBody. A non-2xx response is returned as a *statusError.
 func (c *Client) do(ctx context.Context, method, path string, reqBody, respBody any) error {
 	_, err := c.send(ctx, method, path, reqBody, respBody)
 	return err
 }
 
-// send is do, also returning the response's headers for the one caller
-// that reads them (TokenScopes).
+// send is do, also returning the response's headers.
 func (c *Client) send(ctx context.Context, method, path string, reqBody, respBody any) (http.Header, error) {
 	var r io.Reader
 	if reqBody != nil {

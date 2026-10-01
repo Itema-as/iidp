@@ -8,7 +8,6 @@ import (
 	"github.com/Itema-as/iidp/internal/appconfig"
 )
 
-// Scheduled tasks in iidp.yaml (docs/implementation-notes/91-scheduled-tasks.md).
 // The migration command's own parsing is covered through ci set-image
 // (internal/cli/ci_set_image_test.go).
 
@@ -138,8 +137,6 @@ func TestTaskNamesMustFitTheApplicationsCronJobNames(t *testing.T) {
 }
 
 func TestRenderedExampleTaskParses(t *testing.T) {
-	// The commented-out example in the file iidp app create writes must
-	// be a valid task once a developer uncomments it.
 	rendered := string(appconfig.Render(""))
 	_, example, found := strings.Cut(rendered, "\n#\n# tasks:\n")
 	if !found {

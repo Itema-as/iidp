@@ -1,12 +1,6 @@
 // Package githubapp signs the short-lived JSON Web Token a GitHub App
-// authenticates with. The Deploy gate is the one caller: it mints a GitHub
-// App installation token to write the Platform repository, following
-// GitHub's documented shape for "Authenticating as a GitHub App" (see
-// docs/implementation-notes/12-deploy-workflow.md, where this was written
-// for iidp ci set-image before the gate took the key out of CI). No JWT
-// library is used: the standard library's crypto/rsa, crypto/sha256,
-// encoding/base64 and encoding/json are enough for the one algorithm
-// GitHub requires, RS256.
+// authenticates with. It uses no JWT library: the standard library is
+// enough for RS256, the one algorithm GitHub requires.
 package githubapp
 
 import (
@@ -25,11 +19,9 @@ import (
 )
 
 // SignJWT signs a GitHub App authentication JWT for appID with
-// privateKeyPEM (PKCS#1 or PKCS#8, RSA), following GitHub's documented
-// claims: iat 60 seconds in the past (GitHub's recommendation, to tolerate
-// clock drift between this machine and GitHub's), exp 10 minutes ahead
-// (GitHub's maximum), iss the App's id. now is a parameter so tests are
-// deterministic.
+// privateKeyPEM (PKCS#1 or PKCS#8, RSA). iat is 60 seconds in the past to
+// tolerate clock drift, as GitHub recommends; exp is GitHub's 10-minute
+// maximum.
 func SignJWT(appID int64, privateKeyPEM []byte, now time.Time) (string, error) {
 	key, err := parsePrivateKey(privateKeyPEM)
 	if err != nil {
@@ -60,9 +52,8 @@ func base64URL(b []byte) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// parsePrivateKey accepts either PKCS#1 ("RSA PRIVATE KEY", what GitHub's
-// own "Generate a private key" button downloads) or PKCS#8
-// ("PRIVATE KEY") PEM encodings of an RSA key.
+// parsePrivateKey accepts PKCS#1 (what GitHub's "Generate a private key"
+// downloads) or PKCS#8 PEM encodings of an RSA key.
 func parsePrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {

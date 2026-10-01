@@ -8,8 +8,8 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// Every change Argus sees in the model is a note, with the loudness the
-// spec's table gives it (feed.go). The rules below compare an object as
+// Every change Argus sees in the model is a note, with the loudness feed.go
+// gives it. The rules below compare an object as
 // it was with the object as it is now; nil is an object that was not
 // there. An object seen for the first time when Argus starts gives no
 // note: the snapshot shows it, and the seeded notes say what came before.

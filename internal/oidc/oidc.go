@@ -1,9 +1,6 @@
 // Package oidc verifies the GitHub Actions OIDC tokens the Deploy gate is
-// called with: an RS256 JSON Web Token signed by a key the issuer publishes
-// in its JSON Web Key Set, for the gate's own audience, not expired. Only
-// the standard library is used, in keeping with internal/githubapp: RS256
-// is the one algorithm GitHub signs with, and the claims the gate reads are
-// a handful of strings (docs/implementation-notes/60-deploy-gate.md).
+// called with. It uses only the standard library: RS256 is the one
+// algorithm GitHub signs with.
 package oidc
 
 import (
@@ -50,8 +47,7 @@ const (
 )
 
 // Claims are the claims of a GitHub Actions OIDC token the gate reads. The
-// numeric ids arrive as decimal strings; they are kept as strings and
-// compared with strconv.FormatInt, as docs/platform-repository.md says.
+// numeric ids arrive as decimal strings and are compared as strings.
 type Claims struct {
 	Issuer            string   `json:"iss"`
 	Audience          audience `json:"aud"`
@@ -124,8 +120,7 @@ type Verifier struct {
 	JWKSURL string
 	// Audience is the aud every token must include: the gate's own URL.
 	Audience string
-	// HTTPClient fetches the key set; nil means a client with a short
-	// timeout.
+	// HTTPClient fetches the key set; nil means a client with a short timeout.
 	HTTPClient *http.Client
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time

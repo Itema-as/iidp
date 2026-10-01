@@ -18,11 +18,9 @@ import (
 	"github.com/Itema-as/iidp/internal/templates"
 )
 
-// AdoptBranch is the branch Adopt commits to and opens the pull request
-// from, named for the Platform rather than the Application: every Adopt
-// run against a given repository uses the same branch, so a second run
-// before the first pull request is merged or closed is refused instead of
-// opening a competing one (docs/implementation-notes/15-cli-adopt-path.md).
+// AdoptBranch is the branch Adopt opens the pull request from. It is fixed,
+// so a second run before the first pull request is merged or closed is
+// refused instead of opening a competing one.
 const AdoptBranch = "iidp/adopt"
 
 // ErrNoPushAccess is wrapped when the developer's token has no push access
@@ -33,42 +31,27 @@ var ErrNoPushAccess = errors.New("no push access to the repository")
 // repository.
 var ErrBranchExists = errors.New("branch already exists")
 
-// ErrNothingToAdd is wrapped when the target repository already has both a
-// Dockerfile and an identical deploy workflow: there is nothing left for
-// Adopt to add, so no branch, commit or pull request is made.
+// ErrNothingToAdd is wrapped when the target repository already has every
+// file Adopt would add.
 var ErrNothingToAdd = errors.New("nothing to add")
 
-// Detection is what cloning an Application repository's default branch
-// found: whether it already has a Dockerfile (Adopt changes it only to run
-// as non-root, NonRoot) and, when it does not, which framework was
-// detected to generate one from, plus
-// any migration tooling found — the same detection Create runs against its
-// own freshly rendered template (docs/implementation-notes/13-cli-capabilities.md),
-// here against the real clone, per the ticket's "migration tooling
-// detection runs against the repository's default branch".
+// Detection is what an Application repository's default branch already
+// has, and which framework and migration tooling it uses. Adopt never
+// writes over an existing file, except to make a Dockerfile run as non-root.
 type Detection struct {
 	HasDockerfile bool
-	// dockerfile is the existing Dockerfile, which NonRoot reads.
-	dockerfile []byte
-	// Framework is "" when HasDockerfile is true: there is nothing to
-	// derive a Dockerfile from, and none is generated.
-	Framework templates.Framework
-	// HasDeployWorkflow is true when the repository already has a file at
-	// templates.DeployWorkflowPath — identical to what Adopt would
-	// generate or not, Adopt never writes over it
-	// (docs/implementation-notes/15-cli-adopt-path.md).
+	dockerfile    []byte
+	// Framework is "" when HasDockerfile is true: no Dockerfile is
+	// generated.
+	Framework         templates.Framework
 	HasDeployWorkflow bool
-	// HasAppConfig is true when the repository already has an iidp.yaml
-	// (templates.AppConfigPath). Like the deploy workflow, an existing one
-	// is never written over.
-	HasAppConfig bool
-	Migration    migrate.Detection
-	MigrationOK  bool
+	HasAppConfig      bool
+	Migration         migrate.Detection
+	MigrationOK       bool
 }
 
 // NonRoot is how Adopt makes the repository's own Dockerfile run as
-// non-root for an Application of kind (fixNonRoot), or nothing when it
-// has none: a generated one already does.
+// non-root, or nothing when it has none: a generated one already does.
 func (d Detection) NonRoot(kind string) NonRootFix {
 	if !d.HasDockerfile {
 		return NonRootFix{}
@@ -76,12 +59,8 @@ func (d Detection) NonRoot(kind string) NonRootFix {
 	return fixNonRoot(d.dockerfile, kind)
 }
 
-// Files reports which paths Adopt would add or change for this Detection
-// and kind: a Dockerfile and .dockerignore when none exists, the existing
-// Dockerfile when NonRoot changes it, the deploy workflow when none exists
-// there, and iidp.yaml when there is none — sorted, the same order Adopt
-// itself writes them in. A preview (the wizard's summary) uses this to
-// list exactly what the pull request will add before anything happens.
+// Files reports, sorted, which paths Adopt would add or change for this
+// Detection and kind.
 func (d Detection) Files(kind string) []string {
 	var files []string
 	if !d.HasDockerfile {
@@ -100,10 +79,8 @@ func (d Detection) Files(kind string) []string {
 }
 
 // MigrationCommand is the migration command Adopt writes into iidp.yaml:
-// the developer's own when given (set, even as ""), otherwise, with
-// Postgres, the one detected in the repository. Without Postgres a
-// command could not run anywhere, and the Deploy gate would refuse it, so
-// none is written.
+// the developer's own when set, even as "", otherwise, with Postgres, the
+// one detected. Without Postgres the Deploy gate would refuse a command.
 func (d Detection) MigrationCommand(postgres bool, given string, set bool) string {
 	switch {
 	case set:
@@ -115,14 +92,10 @@ func (d Detection) MigrationCommand(postgres bool, given string, set bool) strin
 	}
 }
 
-// ResolveKind decides the Kind Adopt will use. explicit (the developer's
-// --kind, or "" when not given) always wins when given, overriding
-// whatever detection would otherwise derive. Left empty, it is derived
-// from det: refused when the repository already has a Dockerfile (there is
-// no way to tell a Static site image from a Web service one from an
-// existing Dockerfile alone) or when no known framework was detected (the
-// Other stub, same as Create) — recorded in
-// docs/implementation-notes/15-cli-adopt-path.md.
+// ResolveKind decides the Kind Adopt will use: explicit (the developer's
+// --kind) when given, otherwise the detected framework's. Without --kind it
+// refuses an existing Dockerfile or an unknown framework, since neither
+// says which Kind the image is.
 func ResolveKind(explicit string, det Detection) (string, error) {
 	if explicit != "" {
 		return explicit, nil
@@ -137,35 +110,27 @@ func ResolveKind(explicit string, det Detection) (string, error) {
 	}
 }
 
-// AdoptPreview is what Adopter.Preview reports about owner/name without writing
-// or pushing anything: the wizard's source of truth for deciding whether to
-// ask Kind (skipped whenever it can be resolved without asking, per
-// docs/implementation-notes/15-cli-adopt-path.md) and for showing the
-// migration command suggestion before the summary asks for confirmation.
+// AdoptPreview is what Adopter.Preview reports about owner/name without
+// writing anything.
 type AdoptPreview struct {
 	DefaultBranch string
 	CanPush       bool
-	// BranchExists is true when AdoptBranch already exists on the
-	// repository: Adopt will refuse, so the wizard can say so immediately
-	// rather than asking every other question first.
+	// BranchExists is true when AdoptBranch already exists, so Adopt will
+	// refuse.
 	BranchExists bool
 	Detection
 }
 
-// Adopter opens a pull request against an existing Application repository:
-// GitHub API reads to validate it, a shallow clone of its default branch to
-// detect what is missing, then a commit on AdoptBranch with only the added
-// files, pushed and opened as a pull request through the API.
+// Adopter opens a pull request that adds only what is missing to an
+// existing Application repository.
 type Adopter struct {
-	// Client talks to the GitHub API.
 	Client *github.Client
-	// Auth is the credential git presents when cloning and pushing: the
-	// same developer token used for the Platform repository.
+	// Auth is the credential git presents when cloning and pushing.
 	Auth git.Auth
 }
 
-// Preview clones owner/name's default branch to report what Adopt would
-// do — and whether AdoptBranch already exists — without writing anything.
+// Preview clones owner/name's default branch to report what Adopt would do,
+// without writing anything.
 func (a *Adopter) Preview(ctx context.Context, owner, name string) (AdoptPreview, error) {
 	repo, err := a.Client.GetRepository(ctx, owner, name)
 	if err != nil {
@@ -194,39 +159,20 @@ func (a *Adopter) Preview(ctx context.Context, owner, name string) (AdoptPreview
 type AdoptRequest struct {
 	Owner string
 	Name  string
-	// AppName is the Application name written into the generated files
-	// (the deploy workflow's image reference and comments): the resolved
-	// name, which defaults to Name but can be overridden with --name.
+	// AppName is the Application name written into the generated files,
+	// which may differ from Name.
 	AppName string
-	// Kind, when non-empty, is the developer-given --kind and is always
-	// used as the final Kind, overriding whatever would otherwise be
-	// derived from detection
-	// (docs/implementation-notes/15-cli-adopt-path.md). Left empty, Adopt
-	// derives it: refused when the repository already has a Dockerfile
-	// (there is no way to tell a Static site image from a Web service one
-	// from an existing Dockerfile alone) or when no known framework was
-	// detected (the Other stub, same as Create).
+	// Kind is the developer's --kind; "" lets ResolveKind derive it.
 	Kind string
-	// Postgres is the developer's --postgres: Adopt refuses a Static site
-	// Kind (given explicitly or derived) with Postgres requested, the same
-	// rule createOptions.plan applies to Create, but checked here, right
-	// after Kind is resolved and before anything is written, committed or
-	// pushed — never after the pull request already exists
-	// (docs/implementation-notes/15-cli-adopt-path.md).
+	// Postgres is the developer's --postgres. A Static site with Postgres
+	// is refused before anything is pushed.
 	Postgres bool
-	// Scopes are the developer's token's OAuth scopes, as
-	// github.Client.TokenScopes read them. When the pull request would add
-	// the deploy workflow, Adopt refuses with CheckWorkflowScope right
-	// after detection, before anything is written or pushed; a repository
-	// that already has the workflow needs no scope. The zero value
-	// (unknown) never refuses.
-	Scopes github.TokenScopes
-	// DeployGateURL is the Platform's Deploy gate, rendered into the
-	// deploy workflow when Adopt adds one (templates.Data.DeployGateURL).
+	// Scopes are the developer's token's OAuth scopes, checked only when
+	// the pull request would add the deploy workflow.
+	Scopes        github.TokenScopes
 	DeployGateURL string
 	// MigrationCommand and MigrationCommandSet are the developer's
-	// --migration-command, and whether it was given at all. Adopt writes
-	// Detection.MigrationCommand's answer into the iidp.yaml it adds.
+	// --migration-command, and whether it was given at all.
 	MigrationCommand    string
 	MigrationCommandSet bool
 }
@@ -242,37 +188,23 @@ type AdoptResult struct {
 	Files []string
 	Kind  string
 	Detection
-	// Binding is the adopted repository's ids, as GitHub reported them,
-	// for the Platform repository to bind the Application to.
 	Binding platformrepo.RepositoryBinding
-	// MigrationCommand is the migration command resolved for iidp.yaml
-	// (Detection.MigrationCommand): the one written when Adopt added the
-	// file, or the one the developer should check an existing file for.
+	// MigrationCommand is the one written when Adopt added iidp.yaml, or
+	// the one the developer should check an existing file for.
 	MigrationCommand string
 	// NonRoot is what Adopt changed in the repository's own Dockerfile
 	// so that it runs as non-root, or what the developer must change.
 	NonRoot NonRootFix
 }
 
-// Adopt reads req.Owner/req.Name through the GitHub API, refuses it when
-// GitHub reports an owner other than the org, without push access or with
-// AdoptBranch already present, clones the default
-// branch, detects what is missing (refusing a token without the workflow
-// scope when that includes the deploy workflow), writes only that (a Dockerfile and
-// .dockerignore when none exists, the deploy workflow and iidp.yaml unless
-// one already exists there — identical or not, Adopt never modifies an
-// existing file, except a Dockerfile that would run as root, when the fix
-// is known: NonRoot),
-// commits as the developer, pushes AdoptBranch and opens a pull request
-// against the default branch.
+// Adopt writes the files the repository is missing, plus any non-root fix
+// to its Dockerfile, to AdoptBranch, and opens a pull request against the
+// default branch. Every check runs before anything is pushed.
 func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, error) {
 	repo, err := a.Client.GetRepository(ctx, req.Owner, req.Name)
 	if err != nil {
 		return AdoptResult{}, err
 	}
-	// The CLI already refused a --repo outside the org as typed; this
-	// checks the owner GitHub reports, which differs when the name
-	// redirects to a repository that has since been transferred away.
 	binding, err := BindingForRepository(req.Owner+"/"+req.Name, repo)
 	if err != nil {
 		return AdoptResult{}, err
@@ -389,8 +321,8 @@ func (a *Adopter) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 	}, nil
 }
 
-// detect clones cloneURL's branch shallowly into a temporary directory,
-// removed before it returns, and inspects it.
+// detect clones cloneURL's branch into a temporary directory and inspects
+// it.
 func (a *Adopter) detect(ctx context.Context, cloneURL, branch string) (Detection, error) {
 	dir, err := os.MkdirTemp("", "iidp-adopt-detect-")
 	if err != nil {
@@ -403,10 +335,6 @@ func (a *Adopter) detect(ctx context.Context, cloneURL, branch string) (Detectio
 	return detectDir(dir)
 }
 
-// detectDir is Detection's logic against an already-cloned (or otherwise
-// present) directory: an existing Dockerfile, else the framework detected
-// from package.json, plus migration tooling (internal/migrate), exactly
-// the way Adopt and Adopter.Preview both need it.
 func detectDir(dir string) (Detection, error) {
 	var det Detection
 	det.HasDockerfile = fileExists(filepath.Join(dir, "Dockerfile"))
@@ -438,14 +366,9 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// detectFramework looks at package.json's dependencies and devDependencies
-// for next (Next.js) or vite plus react (Vite React) — the same two
-// frameworks Create generates from, matching docs/design.md's wizard text
-// ("Next.js from next in package.json dependencies, Vite React from vite
-// plus react"). Both dependencies and devDependencies are checked, since a
-// project scaffolded by the Vite tooling itself keeps vite as a
-// devDependency with react as a plain dependency. Anything else, including
-// no package.json at all, is Other.
+// detectFramework looks in package.json for next (Next.js) or vite plus
+// react (Vite React); anything else is Other. devDependencies count too,
+// since a Vite scaffold keeps vite there.
 func detectFramework(dir string) (templates.Framework, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if err != nil {
@@ -479,8 +402,7 @@ func detectFramework(dir string) (templates.Framework, error) {
 }
 
 // pullRequestBody describes what each added file does and what happens on
-// merge, per docs/design.md's Adopt paragraph and
-// docs/implementation-notes/12-deploy-workflow.md's write-back.
+// merge.
 func pullRequestBody(req AdoptRequest, files []string, det Detection, migrationCommand string, nonRoot NonRootFix) string {
 	var b strings.Builder
 	if nonRoot.Dockerfile != nil {

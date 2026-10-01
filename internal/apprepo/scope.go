@@ -16,14 +16,10 @@ const WorkflowScope = "workflow"
 // developer's token lacks WorkflowScope.
 var ErrMissingWorkflowScope = errors.New("your GitHub login lacks the workflow scope")
 
-// CheckWorkflowScope refuses a token whose scopes GitHub reported and which
-// lacks WorkflowScope: both Create and Adopt push templates.DeployWorkflowPath
-// with the developer's gh token, and GitHub refuses that push without the
-// scope, which for Create would come only after the repository already
-// exists. A token whose scopes are unknown (a fine-grained personal access
-// token or a GitHub App token, which report no scopes) is let through,
-// since nothing up front can say whether it may push workflows
-// (docs/implementation-notes/47-workflow-scope.md).
+// CheckWorkflowScope refuses a token whose reported scopes lack
+// WorkflowScope, before anything is created: GitHub would refuse the push
+// of templates.DeployWorkflowPath only after Create made the repository. A
+// token whose scopes are unknown is let through.
 func CheckWorkflowScope(scopes github.TokenScopes) error {
 	if !scopes.Known || scopes.Has(WorkflowScope) {
 		return nil

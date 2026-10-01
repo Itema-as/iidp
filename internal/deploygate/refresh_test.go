@@ -16,9 +16,8 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// After each Deploy or Promote commit the gate asks ArgoCD to refresh the
-// Environment's ArgoCD Application (refresh.go). fakeArgoCD stands in for
-// the Kubernetes API's merge patch and records what it was sent.
+// fakeArgoCD stands in for the Kubernetes API's merge patch and records
+// what it was sent.
 type fakeArgoCD struct {
 	mu      sync.Mutex
 	patches []string // path + " " + patch

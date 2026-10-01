@@ -129,8 +129,8 @@ func TestPlatformComponents(t *testing.T) {
 	}
 }
 
-// Only Argus links client-go: the CLI and the Deploy gate keep their
-// standard-library Kubernetes client (docs/implementation-notes/94-app-status.md).
+// The CLI and the Deploy gate keep their standard-library Kubernetes
+// client.
 func TestOnlyArgusLinksClientGo(t *testing.T) {
 	gobin, err := exec.LookPath("go")
 	if err != nil {

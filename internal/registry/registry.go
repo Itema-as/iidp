@@ -1,10 +1,6 @@
 // Package registry asks a container registry whether an image tag exists,
 // the way a client about to pull it would: a HEAD on the tag's manifest,
-// through the registry's bearer-token flow. The Deploy gate uses it to
-// refuse a tag that was never pushed before committing it
-// (docs/implementation-notes/61-image-check.md). Only the standard library
-// is used, like internal/oidc: the protocol is two requests and a
-// challenge header.
+// through the registry's bearer-token flow.
 package registry
 
 import (
@@ -21,11 +17,9 @@ import (
 	"time"
 )
 
-// ManifestMediaTypes are what a manifest HEAD accepts: an image manifest or
-// a multi-platform index, in both their OCI and their Docker forms. A
-// registry answers 404 for a manifest whose type the client does not
-// accept, so leaving out the index types would call a multi-platform
-// image missing (GHCR and Docker Hub both serve indexes).
+// ManifestMediaTypes are what a manifest HEAD accepts. A registry answers
+// 404 for a manifest whose type the client does not accept, so leaving out
+// the index types would call a multi-platform image missing.
 var ManifestMediaTypes = []string{
 	"application/vnd.oci.image.index.v1+json",
 	"application/vnd.oci.image.manifest.v1+json",
@@ -54,25 +48,20 @@ type Credential struct {
 
 // Checker checks that image tags exist.
 type Checker struct {
-	// HTTPClient makes the requests; nil means http.DefaultClient. Timeout
-	// bounds them either way.
+	// HTTPClient makes the requests; nil means http.DefaultClient.
 	HTTPClient *http.Client
 	// CredentialHost is the one registry host Credential is for (ghcr.io).
-	// It is sent only to that host, and to a token realm on that host over
-	// https, never to another registry or another realm, so an image
-	// repository naming some other registry cannot collect it. Every other
-	// registry is asked anonymously.
+	// It is sent only to that host and to an https token realm on it, so an
+	// image repository naming some other registry cannot collect it.
 	CredentialHost string
 	// Credential yields the credential for CredentialHost on each check,
-	// so a rotated one is used without a restart. Nil means anonymous
-	// everywhere.
+	// so a rotated one is used without a restart. Nil means anonymous.
 	Credential func() (Credential, error)
 	// Timeout bounds one whole check; zero means 30 seconds.
 	Timeout time.Duration
 }
 
-// Image is a parsed image repository: the registry host its reference
-// names, the host its API is served from, and the repository's name there.
+// Image is a parsed image repository.
 type Image struct {
 	// Host is the registry as the reference names it (ghcr.io, docker.io).
 	Host string
@@ -91,11 +80,10 @@ var (
 	namePattern = regexp.MustCompile(`^[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$`)
 )
 
-// ParseRepository splits an image repository (what values.yaml's
-// image.repository holds, with no tag or digest) the way container
-// engines do: a first component with a dot or a colon, or localhost, is a
-// registry host, and anything else is on Docker Hub, where a one-component
-// name is under library/.
+// ParseRepository splits an image repository (no tag or digest) the way
+// container engines do: a first component with a dot or a colon, or
+// localhost, is a registry host, and anything else is on Docker Hub, where a
+// one-component name is under library/.
 func ParseRepository(repository string) (Image, error) {
 	host, name := "docker.io", repository
 	if first, rest, ok := strings.Cut(repository, "/"); ok && (strings.ContainsAny(first, ".:") || first == "localhost") {
@@ -165,8 +153,7 @@ func (c *Checker) head(ctx context.Context, manifest, authorization string) (*ht
 	return resp, nil
 }
 
-// outcome turns the registry's answer to the manifest HEAD into Exists's
-// result. A HEAD answer has no body, so the status is all there is.
+// outcome turns the status of the manifest HEAD into Exists's result.
 func outcome(host string, status int) error {
 	switch status {
 	case http.StatusOK:
@@ -181,9 +168,7 @@ func outcome(host string, status int) error {
 }
 
 // authorize answers a 401's challenge with the Authorization header for
-// the retried HEAD: basic auth for a Basic challenge, or a bearer token
-// from the challenge's realm for a Bearer one, asked for with the
-// credential when it is for this registry and anonymously otherwise.
+// the retried HEAD: basic auth, or a bearer token from the challenge's realm.
 func (c *Checker) authorize(ctx context.Context, image Image, header string) (string, error) {
 	scheme, params := parseChallenge(header)
 	switch strings.ToLower(scheme) {
@@ -209,8 +194,7 @@ func (c *Checker) authorize(ctx context.Context, image Image, header string) (st
 	if service := params["service"]; service != "" {
 		query.Set("service", service)
 	}
-	// Always the pull scope of this one repository, whatever the challenge
-	// names: the check never asks for more than reading.
+	// Ask only for pull on this repository, whatever the challenge names.
 	query.Set("scope", "repository:"+image.Name+":pull")
 	realm.RawQuery = query.Encode()
 

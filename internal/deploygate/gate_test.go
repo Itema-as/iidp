@@ -119,10 +119,8 @@ func signWith(t *testing.T, key *rsa.PrivateKey, kid string, claims map[string]a
 	return input + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
-// fakeGitHub fakes the three GitHub calls a deploy makes: the App's
-// installation token, the App's slug, and its bot account's id. It also
-// fakes the one a status call makes with the developer's own token,
-// GET /repositories/{id} (status_test.go).
+// fakeGitHub fakes the GitHub calls a deploy makes, and the
+// GET /repositories/{id} a status call makes with the developer's token.
 type fakeGitHub struct {
 	srv      *httptest.Server
 	appKey   *rsa.PublicKey

@@ -9,15 +9,14 @@ import (
 	"github.com/Itema-as/iidp/internal/sops"
 )
 
-// The fixture age key pair test/e2e/fixtures/age-keys.txt protects nothing;
-// its public key is also what test/e2e/fixtures/platform-repo/platform.yaml
-// carries as agePublicKey.
+// The public key of the fixture test/e2e/fixtures/age-keys.txt, which
+// protects nothing.
 const testRecipient = "age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v"
 
 func requireSops(t *testing.T) {
 	t.Helper()
 	if !sops.Available() {
-		t.Skip("sops is not on PATH; skipping (see docs/implementation-notes/16-cli-secret-set.md)")
+		t.Skip("sops is not on PATH; skipping")
 	}
 }
 
@@ -51,9 +50,6 @@ func TestBinaryEncryptProducesAKsopsDocument(t *testing.T) {
 }
 
 func TestBinaryEncryptErrorsClearlyWhenSopsIsMissing(t *testing.T) {
-	// An empty PATH makes exec.LookPath("sops") fail regardless of the
-	// machine running the test, so this does not depend on sops being
-	// absent from the developer's own PATH.
 	t.Setenv("PATH", "")
 
 	_, err := sops.Binary{}.Encrypt(context.Background(), []byte("{}"), testRecipient, "x.enc.yaml")

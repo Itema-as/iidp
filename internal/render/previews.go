@@ -8,79 +8,61 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Preview Environments (docs/adr/0006-preview-environments-from-an-argocd-applicationset.md):
-// one ArgoCD ApplicationSet per Application that opted in, whose Pull
-// Request generator makes an Environment for each open pull request
-// labelled PreviewLabel on the Application repository, and removes it when
-// the pull request closes or loses the label.
+// Preview Environments: one ArgoCD ApplicationSet per Application that opted
+// in, whose Pull Request generator makes an Environment for each open pull
+// request labelled PreviewLabel, and removes it when the pull request
+// closes or loses the label.
 
 const (
 	// PreviewLabel is the pull request label that asks for a Preview
 	// Environment. The reusable deploy workflow builds the pull request's
-	// image only when it is there (.github/workflows/application-deploy.yaml).
+	// image only when it is there.
 	PreviewLabel = "preview"
 
 	// PreviewRequeueSeconds is how often ArgoCD asks GitHub for the
-	// Application repository's pull requests: every 3 minutes, a trivial
-	// share of the App's API rate limit (ADR-0006).
+	// Application repository's pull requests: a trivial share of the App's
+	// API rate limit.
 	PreviewRequeueSeconds = 180
 
 	// GitHubAppSecret is the Secret in the argocd namespace that holds the
-	// iidp-deploy GitHub App's id, installation id and private key: the one
-	// cloud-init writes as ArgoCD's credential for the Platform repository
-	// (docs/implementation-notes/41-argocd-platform-repo-credential.md). The
-	// Pull Request generator authenticates to GitHub with it.
+	// iidp-deploy GitHub App's credential, which cloud-init writes for
+	// ArgoCD. The Pull Request generator authenticates to GitHub with it.
 	GitHubAppSecret = "platform-repo-github-app"
 
-	// PreviewSize is a Preview Environment's size, whatever staging's: the
-	// smallest.
+	// PreviewSize is a Preview Environment's size, whatever staging's.
 	PreviewSize = "small"
 
 	// PreviewRetryLimit is how many times ArgoCD retries a Preview
-	// Environment's failed sync, where staging and prod retry without
-	// limit (ArgoCDApplication). ArgoCD retries inside the same operation,
+	// Environment's failed sync. ArgoCD retries inside the same operation,
 	// and deletes an Application only once it has no operation running, so
-	// with no limit a preview whose sync keeps failing (a broken migration,
-	// say) is never removed when its pull request closes (#131). A preview
-	// does not need the unlimited retry: a new push to the pull request
-	// changes the Application's image tag, which starts a fresh sync.
+	// with no limit a preview whose sync keeps failing is never removed when
+	// its pull request closes. A new push starts a fresh sync anyway.
 	PreviewRetryLimit = 3
 )
 
 // PreviewEnvironment is the Environment name of the Preview Environment
-// for pull request number, as the ApplicationSet's template spells it for
-// the generator's number parameter ("{{.number}}") or as it is for one
-// pull request ("7" gives pr-7).
+// for pull request number, which may be the template parameter
+// "{{.number}}".
 func PreviewEnvironment(number string) string {
 	return "pr-" + number
 }
 
 // Previews is what an Application's ApplicationSet is rendered from.
 type Previews struct {
-	// Application is the Application's name.
 	Application string
-	// Owner and Repository name the Application repository on GitHub, as
-	// the Platform knows it (applications/<name>/repository.yaml).
+	// Owner and Repository name the Application repository on GitHub.
 	Owner, Repository string
 	// GitHubAPI is the GitHub REST API the generator asks, as ArgoCD's api
-	// field takes it for GitHub Enterprise (https://<host>/api/v3). Empty
-	// means GitHub.com.
+	// field takes it for GitHub Enterprise. Empty means GitHub.com.
 	GitHubAPI string
 	// Staging is the staging Environment's application.yaml. A preview
-	// renders staging's chart source at its pinned version, with staging's
-	// values file as the base, and every other source staging has: the
-	// Platform repository for $values and, once staging has secrets,
-	// staging's sops/ directory, so a preview gets staging's secrets
-	// through the same KSOPS path.
+	// copies its sources, so it gets staging's chart version, values file
+	// and secrets.
 	Staging []byte
 }
 
-// previewValues is what a preview sets over staging's values file
-// (helm.valuesObject, which ArgoCD gives precedence over valueFiles): its
-// own Environment name and so its own address, the pull request's image,
-// the smallest size, Itema login on with staging's sign-in groups, no
-// custom domains, no Scheduled tasks, and a database without backups.
-// Staging's migration command, env, secrets and the rest stay as they are.
+// previewValues is what a preview sets over staging's values file, through
+// helm.valuesObject, which ArgoCD gives precedence over valueFiles.
 type previewValues struct {
 	Environment string          `yaml:"environment"`
 	Image       previewImage    `yaml:"image"`
@@ -104,9 +86,7 @@ type previewPostgres struct {
 }
 
 // appSource is one source of an ArgoCD Application as a preview copies it
-// from staging's: the chart (from an OCI repository with chart, or a git
-// repository with path), the Platform repository under ref values, or a
-// kustomize directory with path.
+// from staging's.
 type appSource struct {
 	RepoURL        string   `yaml:"repoURL"`
 	Chart          string   `yaml:"chart,omitempty"`
@@ -166,20 +146,10 @@ type previewAppSpec struct {
 
 // PreviewApplicationSet renders the ApplicationSet that gives p's
 // Application a Preview Environment for every open pull request labelled
-// PreviewLabel. The template is staging's ArgoCD Application with, for pull
-// request <n>:
-//
-//   - the name, namespace and Environment <application>-pr-<n>, pr-<n>, so
-//     the chart gives it the address <application>-pr-<n>.<baseDomain>;
-//   - staging's sources, with previewValues over staging's values file on
-//     the chart source;
-//   - the namespace labels every Environment's namespace carries, so the
-//     guardrails bind to it (NamespaceLabels), and ArgoCD's tracking
-//     annotation on it, which makes ArgoCD delete the namespace with the
-//     Application when the pull request closes. ArgoCD leaves a namespace
-//     CreateNamespace made behind otherwise; this is the way its sync
-//     options documentation gives to have it owned;
-//   - staging's retry, limited to PreviewRetryLimit retries.
+// PreviewLabel. The template is staging's ArgoCD Application, with
+// previewValues over staging's values file. The tracking annotation on the
+// namespace makes ArgoCD delete it with the Application: otherwise ArgoCD
+// leaves a namespace CreateNamespace made behind.
 func PreviewApplicationSet(p Previews) ([]byte, error) {
 	if p.Application == "" || p.Owner == "" || p.Repository == "" {
 		return nil, errors.New("previews need the Application and its repository's owner and name")
@@ -267,8 +237,7 @@ func PreviewApplicationSet(p Previews) ([]byte, error) {
 
 // previewSources reads the sources of staging's application.yaml and checks
 // they are the shape the CLI writes: one chart source whose values file is
-// staging's, and the Platform repository under ref values. A kustomize
-// source (staging's sops/) is kept as it is.
+// staging's, and the Platform repository under ref values.
 func previewSources(application string, stagingApplication []byte) ([]appSource, error) {
 	var staging struct {
 		Spec struct {

@@ -21,11 +21,8 @@ import (
 //	GET /v1/status/<app>
 //	Authorization: Bearer <the developer's GitHub token, from gh auth>
 //
-// It answers 200 with a platformstate.Status, or an ErrorResponse. It is
-// the gate's service answering developers, not the Deploy gate itself: it
-// reads, never writes, and does not use the App key
-// (docs/adr/0007-app-status-reads-through-the-deploy-gate.md,
-// docs/implementation-notes/94-app-status.md).
+// It answers 200 with a platformstate.Status, or an ErrorResponse. It
+// reads, never writes, and does not use the App key.
 const StatusPath = "/v1/status/"
 
 func (g *Gate) serveStatus(w http.ResponseWriter, r *http.Request) {

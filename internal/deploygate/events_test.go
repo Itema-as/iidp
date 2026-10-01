@@ -18,11 +18,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// Each Deploy or Promote the gate accepts or refuses is recorded as an
-// events.k8s.io/v1 Event (docs/implementation-notes/117-deploy-events.md).
-// These tests use the same HTTP boundary, fakes and bare Platform
-// repository as gate_test.go, with fakeEvents as the sink.
-
 // fakeEvents keeps the Events the gate records. err, when set, is what
 // every CreateEvent answers; hold, when set, blocks every CreateEvent until
 // it is closed.
@@ -332,8 +327,6 @@ func TestAnEventThatHangsDoesNotDelayTheDeploy(t *testing.T) {
 	}
 }
 
-// KubeEvents is the gate's whole Event client, so it is tested against a
-// stand-in API server: the path, the token, the body, and a refusal.
 func TestKubeEventsPostsTheEventToItsNamespace(t *testing.T) {
 	var gotMethod, gotPath, gotAuth, gotType string
 	var got map[string]any

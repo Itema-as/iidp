@@ -1,10 +1,6 @@
 // Package prompt asks the developer questions on a terminal: free text with
 // a default, yes/no, and a choice from a list, each re-asked on invalid
-// input. It is deliberately small: no third-party TUI library, because the
-// wizard (internal/cli) needs nothing more than "ask a question, validate
-// the answer, ask again if it's wrong" and a line-oriented reader/writer is
-// the same seam the CLI's tests already inject
-// (docs/implementation-notes/14-cli-wizard.md).
+// input. It reads lines from an io.Reader so tests can script the answers.
 package prompt
 
 import (
@@ -28,10 +24,8 @@ func New(r io.Reader, w io.Writer) *Prompter {
 	return &Prompter{r: bufio.NewReader(r), w: w}
 }
 
-// errNoAnswer is returned when the input is exhausted before a line was
-// read: an interactive session should never hit this (the terminal keeps
-// giving lines), so it only happens when a test's scripted input ran out,
-// which is a test bug, not a developer answer to re-ask for.
+// errNoAnswer is returned when the input runs out. A terminal never does, so
+// in practice it means a test's scripted input ran out.
 var errNoAnswer = errors.New("prompt: no more input")
 
 // readLine reads one line, trimmed, or errNoAnswer if none is left.
@@ -44,7 +38,6 @@ func (p *Prompter) readLine() (string, error) {
 		if line == "" {
 			return "", errNoAnswer
 		}
-		// The last line of the input had no trailing newline; still valid.
 	}
 	return strings.TrimSpace(line), nil
 }

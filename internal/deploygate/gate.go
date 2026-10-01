@@ -3,10 +3,7 @@
 // iidp-deploy GitHub App's key, which never reaches CI, and makes exactly
 // one kind of change to the Platform repository: a new image tag for one
 // Environment of the Application whose own repository asked, from a ref
-// allowed to deploy that Environment, of a tag the image's registry has
-// (docs/adr/0005-private-application-repositories-on-github-free.md,
-// docs/implementation-notes/60-deploy-gate.md,
-// docs/implementation-notes/61-image-check.md).
+// allowed to deploy that Environment, of a tag the image's registry has.
 //
 // The API is one call, POST /v1/deploy, authenticated with a GitHub
 // Actions OIDC token for the gate's own URL:
@@ -18,25 +15,16 @@
 //	 "tasks": [{"name": "...", "schedule": "...", "command": "..."}]}
 //
 // The same commit may also set the Environment's migration command and
-// its Scheduled tasks, from the calling repository's iidp.yaml: the two
-// other things a deploy may change. A migration command needs an
-// Environment with Postgres
-// (docs/implementation-notes/66-migration-command-in-repo.md), and tasks a
-// Web service (docs/implementation-notes/91-scheduled-tasks.md).
+// its Scheduled tasks, from the calling repository's iidp.yaml.
 //
 // It answers 200 with what it wrote, or an error status with
-// {"error": "<what was refused and why>"}, which iidp ci set-image prints
-// for the developer. It makes two writes in the cluster: after a commit,
-// it asks ArgoCD to refresh the Environment's ArgoCD Application
-// (refresh.go); and every Deploy or Promote it accepts, and every one it
-// refuses once it knows which Environment it was for, is recorded as a
-// Kubernetes Event (events.go).
+// {"error": "<what was refused and why>"}. After a commit it asks ArgoCD to
+// refresh the Environment (refresh.go), and it records each Deploy or
+// Promote as a Kubernetes Event (events.go).
 //
-// The same service also answers one read, GET /v1/status/<app>, for iidp
-// app status (status.go). That call is a developer's, authorised by their
-// own GitHub token and their read access to the Application's repository;
-// it writes nothing and does not use the App key
-// (docs/adr/0007-app-status-reads-through-the-deploy-gate.md).
+// The same service also answers GET /v1/status/<app> for iidp app status
+// (status.go), authorised by the developer's own GitHub token. It writes
+// nothing and does not use the App key.
 package deploygate
 
 import (
@@ -83,16 +71,13 @@ type Request struct {
 	Environment string `json:"environment"`
 	Tag         string `json:"tag"`
 	// MigrationCommand is the migrationCommand of the Application
-	// repository's iidp.yaml at the commit deployed. Absent (nil, no iidp.yaml)
-	// leaves the Environment's postgres.migrationCommand as it is; "" (an
-	// iidp.yaml without one) clears it; anything else sets it, in the same
-	// commit as the tag. See internal/appconfig.
+	// repository's iidp.yaml at the commit deployed. nil (no iidp.yaml)
+	// leaves the Environment's command as it is; "" clears it.
 	MigrationCommand *string `json:"migrationCommand,omitempty"`
 	// Tasks are the Scheduled tasks of the Application repository's
 	// iidp.yaml at the commit deployed. They replace the Environment's
-	// tasks in the same commit as the tag: none (the key absent, or no
-	// iidp.yaml) removes them. Left out when empty, so a gate from before
-	// tasks still takes a deploy from a repository that declares none.
+	// tasks: none removes them. omitempty keeps the request acceptable to a
+	// gate that predates tasks.
 	Tasks []appconfig.Task `json:"tasks,omitempty"`
 }
 
@@ -104,16 +89,10 @@ type Response struct {
 	// File is the values file, relative to the Platform repository.
 	File string `json:"file"`
 	// Commit is the Platform repository commit, "" when Unchanged.
-	Commit string `json:"commit,omitempty"`
-	// Unchanged is true when the Environment already ran Tag, with the
-	// migration command and the tasks asked for.
-	Unchanged bool `json:"unchanged,omitempty"`
-	// MigrationCommandChanged is true when Commit changed the
-	// Environment's migration command.
-	MigrationCommandChanged bool `json:"migrationCommandChanged,omitempty"`
-	// TasksChanged is true when Commit changed the Environment's
-	// Scheduled tasks.
-	TasksChanged bool `json:"tasksChanged,omitempty"`
+	Commit                  string `json:"commit,omitempty"`
+	Unchanged               bool   `json:"unchanged,omitempty"`
+	MigrationCommandChanged bool   `json:"migrationCommandChanged,omitempty"`
+	TasksChanged            bool   `json:"tasksChanged,omitempty"`
 }
 
 // ErrorResponse is the body of every refusal.
@@ -129,12 +108,9 @@ type AppCredentials struct {
 	PrivateKey     []byte
 }
 
-// CredentialsFromDir reads AppCredentials from the files a Kubernetes
-// Secret volume of ArgoCD's Platform-repository credential holds
-// (githubAppID, githubAppInstallationID, githubAppPrivateKey; see
-// docs/implementation-notes/41-argocd-platform-repo-credential.md). They
-// are read on every call, so a rotated key is picked up once the kubelet
-// refreshes the volume, with no restart.
+// CredentialsFromDir reads AppCredentials from a Secret volume of ArgoCD's
+// Platform-repository credential. They are read on every call, so a
+// rotated key is picked up once the kubelet refreshes the volume.
 func CredentialsFromDir(dir string) func() (AppCredentials, error) {
 	return func() (AppCredentials, error) {
 		read := func(name string) (string, error) {
@@ -165,47 +141,37 @@ func CredentialsFromDir(dir string) func() (AppCredentials, error) {
 
 // Gate is the Deploy gate's HTTP service.
 type Gate struct {
-	// OIDC verifies the caller's token: issuer, audience (the gate's own
-	// URL), signature and lifetime.
 	OIDC *oidc.Verifier
-	// OrgID is the numeric id of the org whose repositories may deploy
-	// (Itema-as). Both the token's repository_owner_id and the
-	// Application's binding must carry it.
-	OrgID int64
-	// PlatformRepo is the git URL of the Platform repository.
+	// OrgID is the numeric id of the org whose repositories may deploy.
+	// Both the token's repository_owner_id and the Application's binding
+	// must carry it.
+	OrgID        int64
 	PlatformRepo string
 	// GitHubAPI is the GitHub REST API root; "" means the real one.
-	GitHubAPI string
-	// Credentials yields the App's credentials for each call.
+	GitHubAPI   string
 	Credentials func() (AppCredentials, error)
-	// Images checks that a tag exists in the Environment's image
-	// repository before it is committed. Nil refuses every deploy: the
-	// gate never commits a tag unchecked.
+	// Images checks that a tag exists before it is committed. Nil refuses
+	// every deploy: the gate never commits a tag unchecked.
 	Images *registry.Checker
-	// Cluster reads Environments' live state for GET /v1/status/<app>
-	// (status.go). Nil answers every status call with 503; deploys do not
-	// need it.
+	// Cluster reads Environments' live state for the status call. Nil
+	// answers every status call with 503.
 	Cluster platformstate.Lister
-	// ArgoCD patches the Environment's ArgoCD Application after each
-	// Deploy or Promote commit, asking ArgoCD to refresh it (refresh.go).
-	// Nil skips the refresh: ArgoCD's poll still picks the commit up.
+	// ArgoCD asks ArgoCD to refresh an Environment after each commit. Nil
+	// skips the refresh: ArgoCD's poll still picks the commit up.
 	ArgoCD Patcher
-	// Events records each accepted or refused Deploy as a Kubernetes Event
-	// (events.go). Nil records nothing; deploys do not need it.
+	// Events records Deploys as Kubernetes Events. Nil records nothing.
 	Events EventSink
-	// Log receives one line per call, a warning when an ArgoCD refresh
-	// fails, and one when an Event cannot be recorded; nil discards.
+	// Log is nil to discard.
 	Log *slog.Logger
 	// BeforePush, when set, runs between the commit and each push. Tests
 	// use it to move main.
 	BeforePush func() error
 
-	// writeMu serialises writes to the Platform repository: concurrent
-	// deploys queue here instead of racing each other's pushes.
+	// writeMu serialises writes to the Platform repository, so concurrent
+	// deploys queue instead of racing each other's pushes.
 	writeMu sync.Mutex
-	// botMu guards bot, the App's commit identity, looked up once.
-	botMu sync.Mutex
-	bot   git.Identity
+	botMu   sync.Mutex
+	bot     git.Identity
 	// events counts the Events being recorded in the background.
 	events sync.WaitGroup
 }
@@ -433,10 +399,9 @@ func (g *Gate) authorize(dir string, claims oidc.Claims, req Request, promote bo
 	return "", refuse(http.StatusForbidden, "refused: %s deploys %s to staging, because it has one; prod is promoted by pushing a v* tag", MainRef, req.Application)
 }
 
-// installationToken mints an installation token for the App. It returns
-// the GitHub client authenticated as the App itself (a JWT) and the token
-// the Platform repository is written with. The token is minted per call:
-// it costs one request, and the key is read fresh each time.
+// installationToken mints an installation token for the App, per call so
+// the key is read fresh each time. It also returns the client
+// authenticated as the App itself.
 func (g *Gate) installationToken(ctx context.Context, creds AppCredentials) (*github.Client, string, error) {
 	jwt, err := githubapp.SignJWT(creds.AppID, creds.PrivateKey, time.Now())
 	if err != nil {
@@ -450,12 +415,10 @@ func (g *Gate) installationToken(ctx context.Context, creds AppCredentials) (*gi
 	return client, token, nil
 }
 
-// botIdentity is the App's bot account as a git identity, looked up once
-// (GET /app for the slug, GET /users/<slug>[bot] for its id) and cached:
-// <slug>[bot] <<id>+<slug>[bot]@users.noreply.github.com>, the address
-// GitHub links to the bot's commits. GET /app takes the App's JWT; GET
-// /users does not, so it goes through installation, the client
-// authenticated with the installation token.
+// botIdentity is the App's bot account as a git identity, with the
+// noreply address GitHub links to the bot's commits. It is looked up once.
+// GET /app takes the App's JWT but GET /users does not, so the id is read
+// with the installation token.
 func (g *Gate) botIdentity(ctx context.Context, appClient, installation *github.Client) (git.Identity, error) {
 	g.botMu.Lock()
 	defer g.botMu.Unlock()
