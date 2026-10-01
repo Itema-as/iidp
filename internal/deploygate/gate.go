@@ -76,8 +76,9 @@ type Request struct {
 	MigrationCommand *string `json:"migrationCommand,omitempty"`
 	// Tasks are the Scheduled tasks of the Application repository's
 	// iidp.yaml at the commit deployed. They replace the Environment's
-	// tasks: none removes them. omitempty keeps the request acceptable to a
-	// gate that predates tasks.
+	// tasks: none removes them. Left out when empty, so that a gate older
+	// than Scheduled tasks, which refuses unknown fields, still accepts a
+	// deploy that declares none.
 	Tasks []appconfig.Task `json:"tasks,omitempty"`
 }
 
@@ -171,7 +172,8 @@ type Gate struct {
 	ArgoCD Patcher
 	// Events records Deploys as Kubernetes Events. Nil records nothing.
 	Events EventSink
-	// Log is nil to discard.
+	// Log gets one line per call, and a warning when a refresh or an Event
+	// fails; nil discards.
 	Log *slog.Logger
 	// BeforePush, when set, runs between the commit and each push. Tests
 	// use it to move main.
@@ -180,8 +182,10 @@ type Gate struct {
 	// writeMu serialises writes to the Platform repository, so concurrent
 	// deploys queue instead of racing each other's pushes.
 	writeMu sync.Mutex
-	botMu   sync.Mutex
-	bot     git.Identity
+	// botMu guards bot, the App's commit identity, which botIdentity looks
+	// up once.
+	botMu sync.Mutex
+	bot   git.Identity
 	// events counts the Events being recorded in the background.
 	events sync.WaitGroup
 }
