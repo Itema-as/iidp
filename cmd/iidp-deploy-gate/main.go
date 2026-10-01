@@ -132,7 +132,8 @@ func run(log *slog.Logger) error {
 	if err := server.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	// Each pending Event has its own timeout, so this cannot hang.
+	// Events are recorded after their call is answered, so some may still be
+	// on their way. Each has its own timeout, so this cannot hang.
 	gate.WaitForEvents()
 	return nil
 }
