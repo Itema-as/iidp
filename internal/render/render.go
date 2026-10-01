@@ -33,7 +33,7 @@ type Environment struct {
 	BackupsBucket         string
 	ObjectStorageEndpoint string
 	// Login is the Itema login Capability: the same in every Environment,
-	// since one oauth2-proxy cookie covers both.
+	// since one oauth2-proxy login cookie covers all of them.
 	Login bool
 	// LoginCookieDomain is the domain the login cookie is set for:
 	// platform.yaml's cloudflareZone, or BaseDomain without one. Set only

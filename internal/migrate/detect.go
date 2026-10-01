@@ -55,8 +55,6 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// npmHasMigrateScript reports whether dir's package.json declares a
-// "migrate" script.
 func npmHasMigrateScript(dir string) (bool, error) {
 	path := filepath.Join(dir, "package.json")
 	data, err := os.ReadFile(path)

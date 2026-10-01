@@ -29,14 +29,17 @@ const (
 	// ArgoCD. The Pull Request generator authenticates to GitHub with it.
 	GitHubAppSecret = "platform-repo-github-app"
 
-	// PreviewSize is a Preview Environment's size, whatever staging's.
+	// PreviewSize is a Preview Environment's size, the smallest, whatever
+	// staging's is.
 	PreviewSize = "small"
 
 	// PreviewRetryLimit is how many times ArgoCD retries a Preview
 	// Environment's failed sync. ArgoCD retries inside the same operation,
 	// and deletes an Application only once it has no operation running, so
 	// with no limit a preview whose sync keeps failing is never removed when
-	// its pull request closes. A new push starts a fresh sync anyway.
+	// its pull request closes. Unlike staging and prod, a preview needs no
+	// unlimited retry: each push to the pull request changes its image tag,
+	// which starts a fresh sync.
 	PreviewRetryLimit = 3
 )
 
@@ -237,7 +240,8 @@ func PreviewApplicationSet(p Previews) ([]byte, error) {
 
 // previewSources reads the sources of staging's application.yaml and checks
 // they are the shape the CLI writes: one chart source whose values file is
-// staging's, and the Platform repository under ref values.
+// staging's, and the Platform repository under ref values. Any other
+// source, such as staging's sops/ kustomize directory, is kept as it is.
 func previewSources(application string, stagingApplication []byte) ([]appSource, error) {
 	var staging struct {
 		Spec struct {
