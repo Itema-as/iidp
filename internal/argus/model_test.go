@@ -129,8 +129,8 @@ func TestPlatformComponents(t *testing.T) {
 	}
 }
 
-// The CLI and the Deploy gate keep their standard-library Kubernetes
-// client.
+// Only cmd/iidp-argus links client-go, and only its dynamic client: the CLI
+// and the Deploy gate keep their standard-library Kubernetes client.
 func TestOnlyArgusLinksClientGo(t *testing.T) {
 	gobin, err := exec.LookPath("go")
 	if err != nil {
