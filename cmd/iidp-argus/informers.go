@@ -21,9 +21,8 @@ import (
 
 // A source is one informer: a resource, narrowed to a namespace, a label
 // selector or a field selector, and the transform that keeps only what
-// platformstate reads of each object. The informer's cache holds nothing
-// else: never the unstructured object, its managedFields or its full
-// spec, which is what keeps Argus within its memory budget (#98).
+// platformstate reads of each object. The cache never holds the unstructured
+// object, which is what keeps Argus within its memory budget.
 type source struct {
 	name      string
 	gvr       schema.GroupVersionResource
@@ -57,22 +56,12 @@ const (
 	applicationSelector = platformstate.ApplicationLabel
 )
 
-// sources are Argus's informers.
-//
-//   - ArgoCD Applications in argocd: the Environments' and the Platform
-//     components'.
-//   - Deployments and pods by the application label, and in argocd and
-//     kube-system for the Platform components; Jobs, CronJobs, CNPG
-//     Clusters and Ingresses by the application label.
-//   - Certificates everywhere: cert-manager's ingress-shim makes them from
-//     the chart's Ingress, and they are few, so Argus does not rely on
-//     them carrying its labels. They are matched to an Environment by
-//     namespace.
-//   - Events: every one in argocd (the Deploy gate's, which carry no
-//     labels, and ArgoCD's own), and Warning Events everywhere else, for
-//     the feed. Events are read through core v1, whose field selector
-//     knows type; events.k8s.io/v1 serves the same objects.
-//   - The Node.
+// sources are Argus's informers. Certificates are watched everywhere:
+// cert-manager's ingress-shim makes them from the chart's Ingress, so Argus
+// does not rely on them carrying its labels, and they are few. Events are
+// every one in argocd (the Deploy gate's carry no labels) and Warnings
+// elsewhere. They are read through core v1, whose field selector knows type;
+// events.k8s.io/v1 serves the same objects.
 var sources = []source{
 	{name: "applications", gvr: applicationsGVR, namespace: argocdNamespace, keep: keepArgoCD},
 	{name: "deployments", gvr: deploymentsGVR, labels: applicationSelector, keep: keepAs[platformstate.Deployment]},
@@ -135,7 +124,6 @@ func keepAs[T any](u *unstructured.Unstructured) (any, error) {
 	return out, nil
 }
 
-// keepArgoCD keeps an ArgoCD Application.
 func keepArgoCD(u *unstructured.Unstructured) (any, error) {
 	return keepAs[platformstate.ArgoCDApplication](u)
 }

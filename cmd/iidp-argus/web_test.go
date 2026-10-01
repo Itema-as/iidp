@@ -11,12 +11,10 @@ import (
 	"github.com/Itema-as/iidp/internal/argus"
 )
 
-// The page Argus embeds loads nothing from outside Argus (#119): every
-// file index.html names, every module any module imports, through the
-// import map or by a relative path, is in the embedded web directory. The
-// server's Content-Security-Policy enforces the same in the browser
-// (internal/argus, ContentSecurityPolicy); this catches a broken or
-// external reference before it gets that far.
+// The page Argus embeds loads nothing from outside Argus: every file
+// index.html names and every module any module imports is in the embedded web
+// directory. The server's Content-Security-Policy enforces the same in the
+// browser; this catches a broken or external reference before it gets that far.
 func TestThePageLoadsNothingFromOutside(t *testing.T) {
 	files, err := fs.Sub(web, "web")
 	if err != nil {
