@@ -94,9 +94,8 @@ func TestReadInterpretsEachEnvironment(t *testing.T) {
 }
 
 // Read lists the pods by the application label, not the Deployment's
-// selector, so it sees a Job's pods, even before there is a Deployment:
-// hello-pr-2 in #132, waiting on a migration whose pod cannot be
-// scheduled.
+// selector, so it sees a Job's pods even before there is a Deployment,
+// such as a migration whose pod cannot be scheduled.
 func TestReadSeesTheJobsPods(t *testing.T) {
 	var podSelector string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

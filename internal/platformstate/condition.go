@@ -7,7 +7,7 @@ import (
 )
 
 // Every Environment, Capability and Platform component has two
-// independent layers (#100): a Condition, whether it is serving, and an
+// independent layers: a Condition, whether it is serving, and an
 // Activity, whether something about it is changing. An Activity is either
 // progressing or stuck. Degraded is about users; stuck is about a change
 // not landing while the previous version still serves.
@@ -391,7 +391,6 @@ func progressDeadlineExceeded(d *Deployment) bool {
 	return ok && c.Status == conditionFalse && c.Reason == "ProgressDeadlineExceeded"
 }
 
-// newestJob is the newest of jobs by creation.
 func newestJob(jobs []Job) (Job, bool) {
 	if len(jobs) == 0 {
 		return Job{}, false
@@ -460,7 +459,6 @@ func jobComplete(job Job) bool {
 	return ok && c.Status == conditionTrue
 }
 
-// jobTag is the image tag a Job runs.
 func jobTag(job Job) string {
 	if len(job.Spec.Template.Spec.Containers) == 0 {
 		return ""
@@ -546,7 +544,6 @@ func rolloutStuck(f facts, tag string) string {
 	return ""
 }
 
-// podTag is the image tag a pod's first container runs.
 func podTag(pod Pod) string {
 	if len(pod.Spec.Containers) == 0 {
 		return ""
@@ -555,7 +552,6 @@ func podTag(pod Pod) string {
 	return tag
 }
 
-// templateTag is the image tag a Deployment's pods are to run.
 func templateTag(d *Deployment) string {
 	if d == nil || len(d.Spec.Template.Spec.Containers) == 0 {
 		return ""
@@ -673,8 +669,7 @@ func leavingStuck(f facts, deleted time.Time) string {
 	why := fmt.Sprintf("Leaving for over %s", durationText(LeavingStuckAfter))
 	switch {
 	case operationRunning(f.app):
-		// #131 saw ArgoCD finish the deletion only once the sync was
-		// terminated.
+		// ArgoCD can hold a deletion until a running sync is terminated.
 		why += "; ArgoCD's sync operation is still running"
 	case hasBackup && !jobComplete(backup):
 		why += "; the final backup has not finished"

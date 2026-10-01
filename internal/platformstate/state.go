@@ -1,28 +1,14 @@
 // Package platformstate turns what the cluster holds for an Application
-// into the live state of each of its Environments: ArgoCD's sync and
-// health, the running image, the pods, the last migration and the last run
-// of each Scheduled task, and the addresses. The Deploy gate's service
-// answers iidp app status with it
-// (docs/adr/0007-app-status-reads-through-the-deploy-gate.md,
-// docs/implementation-notes/94-app-status.md), and Argus (#97) builds on
-// the same types, so the two never disagree about what the cluster says.
+// into the live state of each of its Environments, and interprets it as
+// Conditions, Activities and Deploys. The Deploy gate (for iidp app status)
+// and Argus share it, so the two never disagree about what the cluster says.
 //
-// On top of what the cluster says, it interprets it (condition.go,
-// deploy.go, capability.go): each Environment's Condition and Activity,
-// where a Deploy is among its five hops, the Capabilities' own Condition
-// and Warning flag, and the Platform components'. That layer is pure: it
-// takes objects and the time now and returns domain objects
-// (docs/implementation-notes/116-condition-and-activity.md).
+// Every ArgoCD Application in the argocd namespace labelled
+// iidp.itema.no/application=<app> is one Environment, whatever its name, so
+// Preview Environments are found the same way as prod and staging.
 //
-// Environments are found by label, not from a fixed list: every ArgoCD
-// Application in the argocd namespace labelled
-// iidp.itema.no/application=<app> is one Environment, whatever its name.
-// prod and staging carry the label because the CLI writes it; a Preview
-// Environment appears as soon as the ArgoCD Application its ApplicationSet
-// generates carries it too.
-//
-// The objects are read with plain list calls against the Kubernetes API
-// (Kube), decoded into the few fields used here. Nothing here writes.
+// The interpretation is pure: it takes objects and the time now. Nothing
+// here writes to the cluster.
 package platformstate
 
 import (
@@ -41,10 +27,8 @@ const (
 	TaskLabel        = "iidp.itema.no/task"
 	ComponentLabel   = "app.kubernetes.io/component"
 
-	// ComponentMigration, ComponentScheduledTask and ComponentFinalBackup
-	// are the chart's component labels for the migration Job, the
-	// Scheduled task CronJobs and their Jobs, and the final backup's
-	// PreDelete Job.
+	// The chart's component labels for the migration Job, the Scheduled
+	// task CronJobs and their Jobs, and the final backup's PreDelete Job.
 	ComponentMigration     = "migration"
 	ComponentScheduledTask = "scheduled-task"
 	ComponentFinalBackup   = "final-backup"
@@ -91,7 +75,7 @@ type Environment struct {
 	Links *Links `json:"links,omitempty"`
 	// Condition is whether it is serving: Healthy, Degraded or Unknown,
 	// judged on its own workload. Absent when ArgoCD has no Application
-	// for it yet, and from a Deploy gate older than this field.
+	// for it yet, and from older Deploy gates.
 	Condition *Condition `json:"condition,omitempty"`
 	// Activity is what is changing: Arriving, Unreleased, Deploying,
 	// Updating or Leaving, progressing or stuck. Null when nothing is.
@@ -264,7 +248,6 @@ func environmentOf(application string, o Objects, now time.Time) (Environment, [
 	return env, deploys
 }
 
-// jobsByTask are the chart's Scheduled task Jobs by the task's name.
 func jobsByTask(jobs []Job) map[string][]Job {
 	out := map[string][]Job{}
 	for _, job := range jobs {
@@ -297,7 +280,6 @@ func SortEnvironments(envs []Environment) {
 	sort.SliceStable(envs, func(i, j int) bool { return environmentLess(envs[i].Name, envs[j].Name) })
 }
 
-// environmentLess orders Environment names as SortEnvironments does.
 func environmentLess(a, b string) bool {
 	rank := func(name string) int {
 		switch name {
@@ -439,12 +421,10 @@ func newestRun(jobs []Job, pods []Pod) *Run {
 }
 
 // addressesOf is https://<host> for each host in ArgoCD's external URLs,
-// one per host, sorted. ArgoCD's scheme is not kept: it writes http:// for
-// an Ingress host whose TLS entry names no Secret, which is every Platform
-// address, since their wildcard certificate is Traefik's default. Every
-// Application Ingress is on the websecure entrypoint only
-// (chart/application/templates/ingress*.yaml), so every host is served
-// over HTTPS; plain HTTP is only redirected to it.
+// sorted and deduplicated. ArgoCD's scheme is not kept: it writes http://
+// for an Ingress whose TLS entry names no Secret, which is every Platform
+// address since the wildcard certificate is Traefik's default, yet every
+// Application Ingress is served over HTTPS only.
 func addressesOf(urls []string) []string {
 	out := []string{}
 	for _, u := range urls {

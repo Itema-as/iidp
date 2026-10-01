@@ -47,8 +47,7 @@ func (w want) check(t *testing.T, got platformstate.EnvironmentState) {
 	}
 }
 
-// Every row of the state decision's mapping from ArgoCD (#100), each as
-// the objects that make it.
+// Every mapping from ArgoCD's state, each as the objects that make it.
 func TestArgoCDMappingTable(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -282,7 +281,7 @@ func TestStuckRules(t *testing.T) {
 // A hook Job whose pod cannot be scheduled holds its change back for
 // good: ArgoCD waits for the hook, which has no deadline of its own. So
 // it is stuck at once, with the scheduler's words, as an Unschedulable
-// pod of the Deployment is Degraded at once (#132).
+// pod of the Deployment is Degraded at once.
 func TestUnschedulableHookPodIsStuck(t *testing.T) {
 	const why = "Unschedulable: 0/1 nodes are available: 1 Insufficient cpu."
 	for _, tc := range []struct {
@@ -350,7 +349,7 @@ func TestUnschedulableHookPodIsStuck(t *testing.T) {
 }
 
 // Arriving with something on its way, and Leaving, are stuck after
-// their time limits, with what is known of why (#132).
+// their time limits, with what is known of why.
 func TestArrivingAndLeavingAreStuckAfterTheirTimeLimits(t *testing.T) {
 	// migrating is pr-2 whose first migration was created d ago, with a
 	// pod in phase, or none when phase is "".

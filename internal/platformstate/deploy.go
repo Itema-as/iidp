@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// A Deploy travels five hops (#106), and Deploying starts at the first.
+// A Deploy travels five hops, and Deploying starts at the first.
 const (
 	// HopAccepted: the Deploy gate recorded DeployAccepted, and ArgoCD
 	// has not looked at the Platform repository since.
@@ -23,7 +23,7 @@ const (
 	HopServing = "Serving"
 )
 
-// The Deploy gate's Events (#117): an events.k8s.io/v1 Event in argocd
+// The Deploy gate's Events: an events.k8s.io/v1 Event in argocd
 // regarding the Environment's ArgoCD Application, for every Deploy or
 // Promote it accepts or refuses, with these annotations.
 const (

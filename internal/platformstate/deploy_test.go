@@ -7,10 +7,9 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// A Deploy's five hops (#106), fed with the Deploy gate's Events (built
-// here as #117 specifies them), ArgoCD's revisions and operation, the
-// migration Job, and the Deployment's pods. prod serves 1.0.0 from c1;
-// the Deploy is of 2.0.0, committed as c2.
+// A Deploy's five hops, fed with the Deploy gate's Events, ArgoCD's
+// revisions and operation, the migration Job, and the Deployment's pods.
+// prod serves 1.0.0 from c1; the Deploy is of 2.0.0, committed as c2.
 func TestDeployHops(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

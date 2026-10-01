@@ -299,7 +299,7 @@ func jobPod(name, jobName, phase string) obj {
 }
 
 // unschedulableJobPod is a pod of the Job jobName that the scheduler
-// cannot place on the node, as #132 saw it.
+// cannot place on the node.
 func unschedulableJobPod(name, jobName string) obj {
 	p := jobPod(name, jobName, "Pending")
 	s := status(p)
@@ -328,7 +328,7 @@ func previewEnv(created time.Duration) *fixture {
 	return f
 }
 
-// gateEvent is the Deploy gate's Event (#117), d ago, about prod.
+// gateEvent is the Deploy gate's Event, d ago, about prod.
 func gateEvent(reason, tag, commit, kind, note string, d time.Duration) obj {
 	annotations := obj{
 		"iidp.itema.no/application": "shop", "iidp.itema.no/environment": "prod",
