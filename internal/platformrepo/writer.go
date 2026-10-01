@@ -388,9 +388,9 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 			files = append(files, bindingFile)
 		}
 		if app.Previews {
-			// After staging's files, since the ApplicationSet copies
-			// staging's application.yaml as the Postgres Capability left
-			// it (its sops/ source).
+			// Last: the ApplicationSet is rendered from staging's
+			// application.yaml as it is on disk, which must already carry
+			// any sops/ source copyBackupsCredentials adds.
 			previewFiles, err := writePreviews(dir, app.Name, cfg, *app.Repository, true)
 			if err != nil {
 				return Result{}, err
@@ -462,7 +462,6 @@ func (w *Writer) writeEnvironment(dir string, cfg Config, app Application, envir
 		env.LoginCookieDomain = cfg.LoginCookieDomain()
 		env.LoginGroups = app.LoginGroups
 	}
-	// Custom domains apply to prod only.
 	if environment == "prod" {
 		env.Domains = app.Domains
 	}

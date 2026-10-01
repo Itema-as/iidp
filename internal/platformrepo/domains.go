@@ -30,7 +30,8 @@ type DomainPlan struct {
 // ValidateDomains validates custom domains for a prod Environment against
 // the chart's rules (valid lowercase hostnames of at least two labels, no
 // duplicates), and refuses any that equals one of platformAddresses, the
-// bare hostnames of the Application's Environments.
+// bare hostnames of the Application's Environments, or one of the
+// Platform's own addresses (ReservedNames).
 func ValidateDomains(domains []string, baseDomain, cloudflareZone string, platformAddresses []string) ([]DomainPlan, error) {
 	seen := make(map[string]bool, len(domains))
 	plans := make([]DomainPlan, 0, len(domains))

@@ -101,9 +101,9 @@ func (w *Writer) attemptDelete(ctx context.Context, application string, out io.W
 		return DeleteResult{}, fmt.Errorf("%w: %q has no Environment with a live application.yaml under %s/ in %s", ErrApplicationMissing, application, ApplicationsDir, platform.Repository)
 	}
 
-	// The repository binding goes in the same commit: nothing renders
-	// from it, and a deleted Application must not stay deployable through
-	// the Deploy gate by its old repository.
+	// The repository binding goes in the same commit: unlike values.yaml,
+	// nothing renders from it, and a deleted Application must not stay
+	// deployable through the Deploy gate by its old repository.
 	switch _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(RepositoryBindingPath(application)))); {
 	case err == nil:
 		removeFiles = append(removeFiles, RepositoryBindingPath(application))
