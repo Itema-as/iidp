@@ -51,7 +51,6 @@ spec:
             {{- end }}
           {{- end }}
           {{- with .Values.secrets }}
-          # Every key of each named Secret becomes an environment variable.
           envFrom:
             {{- range . }}
             - secretRef:

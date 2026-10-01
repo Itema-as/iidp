@@ -23,9 +23,9 @@ The Environment: prod, staging, or pr-<number> for a Preview Environment.
 {{- end -}}
 
 {{/*
-The name every object of this Environment carries: the Application name,
-suffixed with the Environment except for prod, so Environments can share a
-namespace.
+The name every object of this Environment carries, and the first label of
+its Platform address: the Application name, suffixed with the Environment
+except for prod.
 */}}
 {{- define "application.fullname" -}}
 {{- $name := include "application.name" . -}}
@@ -220,8 +220,8 @@ not refuse staging's tasks it does not run. No output.
 {{- end -}}
 
 {{/*
-The CronJob of a Scheduled task, from a list of the root context and the
-task's name.
+The name of a Scheduled task's CronJob, from a list of the root context and
+the task's name.
 */}}
 {{- define "application.tasks.name" -}}
 {{- printf "%s-%s" (include "application.fullname" (index . 0)) (index . 1) -}}
@@ -327,8 +327,8 @@ query string.
 {{- end -}}
 
 {{/*
-The Environment's own ForwardAuth Middleware, rendered only with sign-in
-groups.
+The name of the Environment's own ForwardAuth Middleware, rendered only
+with sign-in groups.
 */}}
 {{- define "application.login.middleware" -}}
 {{- printf "%s-itema-login" (include "application.fullname" .) -}}
@@ -391,8 +391,9 @@ http:
 
 {{/*
 The port the container listens on, as an integer. A Static site is an
-unprivileged nginx on 8080 (non-root cannot bind below 1024); its port value
-is ignored because older Static sites carry a meaningless 3000 there.
+unprivileged nginx on 8080 (non-root cannot bind below 1024). Its port value
+is ignored: existing Static sites' values files carry a meaningless 3000
+there, which honouring would break.
 */}}
 {{- define "application.port" -}}
 {{- if eq (include "application.kind" .) "static-site" -}}

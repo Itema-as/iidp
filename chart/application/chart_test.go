@@ -411,8 +411,8 @@ func TestRenderingRefusesInvalidValues(t *testing.T) {
 	}
 }
 
-// k3sVersionFile pins the k3s release whose Kubernetes minor the manifests
-// are validated against.
+// k3sVersionFile holds the k3s pin whose Kubernetes minor the manifests are
+// validated against.
 const k3sVersionFile = "../../infra/platform/variables.tf"
 
 var k3sVersionDefault = regexp.MustCompile(`(?s)variable "k3s_version" \{.*?default\s*=\s*"v(\d+\.\d+)\.\d+\+k3s\d+"`)

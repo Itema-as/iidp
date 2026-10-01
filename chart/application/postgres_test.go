@@ -395,8 +395,8 @@ func TestRenderingRefusesPostgresValuesItCannotHonour(t *testing.T) {
 		{"refuse-env-sets-database-url.yaml", `env must not set DATABASE_URL; the Postgres Capability injects it`},
 		{"refuse-postgres-static-site.yaml", `postgres.enabled needs kind: web-service; a Static site has no server to use a database`},
 		{"refuse-postgres-final-backup-timeout.yaml", `postgres.finalBackupTimeout must be a positive whole number of seconds`},
-		// `default 1800` in the validation would treat an explicit 0 as unset and
-		// let it through.
+		// The validation must not use `default 1800` as the Job's script does:
+		// that would treat an explicit 0 as unset and let it through.
 		{"refuse-postgres-final-backup-timeout-zero.yaml", `postgres.finalBackupTimeout must be a positive whole number of seconds, got 0`},
 	}
 	for _, tc := range cases {
