@@ -493,7 +493,7 @@ fi
 
 # ── idempotency: re-running a stage keeps an already-encrypted secret ────
 
-t_start "stage_github_app keeps an existing githubApp.id, never calls gh again, and writes the tfvars credential (#41)"
+t_start "stage_github_app keeps an existing githubApp.id, never calls gh again, and writes the tfvars credential"
 d=$(scratch_dir)
 mkdir -p "$d/platform-repo" "$d/infra-platform"
 cat > "$d/platform-repo/platform.yaml" <<'EOF'

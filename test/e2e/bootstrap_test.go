@@ -707,7 +707,7 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 	case jobEverSucceeded:
 		t.Fatalf("the final backup Job succeeded but no Backup reached phase completed (Backups seen: %v)", backupsSeen)
 	default:
-		t.Logf("ArgoCD deleted shop-staging without waiting for its PreDelete hook (argoproj/argo-cd#29100): hook Job observed: %v, Backups seen: %v; see docs/implementation-notes/39-final-backup-predelete-hook.md",
+		t.Logf("ArgoCD deleted shop-staging without waiting for its PreDelete hook (argoproj/argo-cd#29100): hook Job observed: %v, Backups seen: %v",
 			jobEverObserved, backupsSeen)
 	}
 
