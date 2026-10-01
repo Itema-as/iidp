@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
 #
-# Shell test suite for scripts/bootstrap-wizard.sh. Run from the repository
-# root (or anywhere: paths are resolved relative to this file):
+# Shell test suite for scripts/bootstrap-wizard.sh. Run from anywhere:
 #
 #   bash test/wizard/run.sh
 #
 # No network, no real git remotes, no real tofu/gh/sops/az/ssh calls: the
-# wizard's wrapper functions are exercised through IIDP_WIZARD_FAKE=1 and
-# IIDP_WIZARD_SOURCE_ONLY=1 (which stops the script after defining its
-# functions, so this file can call them directly and inspect the result).
-# This is the "fake run" the wizard CI job runs, alongside shellcheck.
+# wizard's wrapper functions are faked with IIDP_WIZARD_FAKE=1, and
+# IIDP_WIZARD_SOURCE_ONLY=1 stops the script after defining its functions so
+# this file can call them directly.
 set -uo pipefail
 
-# The wizard itself requires bash >= 4.3 (namerefs); fail clearly here too,
-# rather than have every test below fail confusingly because sourcing it
-# tripped its own version guard inside a subshell.
+# The wizard requires bash >= 4.3 (namerefs). Fail clearly here rather than
+# have every test trip the wizard's own guard inside a subshell.
 if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -lt 3 ]; }; then
   echo "test/wizard/run.sh requires bash >= 4.3, like the wizard itself (see scripts/bootstrap-wizard.sh)." >&2
   echo "On macOS: brew install bash, then run: \$(brew --prefix)/bin/bash test/wizard/run.sh" >&2
@@ -48,18 +45,14 @@ assert_success() { # assert_success "$?"
   if [[ "$1" == "0" ]]; then t_pass; else t_fail "expected exit 0, got $1"; fi
 }
 
-# Every test sources the wizard fresh (IIDP_WIZARD_SOURCE_ONLY=1: functions
-# only, main() does not run) into a subshell, so tests never share state.
-# Positional parameters are cleared before sourcing: otherwise the wizard's
-# own argument parser would see this function's argument ($1, the code to
-# eval) as its first CLI flag and reject it.
+# Every test sources the wizard fresh into a subshell, so tests never share
+# state. Positional parameters are cleared first, or the wizard's argument
+# parser would reject this function's $1 as a CLI flag.
 in_wizard() { # in_wizard 'shell code using the wizard's functions'
   local code="$1"
   ( set --
-    # A prefix like `VAR=1 source file` only sets VAR for the duration of
-    # that one command, reverting it the moment sourcing finishes and
-    # leaving it unbound (under the wizard's own set -u) for every line
-    # eval'd below. Plain assignments in this subshell persist instead.
+    # Plain assignments, not a `VAR=1 source file` prefix, which would
+    # leave VAR unbound under set -u for the lines eval'd below.
     # shellcheck disable=SC2034
     IIDP_WIZARD_SOURCE_ONLY=1
     # shellcheck disable=SC2034
@@ -85,10 +78,10 @@ else
   echo "skip - shellcheck not installed"
 fi
 
-# The admin opens every link in the browser and profile of their choice;
-# the wizard only prints it (#47). browser_openers FILE prints each line,
-# comments aside, that runs a browser opener in command position or builds
-# a self-submitting page.
+# The wizard only prints links, so the admin opens them in the browser and
+# profile of their choice. browser_openers FILE prints each line, comments
+# aside, that runs a browser opener in command position or builds a
+# self-submitting page.
 browser_openers() {
   local openers='open|xdg-open|wslview|explorer\.exe|sensible-browser|x-www-browser|www-browser|gnome-open|kde-open|gio[[:space:]]+open|cmd\.exe|powershell(\.exe)?|python3?[[:space:]]+-m[[:space:]]+webbrowser'
   local before='(^|[;&|({`]|(^|[^[:alnum:]_-])(then|else|do|exec|command|env|nohup|-v))[[:space:]]*'
@@ -137,7 +130,7 @@ d=$(scratch_dir)
 " >/dev/null 2>&1 )
 assert_eq "$?" "1"
 
-# ── tfvar_get_multiline / tfvar_set_multiline (the PEM, #41) ────────────
+# ── tfvar_get_multiline / tfvar_set_multiline (the PEM) ─────────────────
 
 t_start "tfvar_set_multiline writes a heredoc, tfvar_get_multiline reads it back verbatim"
 d=$(scratch_dir)
@@ -211,12 +204,10 @@ out=$(in_wizard "
 ")
 assert_eq "$out" "600"
 
-# ── saved OpenTofu plans (#47) ──────────────────────────────────────────
-# A saved plan holds every variable value in plaintext: the Hetzner token,
-# the Object Storage keys, the GitHub App private key. This repository is
-# public, so no plan may be committable, and the wizard deletes its own
-# once it has served its purpose. The fake tofu below writes a plan the way
-# the real one does and logs what it was asked to run.
+# ── saved OpenTofu plans ────────────────────────────────────────────────
+# A saved plan holds every variable value, secrets included, in plaintext,
+# so no plan may be committable and the wizard deletes its own after use.
+# The fake tofu below writes a plan and logs what it was asked to run.
 
 fake_tofu_bin() { # fake_tofu_bin -> a directory holding a fake tofu
   local bin
@@ -432,7 +423,7 @@ t_start "check_cloudflare_zone_readable succeeds against the fake response"
 ( in_wizard "check_cloudflare_zone_readable 'fake-token' 'itma.no'" )
 assert_success "$?"
 
-# ── Grafana Cloud push URLs and the credential probe (#47) ──────────────
+# ── Grafana Cloud push URLs and the credential probe ────────────────────
 
 # The Cloud Portal shows Loki's URL as a bare host; pasted as shown, Alloy
 # pushed to "/" and got 405 on every batch.
@@ -480,7 +471,7 @@ assert_eq "$out" "405"
 out=$(in_wizard "check_grafana_push prometheus 'https://prometheus-prod-00-prod-eu-west-0.grafana.net/api/prom/push' 654321 wrong-token || true; echo \$HTTP_STATUS")
 assert_eq "$out" "401"
 
-# ── Entra client credentials (#47) ──────────────────────────────────────
+# ── Entra client credentials ────────────────────────────────────────────
 
 t_start "is_guid recognises a secret ID and not a secret value"
 ( in_wizard "is_guid 3f2504e0-4f89-11d3-9a0c-0305e82c3301" )
@@ -573,8 +564,7 @@ out=$(in_wizard "
 rc=$?
 t_start "stage_github_app (fresh App) exits 0"
 assert_success "$rc"
-# The App key stays out of CI: only the Deploy gate and ArgoCD hold it,
-# from the Secret cloud-init writes (docs/implementation-notes/60-deploy-gate.md).
+# The App key stays out of CI: only the Deploy gate and ArgoCD hold it.
 t_start "stage_github_app (fresh App) sets no org secret or variable"
 assert_not_contains "$out" "org secret"
 assert_not_contains "$out" "org variable"
@@ -591,8 +581,7 @@ assert_contains "$out" "GitHub App name: iidp-deploy"
 assert_contains "$out" "Homepage URL: https://github.com/itema-as/iidp-platform"
 assert_contains "$out" "Webhook: untick Active"
 assert_contains "$out" "Contents: Read and write"
-# ArgoCD's Pull Request generator lists every Application repository's
-# pull requests with the App, for Preview Environments (#95).
+# ArgoCD's Pull Request generator lists pull requests with the App.
 assert_contains "$out" "Pull requests: Read-only"
 assert_contains "$out" "Only on this account"
 assert_contains "$out" "All repositories > Install"
@@ -790,8 +779,8 @@ assert_contains "$out" "Entra refused iidp-argocd's tenant, client id or secret 
 assert_not_contains "$out" "Trace ID"
 assert_not_contains "$out" "secret=["
 
-# Sign-in groups (#92): oauth2-proxy's registration needs the groups claim
-# in its ID tokens, and the argocd one is left as it was.
+# For sign-in groups, oauth2-proxy's registration needs the groups claim in
+# its ID tokens; the argocd one is left as it was.
 t_start "entra_register_app (manual) says to add the groups claim when asked"
 answers=$(scratch_dir)/answers.env
 printf '%s\n' "reg_tenant=11111111-1111-1111-1111-111111111111
@@ -827,7 +816,7 @@ out=$(in_wizard "
 assert_success "$?"
 assert_not_contains "$out" "groupMembershipClaims"
 
-# ── GHCR pull token (#59) ───────────────────────────────────────────────
+# ── GHCR pull token ─────────────────────────────────────────────────────
 
 t_start "http_header reads a header in any case, and tells an empty value from a missing one"
 out=$(in_wizard "
@@ -1064,7 +1053,7 @@ assert_contains "$content" "include: '{*/*/application.yaml,*/previews/applicati
 # A retrying sync stays pinned to the revision that failed unless
 # retry.refresh is set, and ArgoCD starts no new automated sync while one
 # runs, so without it a fix pushed to the Platform repository never
-# applies (#47). The e2e fixture's hand-written copies must agree.
+# applies. The e2e fixture's hand-written copies must agree.
 d=$(scratch_dir)
 in_wizard "
   PLATFORM_REPO='$d'
@@ -1080,10 +1069,8 @@ for file in platform-components.yaml platform-secrets.yaml applications.yaml; do
   assert_contains "$(cat "$TEST_DIR/../e2e/fixtures/platform-repo/bootstrap/$file")" "$retry_block"
 done
 
-# The kind e2e fixture's bootstrap/ is hand-written. It once carried
-# applications.yaml while the wizard never wrote it, so the first real
-# Platform discovered no Application at all and the e2e run could not
-# notice. Every top-level file the fixture has, the wizard must write.
+# The kind e2e fixture's bootstrap/ is hand-written, so a file there the
+# wizard does not write would pass e2e and be missing on a real Platform.
 t_start "the wizard writes every top-level bootstrap file the e2e fixture has"
 d=$(scratch_dir)
 in_wizard "
@@ -1131,9 +1118,8 @@ if command -v age-keygen >/dev/null 2>&1 && command -v sops >/dev/null 2>&1; the
   assert_contains "$decrypted" "prometheus-username:"
   assert_contains "$decrypted" "12345"
   # Grafana Cloud instance ids are plain numbers. Unquoted, YAML reads them
-  # as integers and the API server refuses the Secret ("stringData...
-  # expected string"), which is what broke platform-secrets on the first
-  # real bootstrap; every stringData value must stay a string.
+  # as integers and the API server refuses the Secret, so every stringData
+  # value must stay a string.
   t_start "numeric grafana usernames stay strings in the decrypted Secret"
   types=$(SOPS_AGE_KEY_FILE="$keydir/key.txt" sops --decrypt --output-type json "$d/bootstrap/sops/grafana-cloud.enc.yaml" 2>&1 \
     | jq -r '[.stringData[] | type] | unique | join(",")')
@@ -1207,7 +1193,7 @@ else
   echo "skip - age-keygen or sops not installed, skipping the sops round-trip test"
 fi
 
-# ── full script, --dry-run: the smoke test the ticket asks for ──────────
+# ── full script, --dry-run ──────────────────────────────────────────────
 
 t_start "--dry-run runs every stage without touching the network or disk, and exits 0"
 d=$(scratch_dir)
