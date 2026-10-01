@@ -13,11 +13,9 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// Preview Environments (#95): --previews writes an ArgoCD ApplicationSet,
-// applications/<name>/previews/applicationset.yaml, whose Pull Request
-// generator gives every open pull request labelled preview an Environment
-// rendered from staging's application.yaml
-// (docs/adr/0006-preview-environments-from-an-argocd-applicationset.md).
+// --previews writes applications/<name>/previews/applicationset.yaml, whose
+// Pull Request generator gives every open pull request labelled preview an
+// Environment rendered from staging's application.yaml.
 
 const previewsFile = "applications/shop/previews/applicationset.yaml"
 
@@ -83,8 +81,6 @@ func sourcePaths(sources []map[string]any) []string {
 	return paths
 }
 
-// createWithPreviews makes shop through the Create path with staging,
-// previews and the extra flags.
 func createWithPreviews(t *testing.T, url string, gh *fakeGitHub, extra ...string) (stdout string) {
 	t.Helper()
 	args := append([]string{"--name", "shop", "--path", "create", "--framework", "nextjs", "--staging", "--previews"}, extra...)

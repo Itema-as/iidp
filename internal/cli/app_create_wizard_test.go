@@ -10,12 +10,8 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// createApplicationInteractive runs iidp app create --interactive in-process,
-// scripting the wizard's answers as stdin (one per line, in the order
-// docs/design.md's wizard asks them), against the same bare Platform
-// repository and fake GitHub server the flag-driven tests use. --interactive
-// is the hidden flag that forces the wizard without a real terminal
-// (docs/implementation-notes/14-cli-wizard.md).
+// createApplicationInteractive runs iidp app create --interactive with the
+// wizard's answers as stdin, one per line.
 func createApplicationInteractive(t *testing.T, url string, deps cli.Dependencies, stdin string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	if deps.TokenSource == nil {
@@ -80,9 +76,7 @@ func TestAppCreateWizardFullRunAnsweringEveryQuestion(t *testing.T) {
 	}
 }
 
-// TestAppCreateWizardFlagsPreAnswerQuestions checks that a question whose
-// flag was already given is skipped entirely: it is never printed, and the
-// stdin script does not need to answer it.
+// A question whose flag was given is never printed or answered.
 func TestAppCreateWizardFlagsPreAnswerQuestions(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -112,10 +106,8 @@ func TestAppCreateWizardFlagsPreAnswerQuestions(t *testing.T) {
 	}
 }
 
-// TestAppCreateWizardOffersLoginForDomainsInsideTheZone checks that Itema
-// login is asked about when every custom domain is inside platform.yaml's
-// cloudflareZone, the login cookie's domain, and that the answer is
-// written with the domains (#76).
+// Itema login is offered when every custom domain is inside platform.yaml's
+// cloudflareZone, the login cookie's domain.
 func TestAppCreateWizardOffersLoginForDomainsInsideTheZone(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -147,9 +139,7 @@ func TestAppCreateWizardOffersLoginForDomainsInsideTheZone(t *testing.T) {
 	}
 }
 
-// TestAppCreateWizardSkipsLoginForADomainOutsideTheZone checks that the
-// login question is not asked when a custom domain is outside the zone,
-// and that the wizard says why, naming the domain.
+// The wizard says why it skips the login question, naming the domain.
 func TestAppCreateWizardSkipsLoginForADomainOutsideTheZone(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -175,9 +165,6 @@ func TestAppCreateWizardSkipsLoginForADomainOutsideTheZone(t *testing.T) {
 	}
 }
 
-// TestAppCreateWizardDefaultsTakenByEmptyAnswers checks that a blank answer
-// takes the bracketed default docs/design.md's wizard names for each
-// question.
 func TestAppCreateWizardDefaultsTakenByEmptyAnswers(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -207,9 +194,8 @@ func TestAppCreateWizardDefaultsTakenByEmptyAnswers(t *testing.T) {
 	}
 }
 
-// TestAppCreateWizardInvalidNameIsReAsked checks that an invalid answer is
-// rejected with an explanation and the question asked again, without ever
-// reaching the GitHub API or the Platform repository.
+// An invalid answer is explained and asked again, without reaching GitHub
+// or the Platform repository.
 func TestAppCreateWizardInvalidNameIsReAsked(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -232,9 +218,6 @@ func TestAppCreateWizardInvalidNameIsReAsked(t *testing.T) {
 	}
 }
 
-// TestAppCreateWizardMigrationQuestionShowsHelpTextAndDetectedSuggestion
-// checks docs/design.md's exact migration help text and that a detected
-// migration tool's suggested command is offered as the default.
 func TestAppCreateWizardMigrationQuestionShowsHelpTextAndDetectedSuggestion(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -276,9 +259,8 @@ func TestAppCreateWizardMigrationQuestionShowsHelpTextAndDetectedSuggestion(t *t
 	}
 }
 
-// TestAppCreateWizardDecliningTheSummaryHasNoSideEffects checks the
-// acceptance criterion by name: declining exits 0, and nothing was cloned
-// from GitHub or pushed to the Platform repository.
+// Declining exits 0, and nothing is cloned from GitHub or pushed to the
+// Platform repository.
 func TestAppCreateWizardDecliningTheSummaryHasNoSideEffects(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -303,10 +285,6 @@ func TestAppCreateWizardDecliningTheSummaryHasNoSideEffects(t *testing.T) {
 	}
 	assertNoApplications(t, url)
 }
-
-// The wizard's Adopt path (question 2 asking for --repo, skipping Kind and
-// framework) is covered end to end in app_create_adopt_test.go; it is
-// implemented, not refused, as of #15.
 
 func TestAppCreateWizardWithoutTTYAndWithoutInteractiveFlagBehavesAsBefore(t *testing.T) {
 	url := newPlatformRepository(t, testPlatformYAML)

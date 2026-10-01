@@ -13,7 +13,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platformrepo"
 )
 
-// secretSetOptions are the flags and positional arguments of secret set.
 type secretSetOptions struct {
 	application  string
 	environment  string
@@ -105,7 +104,6 @@ func runSecretSet(cmd *cobra.Command, opts secretSetOptions, deps Dependencies) 
 	return nil
 }
 
-// secretCountPhrase is "1 secret" or "N secrets", for the progress line.
 func secretCountPhrase(n int) string {
 	if n == 1 {
 		return "1 secret"
@@ -113,10 +111,9 @@ func secretCountPhrase(n int) string {
 	return fmt.Sprintf("%d secrets", n)
 }
 
-// collectSecrets turns the KEY=value positional arguments and the
-// --from-file and --stdin flags into the secrets to write, validating every
-// KEY and reading every file and stdin before anything is cloned or
-// written. It refuses a KEY given more than once across all three sources.
+// collectSecrets reads and validates every secret from the arguments,
+// --from-file and --stdin before anything is cloned. A KEY given more than
+// once across them is refused.
 func collectSecrets(cmd *cobra.Command, opts secretSetOptions) ([]platformrepo.Secret, error) {
 	if len(opts.stdinKeys) > 1 {
 		return nil, fmt.Errorf("--stdin can be given at most once: stdin can only be read once, for %s", strings.Join(opts.stdinKeys, ", "))
@@ -176,9 +173,8 @@ func collectSecrets(cmd *cobra.Command, opts secretSetOptions) ([]platformrepo.S
 	return secrets, nil
 }
 
-// trimTrailingNewline drops one trailing line ending (LF or CRLF), the way
-// a file or a piped value from a shell commonly carries one that is not
-// part of the intended value.
+// trimTrailingNewline drops one trailing LF or CRLF, which files and piped
+// values usually carry but is not part of the value.
 func trimTrailingNewline(s string) string {
 	s = strings.TrimSuffix(s, "\n")
 	s = strings.TrimSuffix(s, "\r")

@@ -15,10 +15,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// The Platform repository is stood in for by a local bare git repository,
-// seeded through a temporary clone with platform.yaml and an empty
-// applications/ directory, the layout docs/platform-repository.md describes.
-
 const testPlatformYAML = `baseDomain: app.itma.no
 chartVersion: 0.3.1
 argocdURL: https://argocd.platform.itma.no
@@ -26,7 +22,6 @@ grafanaURL: https://itema.grafana.net
 somethingAnotherTicketAdds: true
 `
 
-// fakeTokenSource stands in for the gh CLI.
 type fakeTokenSource struct {
 	token string
 	err   error
@@ -34,9 +29,8 @@ type fakeTokenSource struct {
 
 func (f fakeTokenSource) Token() (string, error) { return f.token, f.err }
 
-// setGitEnv makes git commits work on any machine, including CI runners
-// with no git identity, and isolates the tests from the developer's own
-// global git configuration (signing, hooks, credential helpers).
+// setGitEnv gives git an identity on CI runners without one, and isolates
+// the tests from the developer's global git configuration.
 func setGitEnv(t *testing.T) {
 	t.Helper()
 	empty := filepath.Join(t.TempDir(), "gitconfig")
@@ -51,7 +45,6 @@ func setGitEnv(t *testing.T) {
 	t.Setenv("GIT_COMMITTER_EMAIL", "developer@example.com")
 }
 
-// gitRun runs git in dir and fails the test on error.
 func gitRun(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -67,21 +60,15 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 
 // newPlatformRepository creates a bare repository whose main branch holds
 // platform.yaml, an empty applications/ directory and
-// bootstrap/templates/backups-credentials.enc.yaml (the file the bootstrap wizard
-// writes once for the Platform's age key, docs/implementation-notes/42-backups-credentials.md),
-// all in the one "Seed the Platform repository" commit every existing test
-// already expects: every --postgres test needs something for the CLI to
-// copy, so it is seeded here rather than by each test individually. Tests
-// that exercise its absence use newPlatformRepositoryWithoutBackupsCredentials
-// instead. Returns the repository's file:// URL.
+// bootstrap/templates/backups-credentials.enc.yaml, in one commit, and
+// returns its file:// URL.
 func newPlatformRepository(t *testing.T, platformYAML string) string {
 	t.Helper()
 	return newSeededPlatformRepository(t, platformYAML, true)
 }
 
 // newPlatformRepositoryWithoutBackupsCredentials is newPlatformRepository
-// without bootstrap/templates/backups-credentials.enc.yaml: only tests asserting the
-// CLI's refusal when the file is missing use this directly.
+// without bootstrap/templates/backups-credentials.enc.yaml.
 func newPlatformRepositoryWithoutBackupsCredentials(t *testing.T, platformYAML string) string {
 	t.Helper()
 	return newSeededPlatformRepository(t, platformYAML, false)
@@ -107,10 +94,7 @@ func newSeededPlatformRepository(t *testing.T, platformYAML string, withBackupsC
 }
 
 // seedApplicationRepository creates a bare repository seeded with files on
-// defaultBranch, the way an existing Application repository the Adopt path
-// reads looks from the outside, and returns its bare directory (so a test
-// can push a branch to it directly, simulating one already present) and
-// its file:// clone URL.
+// defaultBranch, and returns its directory and file:// clone URL.
 func seedApplicationRepository(t *testing.T, defaultBranch string, files map[string]string) (bareDir, cloneURL string) {
 	t.Helper()
 	setGitEnv(t)
@@ -129,7 +113,6 @@ func seedApplicationRepository(t *testing.T, defaultBranch string, files map[str
 	return bare, url
 }
 
-// cloneMain clones the Platform repository into a fresh directory.
 func cloneMain(t *testing.T, url string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
@@ -137,8 +120,6 @@ func cloneMain(t *testing.T, url string) string {
 	return dir
 }
 
-// headSubject is the subject of the newest commit on the Platform
-// repository's main.
 func headSubject(t *testing.T, url string) string {
 	t.Helper()
 	return strings.TrimSpace(gitRun(t, cloneMain(t, url), "log", "-1", "--format=%s"))
@@ -156,8 +137,7 @@ func refusePushes(t *testing.T, url, message string) {
 	}
 }
 
-// pushCommit adds files to the Platform repository behind the CLI's back,
-// the way another developer or a hand edit would.
+// pushCommit adds files to the Platform repository behind the CLI's back.
 func pushCommit(t *testing.T, url, message string, files map[string]string) {
 	t.Helper()
 	dir := cloneMain(t, url)
@@ -192,7 +172,6 @@ func readYAML(t *testing.T, path string) map[string]any {
 	return doc
 }
 
-// lookup walks nested maps and lists by string keys and integer indexes.
 func lookup(t *testing.T, doc any, path ...any) any {
 	t.Helper()
 	cur := doc
@@ -218,8 +197,6 @@ func lookup(t *testing.T, doc any, path ...any) any {
 	return cur
 }
 
-// createApplication runs iidp app create in-process against the Platform
-// repository at url with a fake token, the way tests drive the seam.
 func createApplication(t *testing.T, url string, deps cli.Dependencies, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	if deps.TokenSource == nil {
@@ -276,16 +253,14 @@ func TestAppCreateWritesProdEnvironmentToPlatformRepository(t *testing.T) {
 		{[]any{"spec", "syncPolicy", "automated", "prune"}, true},
 		{[]any{"spec", "syncPolicy", "automated", "selfHeal"}, true},
 		{[]any{"spec", "syncPolicy", "syncOptions", 0}, "CreateNamespace=true"},
-		// The namespace ArgoCD creates is an Application namespace: the
-		// guardrails' bindings select it by the first label, and Pod
-		// Security enforces restricted (#90, #110).
+		// The guardrails' bindings select the namespace by the first label.
 		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "iidp.itema.no/application"}, "shop"},
 		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "iidp.itema.no/environment"}, "prod"},
 		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "pod-security.kubernetes.io/enforce"}, "restricted"},
 		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "pod-security.kubernetes.io/warn"}, "restricted"},
 		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "pod-security.kubernetes.io/audit"}, "restricted"},
 		// A retry is always against the newest commit, so a fix pushed while
-		// a sync keeps failing is picked up (#75).
+		// a sync keeps failing is picked up.
 		{[]any{"spec", "syncPolicy", "retry", "limit"}, -1},
 		{[]any{"spec", "syncPolicy", "retry", "refresh"}, true},
 		{[]any{"spec", "syncPolicy", "retry", "backoff", "duration"}, "10s"},
@@ -323,7 +298,7 @@ func TestAppCreateWritesProdEnvironmentToPlatformRepository(t *testing.T) {
 		t.Errorf("values.yaml env = %v, want an empty map", lookup(t, values, "env"))
 	}
 	// The chart holds every image to non-root, so there is no setting for
-	// it (#110).
+	// it.
 	if got, has := values["runAsNonRoot"]; has {
 		t.Errorf("values.yaml runAsNonRoot = %v, want it absent: the chart no longer reads it", got)
 	}
@@ -388,7 +363,7 @@ func TestAppCreateListsMissingRequiredFlags(t *testing.T) {
 }
 
 // assertNoApplications checks that the Platform repository still holds only
-// what it was seeded with: nothing was written before the refusal.
+// what it was seeded with.
 func assertNoApplications(t *testing.T, url string) {
 	t.Helper()
 	if got := headSubject(t, url); got != "Seed the Platform repository" {
@@ -483,12 +458,9 @@ func TestAppCreateAcceptsStaticSiteKind(t *testing.T) {
 	}
 }
 
-// TestAppCreateRefusesAnExistingApplication covers a live Environment: a
-// prod/ (or staging/) with its own application.yaml, the file ArgoCD's own
-// bootstrap/applications.yaml glob and checkApplicationAbsent both treat as
-// "this Environment exists". A directory with values.yaml but no
-// application.yaml is the different, leftover case
-// TestAppCreateAfterDeleteReusesTheNameAndClearsTheLeftover covers.
+// An Environment exists when it has an application.yaml, the file ArgoCD's
+// bootstrap/applications.yaml glob matches. One with only values.yaml is a
+// leftover from app delete, which app create reuses.
 func TestAppCreateRefusesAnExistingApplication(t *testing.T) {
 	url := newPlatformRepository(t, testPlatformYAML)
 	pushCommit(t, url, "Add shop by hand", map[string]string{
@@ -584,11 +556,9 @@ func TestAppCreateFailsWhenTheApplicationAppearedWhileRunning(t *testing.T) {
 	deps := cli.Dependencies{BeforePush: func() error {
 		pushes++
 		if pushes == 1 {
-			// A live Environment, application.yaml included -- the same
-			// files a real, concurrently-successful iidp app create shop
-			// would have pushed. Seeding values.yaml alone would look like
-			// a leftover from iidp app delete instead, which the retry is
-			// meant to reuse, not refuse.
+			// A live Environment, application.yaml included, as a concurrent
+			// iidp app create shop would push. values.yaml alone would be a
+			// leftover from iidp app delete, which is reused, not refused.
 			pushCommit(t, url, "iidp app create shop", map[string]string{
 				"applications/shop/prod/application.yaml": "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: shop\n",
 				"applications/shop/prod/values.yaml":      "application:\n  name: shop\n",

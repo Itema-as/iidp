@@ -18,7 +18,6 @@ import (
 	"github.com/Itema-as/iidp/internal/render"
 )
 
-// addCapabilityOptions are the flags of app add-capability.
 type addCapabilityOptions struct {
 	postgres         bool
 	migrationCommand string
@@ -89,12 +88,9 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 	if err := platformrepo.ValidateName(name); err != nil {
 		return err
 	}
-	// Checked on the effective values, not cmd.Flags().Changed: --postgres=false
-	// or --staging=false is "changed" but asks for nothing, and would
-	// otherwise reach AddCapabilities with an all-zero Capabilities and no
-	// file to commit.
-	// --login-group is checked with Changed: --login-group '' (no groups at
-	// all) is a request too.
+	// Checked on the effective values, not Changed: --postgres=false is
+	// "changed" but asks for nothing. --login-group is the exception, since
+	// --login-group '' (remove every group) is a request too.
 	setLoginGroups := cmd.Flags().Changed("login-group")
 	if !opts.postgres && !opts.staging && len(opts.domains) == 0 && opts.size == "" && !opts.login && !setLoginGroups && !opts.previews {
 		return fmt.Errorf("at least one Capability flag is required: --postgres, --staging, --domain, --size, --login, --login-group or --previews")
@@ -112,9 +108,6 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 	if opts.size != "" && !slices.Contains(sizes, opts.size) {
 		return fmt.Errorf("unknown size %q: --size must be %s", opts.size, strings.Join(sizes, ", "))
 	}
-	// --login with --domain is checked by AddCapabilities against
-	// platform.yaml's cloudflareZone, before anything is written
-	// (docs/implementation-notes/76-login-in-zone-domains.md).
 
 	out := cmd.OutOrStdout()
 	migrationCommand, err := detectAddCapabilityMigrationCommand(opts.postgres, opts.migrationCommand, opts.appDir, out)
@@ -154,8 +147,6 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 	return nil
 }
 
-// capabilitySummary describes, for the progress line, which Capabilities
-// were asked for.
 func capabilitySummary(opts addCapabilityOptions, setLoginGroups bool, loginGroups []string) []string {
 	var s []string
 	if opts.postgres {
@@ -186,14 +177,9 @@ func capabilitySummary(opts addCapabilityOptions, setLoginGroups bool, loginGrou
 	return s
 }
 
-// detectAddCapabilityMigrationCommand resolves the migration command for
-// add-capability the same way runAppCreate's detectMigrationCommand does
-// for anything but the Create path: the explicit --migration-command flag
-// if given, otherwise, with --postgres, a detection in --app-dir or the
-// current directory when it has a package.json
-// (docs/implementation-notes/13-cli-capabilities.md). There is no generated
-// template to fall back to here: add-capability never creates an
-// Application repository.
+// detectAddCapabilityMigrationCommand returns --migration-command, or with
+// --postgres detects one in --app-dir or the current directory when it has
+// a package.json.
 func detectAddCapabilityMigrationCommand(postgres bool, migrationCommand, appDir string, out io.Writer) (string, error) {
 	if migrationCommand != "" {
 		return migrationCommand, nil

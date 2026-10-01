@@ -13,11 +13,8 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// Fixture package.json bodies for framework detection
-// (docs/implementation-notes/15-cli-adopt-path.md): Next.js keeps next as a
-// plain dependency, Vite React keeps vite as a devDependency with react as
-// a dependency (the shape create-vite itself produces), and a plain one
-// carries neither.
+// Fixture package.json bodies for framework detection. Vite React has the
+// shape create-vite produces: vite a devDependency, react a dependency.
 const (
 	nextJSPackageJSON    = `{"name":"shop","dependencies":{"next":"16.0.0","react":"19.0.0","react-dom":"19.0.0"}}`
 	viteReactPackageJSON = `{"name":"shop","dependencies":{"react":"19.0.0","react-dom":"19.0.0"},"devDependencies":{"vite":"8.0.0"}}`
@@ -26,7 +23,6 @@ const (
 	adoptedPrismaSchema  = "// schema\n"
 )
 
-// cloneBranch clones cloneURL's branch into a fresh directory.
 func cloneBranch(t *testing.T, url, branch string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
@@ -34,11 +30,8 @@ func cloneBranch(t *testing.T, url, branch string) string {
 	return dir
 }
 
-// assertOnlyAddedFiles clones cloneURL, fetches branch, and asserts that
-// the diff between the default branch and branch touches only want, all as
-// additions (status A) — the ticket's "the pull request contains only the
-// added files" assertion, checked by diffing the pushed branch against the
-// default branch.
+// assertOnlyAddedFiles asserts that branch differs from the default branch
+// only by adding want.
 func assertOnlyAddedFiles(t *testing.T, cloneURL, branch string, want []string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "diff")
@@ -67,8 +60,6 @@ func assertOnlyAddedFiles(t *testing.T, cloneURL, branch string, want []string) 
 	}
 }
 
-// pushExistingBranch simulates a pre-existing AdoptBranch on cloneURL, so
-// tests can assert that Adopt refuses rather than push over it.
 func pushExistingBranch(t *testing.T, cloneURL, branch string) {
 	t.Helper()
 	dir := cloneMain(t, cloneURL)
@@ -111,9 +102,8 @@ func TestAppAdoptWithoutDockerfileDetectsNextJSAndGeneratesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A short caller of the reusable deploy workflow, with the
-	// Application's name; app.itma.no's gate is the workflow's default
-	// (docs/implementation-notes/74-reusable-deploy-workflow.md).
+	// A short caller of the reusable deploy workflow; app.itma.no's gate
+	// is the workflow's default.
 	for _, want := range []string{
 		"uses: " + platform.DeployWorkflow + "@v0\n",
 		"application: shop\n",
@@ -275,8 +265,8 @@ func TestAppAdoptWithExistingDockerfileIsNeverModifiedAndRequiresKind(t *testing
 }
 
 // A Dockerfile that would run as root, with a known fix: the pull request
-// changes it, says how, and still adds the rest (#110). The fixes
-// themselves are nonroot_test.go's.
+// changes it, says how, and still adds the rest. The fixes themselves are
+// tested in nonroot_test.go.
 func TestAppAdoptFixesADockerfileThatRunsAsRoot(t *testing.T) {
 	platformURL := newPlatformRepository(t, testPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -445,8 +435,7 @@ func TestAppAdoptBindsTheApplicationRepositoryByID(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 	clone := cloneMain(t, platformURL)
-	// Bound under the Application's name, to the repository by the ids and
-	// full name GitHub reports.
+	// Bound to the repository by the ids and full name GitHub reports.
 	assertBinding(t, clone, "storefront", platform.Org+"/shop", gh.repoID(platform.Org, "shop"), fakeOrgID)
 	if got := headSubject(t, platformURL); got != "iidp app create storefront" {
 		t.Errorf("head commit = %q, want iidp app create storefront", got)
@@ -675,11 +664,6 @@ func TestAppAdoptCapabilitiesApplyTheSameAsCreate(t *testing.T) {
 	}
 }
 
-// TestAppAdoptRefusesPostgresOnAStaticSiteBeforeOpeningAPullRequest checks
-// that --postgres against a detected Static site (Vite React, no --kind
-// override) is refused before any branch is pushed or pull request opened
-// — not after, the way a check running only once Adopter.Adopt has
-// already committed to writing would (docs/implementation-notes/15-cli-adopt-path.md).
 func TestAppAdoptRefusesPostgresOnAStaticSiteBeforeOpeningAPullRequest(t *testing.T) {
 	platformURL := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)

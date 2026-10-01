@@ -11,16 +11,11 @@ import (
 	"github.com/Itema-as/iidp/internal/cli"
 )
 
-// testBackupsCredentialsPath is the real bootstrap/templates/backups-credentials.enc.yaml
-// the kind end-to-end fixture carries
-// (test/e2e/fixtures/platform-repo/bootstrap/templates/backups-credentials.enc.yaml),
-// the same file a real bootstrap wizard run writes once for the Platform's
-// age key. Tests here reference it directly, rather than duplicating its
-// bytes, so the CLI's byte-for-byte copy is proven against the exact
-// content the e2e fixture (and a real Platform) would carry.
+// testBackupsCredentialsPath is the e2e fixture's
+// backups-credentials.enc.yaml, referenced rather than copied so the CLI's
+// byte-for-byte copy is checked against the real content.
 const testBackupsCredentialsPath = "../../test/e2e/fixtures/platform-repo/bootstrap/templates/backups-credentials.enc.yaml"
 
-// readBackupsCredentialsFixture reads testBackupsCredentialsPath.
 func readBackupsCredentialsFixture(t *testing.T) []byte {
 	t.Helper()
 	abs, err := filepath.Abs(testBackupsCredentialsPath)
@@ -34,16 +29,11 @@ func readBackupsCredentialsFixture(t *testing.T) []byte {
 	return data
 }
 
-// assertBackupsCredentialsCopied asserts that clone's
-// applications/<app>/<environment>/sops/backups-credentials.enc.yaml is a
-// byte-for-byte copy of the fixture file, is listed in that directory's
-// ksops.yaml, and -- when sops is on PATH -- decrypts with the fixture
-// private key to the expected Secret: no namespace (valid in any
-// Environment), the needs-hash annotation, and the two Object Storage
-// keys. Decrypting a file that lives under a different path than the one
-// it was originally encrypted at is itself part of what is being proven:
-// SOPS's MAC covers the values, not the document's location
-// (docs/implementation-notes/42-backups-credentials.md).
+// assertBackupsCredentialsCopied asserts that the Environment's
+// sops/backups-credentials.enc.yaml is a byte-for-byte copy of the fixture,
+// is listed in ksops.yaml, and, when sops is on PATH, decrypts to the
+// expected Secret. Decrypting it at a different path than it was encrypted
+// at is part of the point: SOPS's MAC covers the values, not the location.
 func assertBackupsCredentialsCopied(t *testing.T, clone, app, environment string) {
 	t.Helper()
 	want := readBackupsCredentialsFixture(t)
@@ -94,7 +84,7 @@ func assertBackupsCredentialsCopied(t *testing.T, clone, app, environment string
 
 	// The chart references this Secret through
 	// platform.backupsCredentialsSecret, not envFrom, so it must never be
-	// added to values.yaml's secrets: list (docs/implementation-notes/42-backups-credentials.md).
+	// added to values.yaml's secrets: list.
 	values, err := os.ReadFile(filepath.Join(clone, "applications", app, environment, "values.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -107,10 +97,8 @@ func assertBackupsCredentialsCopied(t *testing.T, clone, app, environment string
 }
 
 // assertOneSopsSource asserts that applicationYAMLPath's spec.sources lists
-// the Environment's sops/ directory exactly once, however many callers
-// (iidp secret set, then iidp app create/add-capability --postgres) added
-// to it: render.AddKustomizeSource matches by path and must stay a no-op
-// once the source already exists.
+// the Environment's sops/ directory exactly once, however many commands
+// added it.
 func assertOneSopsSource(t *testing.T, applicationYAMLPath, app, environment string) {
 	t.Helper()
 	doc := readYAML(t, applicationYAMLPath)
@@ -129,14 +117,8 @@ func assertOneSopsSource(t *testing.T, applicationYAMLPath, app, environment str
 	}
 }
 
-// sopsAvailable reports whether sops is on PATH, without failing or
-// skipping the whole test: the byte-for-byte and ksops.yaml assertions in
-// assertBackupsCredentialsCopied must still run either way; only the
-// decrypt round trip needs the binary, exactly as
-// docs/implementation-notes/16-cli-secret-set.md already established for
-// iidp secret set's own tests (requireSops, which does skip the whole
-// test, is used directly where the entire test is about the decrypted
-// content).
+// sopsAvailable reports whether sops is on PATH. Unlike requireSops it does
+// not skip, so the assertions that need no binary still run.
 func sopsAvailable() bool {
 	_, err := exec.LookPath("sops")
 	return err == nil
@@ -199,12 +181,8 @@ func TestAppAddCapabilityPostgresCopiesBackupsCredentials(t *testing.T) {
 }
 
 // TestAppAddCapabilityPostgresCopiesBackupsCredentialsWithExistingSecrets
-// covers an Environment that already has another secret set
-// (iidp secret set) before Postgres is added: the existing sops/ directory,
-// its kustomization.yaml/ksops.yaml and the application.yaml's sops source
-// (added by secret set) must all be preserved, and application.yaml's sops
-// source must stay listed exactly once (render.AddKustomizeSource's own
-// idempotency), not duplicated by the Postgres Capability adding it again.
+// covers an Environment that already has a secret: its sops/ directory is
+// preserved, and application.yaml's sops source stays listed once.
 func TestAppAddCapabilityPostgresCopiesBackupsCredentialsWithExistingSecrets(t *testing.T) {
 	requireSops(t)
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML+"agePublicKey: "+testAgePublicKey+"\n")
@@ -222,7 +200,6 @@ func TestAppAddCapabilityPostgresCopiesBackupsCredentialsWithExistingSecrets(t *
 	clone := cloneMain(t, url)
 	assertBackupsCredentialsCopied(t, clone, "shop", "prod")
 
-	// The pre-existing secret's own file and ksops.yaml entry must survive.
 	sopsDir := filepath.Join(clone, "applications", "shop", "prod", "sops")
 	if _, err := os.Stat(filepath.Join(sopsDir, "api-key.enc.yaml")); err != nil {
 		t.Errorf("the pre-existing api-key.enc.yaml is gone: %v", err)

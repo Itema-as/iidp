@@ -14,7 +14,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platformrepo"
 )
 
-// deleteOptions are the flags of app delete.
 type deleteOptions struct {
 	force        bool
 	interactive  bool
@@ -88,10 +87,8 @@ func runAppDelete(cmd *cobra.Command, name string, opts deleteOptions, deps Depe
 	return nil
 }
 
-// isTerminalReader reports whether r is a character device, the same cheap
-// check (no new dependency) used to decide whether app delete should
-// prompt: a real terminal is *os.File backed by one; the buffers and pipes
-// tests and scripts pass are not.
+// isTerminalReader reports whether r is an *os.File on a character device,
+// which buffers and pipes are not.
 func isTerminalReader(r io.Reader) bool {
 	f, ok := r.(*os.File)
 	if !ok {
@@ -104,8 +101,6 @@ func isTerminalReader(r io.Reader) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-// readLine reads one line from r, trimmed of surrounding whitespace, for
-// the typed-back confirmation.
 func readLine(r io.Reader) (string, error) {
 	scanner := bufio.NewScanner(r)
 	if !scanner.Scan() {

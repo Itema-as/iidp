@@ -8,18 +8,14 @@ import (
 	"github.com/Itema-as/iidp/internal/cli"
 )
 
-// Sign-in groups (#92): --login-group restricts Itema login to the members
-// of Entra groups, written as login.groups into every Environment. The CLI
-// checks only the shape of each id, a GUID, and lowercases it
-// (docs/implementation-notes/92-sign-in-groups.md).
+// --login-group is written as login.groups into every Environment. The CLI
+// checks only that each id is a GUID, and lowercases it.
 
 const (
 	groupA = "0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b"
 	groupB = "6e1d2c3b-4a5f-4b6c-8d7e-9f0a1b2c3d4e"
 )
 
-// loginGroups reads login.groups from an Environment's values.yaml on the
-// Platform repository's main.
 func loginGroups(t *testing.T, clone, env string) []string {
 	t.Helper()
 	values := readYAML(t, filepath.Join(clone, "applications/shop", env, "values.yaml"))

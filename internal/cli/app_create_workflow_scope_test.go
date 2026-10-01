@@ -11,7 +11,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// The workflow-scope check (docs/implementation-notes/47-workflow-scope.md):
 // Create and Adopt push .github/workflows/deploy.yaml with the developer's
 // gh token, which GitHub refuses without the workflow scope, so both refuse
 // up front instead of failing after the Application repository exists.
@@ -90,9 +89,8 @@ func TestAppCreatePathProceedsWhenGitHubReportsNoScopes(t *testing.T) {
 }
 
 func TestAppCreateWithoutPathNeverChecksTheWorkflowScope(t *testing.T) {
-	// The legacy bare path writes only the Platform repository, which has
-	// no workflow the CLI touches: no scope is needed, and GitHub's API is
-	// not called at all.
+	// Without --path only the Platform repository is written: no scope is
+	// needed, and GitHub's API is not called.
 	platformURL := newPlatformRepository(t, testPlatformYAML)
 	gh := newFakeGitHub(t)
 	gh.setScopes(scopesWithoutWorkflow)

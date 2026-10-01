@@ -17,10 +17,8 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// iidp app status is tested through the CLI seam against a fake Deploy
-// gate. The CLI finds the gate at https://deploy.<baseDomain>; gateRoute
-// sends whatever it asks for there to the fake instead, and records the
-// URL it asked for.
+// gateRoute sends the CLI's requests to https://deploy.<baseDomain> to a
+// fake gate, and records the URL asked for.
 
 const statusPlatformYAML = `baseDomain: app.example.test
 chartVersion: 0.3.1
@@ -48,7 +46,6 @@ func (g *gateRoute) RoundTrip(r *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(routed)
 }
 
-// newFakeStatusGate serves GET /v1/status/{app} with answer.
 func newFakeStatusGate(t *testing.T, answer func(w http.ResponseWriter, application string)) *gateRoute {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -113,8 +110,8 @@ func shopStatus() platformstate.Status {
 				Activity: &platformstate.Activity{State: "Deploying", Stuck: true, Reason: "the migration failed",
 					Deploy: &platformstate.Deploy{Tag: "sha-2", Hop: platformstate.HopApplying, Stuck: true, Reason: "the migration failed"}},
 			},
-			// hello-pr-2 in #132: its migration's Pod, and a task run's,
-			// cannot be scheduled.
+			// A preview whose migration Pod, and a task run's, cannot be
+			// scheduled.
 			{Name: "pr-2", Namespace: "shop-pr-2", ArgoCD: &platformstate.ArgoCD{Application: "shop-pr-2", Sync: "OutOfSync", Health: "Missing",
 				Operation: &platformstate.Operation{Phase: "Running", StartedAt: tp("2026-09-29T09:40:00Z")}},
 				Migration: &platformstate.Run{Result: "pending", StartedAt: tp("2026-09-29T09:41:00Z")},
@@ -214,7 +211,7 @@ func TestAppStatusJSONIsTheGatesAnswer(t *testing.T) {
 	if string(want) != string(again) {
 		t.Errorf("--json = %s\nwant %s", again, want)
 	}
-	// The documented keys, spelled as README.md spells them.
+	// The keys, spelled as README.md spells them.
 	for _, key := range []string{`"application": "shop"`, `"repository"`, `"environments"`, `"argocd"`, `"sync": "Synced"`, `"health"`, `"operation"`, `"image"`, `"deployedAt": "2026-09-21T10:00:00Z"`, `"pods"`, `"ready"`, `"restarts"`, `"migration"`, `"tasks"`, `"lastRun"`, `"addresses"`, `"links"`, `"grafana"`,
 		`"condition": {`, `"state": "Degraded"`, `"reason": "shop-staging-a is in CrashLoopBackOff"`, `"activity": {`, `"stuck": true`,
 		`"deploy": {`, `"hop": "RollingOut"`, `"promote": true`, `"tag": "sha-2"`, `"activity": null`} {

@@ -9,10 +9,8 @@ import (
 	"testing"
 )
 
-// ci set-image sends the Scheduled tasks of iidp.yaml with the tag, and
-// none (the key left out) without them, which the gate takes as "remove
-// them" (docs/implementation-notes/91-scheduled-tasks.md). The fakes are
-// ci_set_image_test.go's.
+// ci set-image sends iidp.yaml's Scheduled tasks with the tag, and leaves
+// the key out without them, which the gate takes as "remove them".
 
 func TestCISetImageSendsTheTasksFromIidpYAML(t *testing.T) {
 	for _, tc := range []struct {

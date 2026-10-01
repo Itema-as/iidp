@@ -12,8 +12,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// bindApplication runs iidp app bind in-process against the Platform
-// repository at url and the fake GitHub API gh.
 func bindApplication(t *testing.T, url string, gh *fakeGitHub, name string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	deps := cli.Dependencies{TokenSource: fakeTokenSource{token: "gho_test"}, GitHubAPI: gh.srv.URL}
@@ -51,7 +49,7 @@ func TestAppCreateWithoutPathWritesNoBindingAndSaysHowToBind(t *testing.T) {
 }
 
 func TestAppBindBackfillsAnApplicationWithoutIDs(t *testing.T) {
-	// The live Platform's hello: made before Create and Adopt recorded ids.
+	// An Application created without --path has no binding.
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url, "--staging")
 	gh := newFakeGitHub(t)

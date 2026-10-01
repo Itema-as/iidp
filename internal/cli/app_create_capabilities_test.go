@@ -11,11 +11,10 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// testCapabilitiesPlatformYAML is testPlatformYAML plus the fields the
-// Postgres and custom domain Capabilities need: a backups bucket and
+// testCapabilitiesPlatformYAML is testPlatformYAML plus a backups bucket and
 // endpoint, and a Cloudflare zone one label wider than baseDomain so tests
 // can tell "wildcard-covered", "in the zone but foreign" and "outside the
-// zone" apart (docs/implementation-notes/13-cli-capabilities.md).
+// zone" apart.
 const testCapabilitiesPlatformYAML = testPlatformYAML + `cloudflareZone: itma.no
 backupsBucket: itema-iidp-db-backups
 objectStorageEndpoint: https://hel1.your-objectstorage.com
@@ -107,8 +106,7 @@ func TestAppCreateExplicitMigrationCommandOverridesDetection(t *testing.T) {
 	}
 	// Without --path there is no Application repository to write iidp.yaml
 	// into, so the command is printed as the line to add there; the
-	// Platform's is left for the Deploy gate
-	// (docs/implementation-notes/66-migration-command-in-repo.md).
+	// Platform's is left for the Deploy gate.
 	if !strings.Contains(stdout, "Add this line to iidp.yaml and push:\n  migrationCommand: custom-migrate.sh\n") {
 		t.Errorf("stdout = %q, want the iidp.yaml line with the explicit command", stdout)
 	}
@@ -231,7 +229,7 @@ func TestAppCreateStagingWritesASecondEnvironment(t *testing.T) {
 		t.Errorf("staging namespace = %v, want shop-staging", got)
 	}
 	// Both namespaces are Application namespaces, with their own
-	// Environment's identity and the same Pod Security levels (#90).
+	// Environment's identity and the same Pod Security levels.
 	for _, env := range []struct {
 		name string
 		app  map[string]any
@@ -405,10 +403,8 @@ func TestAppCreateRefusesDomainEqualToAPlatformAddress(t *testing.T) {
 }
 
 // deploy.<baseDomain> is the Deploy gate and auth.<baseDomain> the Itema
-// login. An Application serving either address would share it with the
-// Platform, and one serving the gate's could receive the OIDC tokens other
-// Applications' workflows mint for it
-// (docs/implementation-notes/60-deploy-gate.md).
+// login. An Application serving the gate's address could receive the OIDC
+// tokens other Applications' workflows mint for it.
 func TestAppCreateRefusesThePlatformsOwnAddresses(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 
@@ -462,7 +458,7 @@ func TestAppCreateLoginEnablesInEveryEnvironment(t *testing.T) {
 			t.Errorf("%s values.yaml login.enabled = %v, want true", env, got)
 		}
 		// The login cookie's domain, platform.yaml's cloudflareZone, which
-		// the chart checks custom domains against (#76).
+		// the chart checks custom domains against.
 		if got := lookup(t, values, "platform", "loginCookieDomain"); got != "itma.no" {
 			t.Errorf("%s values.yaml platform.loginCookieDomain = %v, want itma.no", env, got)
 		}

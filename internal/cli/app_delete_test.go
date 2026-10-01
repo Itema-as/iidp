@@ -10,9 +10,8 @@ import (
 	"github.com/Itema-as/iidp/internal/cli"
 )
 
-// deleteApplication runs iidp app delete in-process against the Platform
-// repository at url, with stdin standing in for what a developer would
-// type at the confirmation prompt.
+// deleteApplication runs iidp app delete with stdin as the typed
+// confirmation.
 func deleteApplication(t *testing.T, url, name, stdin string, deps cli.Dependencies, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	if deps.TokenSource == nil {
@@ -107,15 +106,9 @@ func TestAppDeleteRefusesUnknownApplication(t *testing.T) {
 	}
 }
 
-// TestAppDeleteIsOneCommitRemovingEveryEnvironment covers both Postgres and
-// non-Postgres Applications: since #39, iidp app delete never writes a
-// final Backup or Application manifest itself (the chart's ArgoCD
-// PreDelete hook takes the final backup instead,
-// chart/application/templates/final-backup-job.yaml), so deleting always
-// removes every Environment's application.yaml in exactly one commit,
-// whether or not Postgres was enabled. values.yaml is deliberately left in
-// place (internal/platformrepo/delete.go's own doc comment explains why:
-// ArgoCD needs it to render the PreDelete hook at deletion time).
+// app delete removes every Environment's application.yaml in one commit,
+// with or without Postgres: the chart's PreDelete hook takes the final
+// backup.
 func TestAppDeleteIsOneCommitRemovingEveryEnvironment(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -148,7 +141,7 @@ func TestAppDeleteIsOneCommitRemovingEveryEnvironment(t *testing.T) {
 					t.Errorf("applications/shop/%s/application.yaml should be gone, stat err = %v", env, err)
 				}
 				// Left in place: ArgoCD needs it to render the Environment's
-				// PreDelete hook at deletion time (internal/platformrepo/delete.go).
+				// PreDelete hook at deletion time.
 				if _, err := os.Stat(filepath.Join(clone, "applications/shop", env, "values.yaml")); err != nil {
 					t.Errorf("applications/shop/%s/values.yaml should still exist, stat err = %v", env, err)
 				}
@@ -176,20 +169,9 @@ func TestAppDeleteIsOneCommitRemovingEveryEnvironment(t *testing.T) {
 	}
 }
 
-// TestAppCreateAfterDeleteReusesTheNameAndClearsTheLeftover documents the
-// resolution of what was originally a deliberate trade-off: developers
-// never edit the Platform repository by hand
-// (docs/platform-repository.md), so recreating an Application right after
-// deleting it must not need one either. iidp app delete removes only
-// application.yaml (internal/platformrepo/delete.go's own doc comment,
-// docs/implementation-notes/39-final-backup-predelete-hook.md), leaving
-// values.yaml (and any secrets) behind so the ArgoCD PreDelete hook can
-// still render at deletion time; iidp app create notices a directory under
-// applications/<name>/ with no live application.yaml anywhere in it,
-// names it, removes it, and creates the Application as normal, in the
-// same commit as the new Environment's files. A directory that does have a
-// live application.yaml is still refused
-// (TestAppCreateRefusesAnExistingApplication).
+// app delete leaves values.yaml and secrets behind for the PreDelete hook.
+// app create removes such a leftover directory, one with no
+// application.yaml, in the same commit as the new Environment's files.
 func TestAppCreateAfterDeleteReusesTheNameAndClearsTheLeftover(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url, "--staging")
@@ -229,14 +211,8 @@ func TestAppCreateAfterDeleteReusesTheNameAndClearsTheLeftover(t *testing.T) {
 	}
 }
 
-// TestAppDeleteTwiceRefusesTheSecondAttemptClearly covers a code-review
-// finding: deleting the same Application a second time (whether run twice
-// by mistake, or on an Application some other command already deleted)
-// must refuse with the same clear ErrApplicationMissing message a
-// never-existed Application gets, not a low-level git error from trying to
-// `git rm` an empty path list -- appDir still exists after the first
-// delete (its own leftover values.yaml, left in place on purpose), but no
-// Environment has a live application.yaml anymore.
+// A second delete gets ErrApplicationMissing, not a git error from
+// `git rm` with no paths: the leftover values.yaml keeps the directory.
 func TestAppDeleteTwiceRefusesTheSecondAttemptClearly(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url)
@@ -262,10 +238,7 @@ func TestAppDeleteNeverTouchesApplicationRepository(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url, "--postgres")
 	deps := cli.Dependencies{
-		// Any GitHub API call the delete path made would try to reach this
-		// (deliberately invalid) base URL and fail; a passing run proves
-		// delete never talks to GitHub's API at all (the Application
-		// repository is only ever reached through it).
+		// Any GitHub API call would fail against this URL.
 		GitHubAPI: "http://127.0.0.1:1/unreachable",
 	}
 
