@@ -1,6 +1,6 @@
-/* Argus: one dark look (#115). The system's own sans-serif; nothing is
-   loaded from outside. Loud states are told apart by a mark and a border
-   as well as by colour. */
+/* One dark look, in the system's own sans-serif: nothing is loaded from
+   outside. Loud states are told apart by a mark and a border as well as by
+   colour. */
 
 :root {
   --ink: #e6edf3;
@@ -119,8 +119,8 @@ body.lost #stage .labels { opacity: 0.55; filter: grayscale(1); }
 .dot.resolved { background: var(--resolved); }
 .dot.seam { background: none; border: 1px solid var(--muted); border-radius: 0; height: 1px; width: 10px; transform: translateY(-3px); }
 
-/* The detail card (#113, panel B): next to its object. A peek lets the
-   pointer through; a pinned card takes it. */
+/* The detail card sits next to its object. A peek lets the pointer
+   through; a pinned card takes it. */
 #card {
   position: fixed; top: 0; left: 0; z-index: 13; width: 320px;
   max-height: calc(100% - 80px); overflow: auto;

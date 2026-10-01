@@ -1,5 +1,3 @@
-// The stream's resilience: reloading, boundedly, when the Itema login
-// session has expired.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { connect, loginExpired, reloadAllowed, retryDelay, FAILING_FOR, RELOADS_KEY } from '../web/js/stream.js';

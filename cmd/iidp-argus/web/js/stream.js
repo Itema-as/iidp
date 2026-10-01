@@ -1,17 +1,12 @@
 // @ts-check
-// The page's connection to Argus: the server-sent events at /events
-// (internal/argus/doc.go), and what to do when they stop.
-//
-// EventSource reconnects by itself after a dropped connection. It gives up
-// for good (readyState CLOSED) when an answer is not a stream: after the
-// Itema login session expires, oauth2-proxy answers with a redirect to
-// the sign-in page, which EventSource cannot follow. Only loading the page
-// again signs the person in again, so the page reloads itself then, and
-// also when the stream has kept failing for a long time while Argus itself
-// answers. While Argus does not answer at all, the page keeps the last
-// known state on screen and keeps trying. Reloads are bounded
-// (reloadAllowed), so a page that cannot recover never reloads in a fast
-// loop.
+// EventSource reconnects by itself after a dropped connection, but gives up
+// for good (readyState CLOSED) when an answer is not a stream. Once the Itema
+// login session expires, oauth2-proxy answers with a redirect to the sign-in
+// page, which EventSource cannot follow, and only loading the page again signs
+// the person in. So the page reloads itself then, and when the stream keeps
+// failing while Argus answers. While Argus does not answer at all, the page
+// keeps the last known state and keeps trying. reloadAllowed bounds the
+// reloads, so a page that cannot recover never reloads in a fast loop.
 
 /** The events the stream sends. */
 export const EVENTS = ['snapshot', 'application', 'application-removed', 'component', 'component-removed', 'note', 'cluster'];

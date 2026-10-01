@@ -1,9 +1,6 @@
 // @ts-check
-// The drawing's seam (#97, #115): everything the rest of the page asks of
-// the drawing. Build it in a container; draw a frame from the model; say
-// where an Application or a thing is, what is under the pointer, and
-// where a point is on the screen; and fly the camera where the automatic
-// camera or a click says. A second drawing would implement the same.
+// Everything the rest of the page asks of the drawing. A different drawing
+// would implement the same interface.
 
 import { createStage } from './stage.js';
 import { createNetwork } from './network.js';
@@ -28,10 +25,7 @@ export function createDrawing(container, options) {
   const homeDistance = () => stage.rig.distanceFor((model ? network.reach(model) : 20) + 4);
 
   return {
-    /**
-     * Draws a frame.
-     * @param {number} t @param {View} view
-     */
+    /** @param {number} t @param {View} view */
     frame(t, view) {
       model = view.model;
       stage.rig.update(t);

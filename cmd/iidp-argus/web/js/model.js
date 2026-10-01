@@ -1,10 +1,9 @@
 // @ts-check
-// The page's model: the domain objects from the stream, replaced whole as
-// the stream sends them, plus what only the page knows: each
-// Application's orbit slot, kept for life, and the times the page saw
-// things happen, from which every animation runs, so that a redraw never
-// restarts one (#115 "Animations run from timestamps held in the model").
-// Times are the page's clock (performance.now()), except the notes' own.
+// The domain objects from the stream, replaced whole as they arrive, plus
+// what only the page knows: each Application's orbit slot, kept for life, and
+// the times the page saw things happen. Every animation runs from those
+// times, so a redraw never restarts one. Times are the page's clock
+// (performance.now()), except the notes' own.
 
 import { addNote, trim } from './feed.js';
 import { deployKey } from './deploys.js';

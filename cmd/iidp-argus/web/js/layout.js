@@ -1,8 +1,6 @@
 // @ts-check
-// Where things sit (#102, #115 "The drawing"), as plain numbers: the
-// Platform core at the centre with its components on a ring round it, and
-// each Application on a fixed orbit slot with one filament to the core.
-// Nothing here imports three.js; the drawing turns these into vectors.
+// Where things sit, as plain numbers. Nothing here imports three.js; the
+// drawing turns these into vectors.
 
 /** @typedef {import('./types.js').Vec} Vec */
 

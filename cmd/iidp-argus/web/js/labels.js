@@ -1,8 +1,4 @@
 // @ts-check
-// Keeping labels from piling up where Applications crowd together (#115
-// "Must be done in this build"). Each label is a box on the screen with a
-// priority; the more important one keeps its place and the one it would
-// cover is hidden until there is room again.
 
 /**
  * @typedef {{id: string, x: number, y: number, w: number, h: number, priority: number}} Box

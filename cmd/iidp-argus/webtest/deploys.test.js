@@ -1,4 +1,3 @@
-// Which hop a Deploy is on, and where its bead is (#106).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { beadsFor, hopStrip, TRAVEL } from '../web/js/deploys.js';

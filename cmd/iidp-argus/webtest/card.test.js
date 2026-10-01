@@ -1,4 +1,3 @@
-// What the detail card shows (#113), and how each state reads (#100).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { componentCard, coreCard, environmentCard } from '../web/js/card.js';

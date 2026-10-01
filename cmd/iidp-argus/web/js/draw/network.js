@@ -1,10 +1,6 @@
 // @ts-check
-// The particle network (#97's drawing decision, #115 "The drawing"): the
-// Platform as a dense core with its components round it, each Application
-// on its orbit with one filament to the core, each Environment a cloud of
-// linked particles with its Capabilities on it, and Deploys travelling
-// the filaments as beads. Everything is drawn again every frame from the
-// model and the times it holds, so a redraw never restarts an animation.
+// Everything is drawn again every frame from the model and the times it
+// holds, so a redraw never restarts an animation.
 
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';

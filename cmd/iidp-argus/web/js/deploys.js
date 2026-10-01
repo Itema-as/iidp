@@ -1,7 +1,4 @@
 // @ts-check
-// Deploys and Promotes (#106): which hop each is at, the hop strip a card
-// shows, and where each Deploy's bead is along its route. Routes are named
-// waypoints; the drawing knows where the waypoints are.
 
 /** @typedef {import('./types.js').Deploy} Deploy */
 /** @typedef {import('./types.js').Environment} Environment */

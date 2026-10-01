@@ -1,8 +1,6 @@
 // @ts-check
-// The detail card on the page (#113, panel B): a peek next to what the
-// pointer is on, which replaces tooltips; pinned by a click, with the
-// read-only links and "All details"; kept next to its object as the
-// camera moves; closed by Esc, its close button or a click on empty space.
+// The detail card replaces tooltips: a peek next to what the pointer is on,
+// or pinned by a click, with the links and "All details".
 
 import { h, safeHref } from './dom.js';
 import { ageText } from '../feed.js';

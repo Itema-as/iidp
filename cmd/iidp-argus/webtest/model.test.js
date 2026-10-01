@@ -1,4 +1,3 @@
-// The page's model: slots kept for life, and the times animations run from.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createModel, CRUMBLE, SINK, STREAM_GRACE } from '../web/js/model.js';
