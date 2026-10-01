@@ -7,8 +7,7 @@ import (
 	_ "time/tzdata"
 )
 
-// The loudness of a note: how much the camera cares about it (#103, with
-// the Deploy-tracing decision's additions, #106). The spec's table:
+// The loudness of a note: how much the camera cares about it.
 //
 //	loud    Degraded; any Activity turning stuck; a Platform component
 //	        Degraded
@@ -27,7 +26,7 @@ const (
 )
 
 // The feed keeps the last FeedSize notes or the last FeedAge of them,
-// whichever is fewer (#101).
+// whichever is fewer.
 const (
 	FeedSize = 200
 	FeedAge  = 24 * time.Hour
@@ -82,8 +81,6 @@ func (f *feed) add(n Note, now time.Time) Note {
 	return n
 }
 
-// trim drops the oldest notes beyond FeedSize, and every note older than
-// FeedAge.
 func (f *feed) trim(now time.Time) {
 	notes := f.notes
 	if over := len(notes) - FeedSize; over > 0 {
@@ -112,7 +109,6 @@ var oslo = func() *time.Location {
 	return time.UTC
 }()
 
-// seamMessage is the seam note's text.
 func seamMessage(restartedAt time.Time) string {
 	return "since Argus restarted at " + restartedAt.In(oslo).Format("15:04")
 }

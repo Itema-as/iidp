@@ -1,4 +1,4 @@
-// Package argus is Argus's server (#115, #118): it keeps the objects
+// Package argus is Argus's server: it keeps the objects
 // cmd/iidp-argus's informers hand it, interprets them with
 // internal/platformstate into domain objects, and streams those to
 // browsers over server-sent events. The server interprets and the browser
@@ -196,7 +196,7 @@
 //	 "seam": true}                       the one "since Argus restarted at
 //	                                     hh:mm" entry
 //
-// Loudness follows the spec's table (feed.go). The feed keeps the last 200
+// feed.go decides each note's loudness. The feed keeps the last 200
 // notes or 24 hours of them, whichever is fewer; a browser that keeps its
 // own feed from note messages should drop the same.
 //
@@ -207,8 +207,8 @@
 //	{"state": "lost", "since": "2026-09-28T10:00:00Z"}
 //
 // interrupted is the API server not answering, for less than 30 s; lost is
-// 30 s or more. While lost, every Condition is to be read as Unknown
-// (#100): the objects still sent are interpreted from the last the
+// 30 s or more. While lost, every Condition is to be read as Unknown: the
+// objects still sent are interpreted from the last the
 // informers saw, kept so that the picture stays, but nothing new about
 // the cluster reaches them until the state is connected again.
 package argus

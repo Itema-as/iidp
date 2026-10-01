@@ -11,7 +11,7 @@ import (
 )
 
 // Keepalive is how often a stream gets a comment, so that proxies and
-// browsers keep it open however quiet the Platform is (#101).
+// browsers keep it open however quiet the Platform is.
 const Keepalive = 15 * time.Second
 
 // Server serves Argus: the stream, the probes and the web directory.
@@ -62,11 +62,9 @@ func (s *Server) Handler() http.Handler {
 var importMap = regexp.MustCompile(`(?s)<script type="importmap">(.*?)</script>`)
 
 // ContentSecurityPolicy is the policy the web directory is served with.
-// The page loads nothing from outside Argus (#119): scripts, styles,
-// images, fonts and the stream all come from Argus itself, and the
-// browser refuses anything else. Its one inline script, the import map,
-// is allowed by its hash, read from web's index.html. The card's links
-// are navigations, which the policy does not govern.
+// The page loads nothing from outside Argus. Its one inline script, the
+// import map, is allowed by its hash, read from web's index.html. The
+// card's links are navigations, which the policy does not govern.
 func ContentSecurityPolicy(web fs.FS) string {
 	scripts := []string{"'self'"}
 	if index, err := fs.ReadFile(web, "index.html"); err == nil {

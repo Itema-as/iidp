@@ -26,7 +26,7 @@ const (
 	// before its stream is closed; it reconnects to a fresh snapshot.
 	clientBuffer = 256
 	// seedWarningsFor is how far back the Warning Events seeded into the
-	// feed go (#101).
+	// feed go.
 	seedWarningsFor = time.Hour
 )
 
