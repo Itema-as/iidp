@@ -1,3 +1,5 @@
-# Written by scripts/bootstrap-wizard.sh: the oauth2-proxy Entra app
-# registration's tenant id, client id and client secret.
+# The oauth2-proxy Entra app registration's tenant id, client id and client
+# secret, which earlier versions of scripts/bootstrap-wizard.sh wrote here.
+# The wizard now encrypts them into the Platform repository; a leftover copy
+# must still never be committed.
 oauth2-proxy-entra.env

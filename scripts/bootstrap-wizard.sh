@@ -447,8 +447,8 @@ _fake_http() {
       ;;
     https://*.grafana.net*)
       # Like the real Grafana Cloud gateway, the path is checked before the
-      # credentials: a bare host answers 405 (what Alloy got), any other
-      # wrong path 404. Instance ids are numbers; the token must match.
+      # credentials: a bare host answers 405, any other wrong path 404.
+      # Instance ids are numbers; the token must match.
       local rest="${url#*://}" path="/" creds=""
       [[ "$rest" == */* ]] && path="/${rest#*/}"
       case "$path" in
@@ -995,8 +995,8 @@ stage_grafana() {
   GRAFANA_LOKI_URL=$(grafana_push_url loki "$given")
   [[ "$GRAFANA_LOKI_URL" != "$given" ]] && log_choice "Loki push URL: $GRAFANA_LOKI_URL"
 
-  # Encrypted, these can only be replaced by re-running the whole wizard
-  # (the age private key lives only in the cluster), so prove them first.
+  # Once encrypted these cannot be read back to find a mistake (the age
+  # private key lives only in the cluster), so prove them first.
   verify_grafana_push prometheus "$GRAFANA_PROM_URL" "$GRAFANA_PROM_USER" "$GRAFANA_ACCESS_TOKEN"
   verify_grafana_push loki "$GRAFANA_LOKI_URL" "$GRAFANA_LOKI_USER" "$GRAFANA_ACCESS_TOKEN"
 }
@@ -1289,8 +1289,8 @@ entra_register_app() {
     ask reg_client_id "Client id:"
     step "Certificates & secrets lists each secret's Value and its Secret ID: copy the Value (shown only right after creating it)."
     ask_secret reg_client_secret "Client secret (the Value):"
-    # The Secret ID is a GUID; a secret Value never is. Pasting the ID is
-    # what broke ArgoCD's first real Entra login (AADSTS7000215).
+    # The Secret ID is a GUID; a secret Value never is. Entra refuses an ID
+    # pasted as the secret with AADSTS7000215.
     if is_guid "$reg_client_secret"; then
       die "that's the Secret ID; paste the Value. The Value is shown only right after creating the secret: if it's hidden now, create a new secret. Nothing has been encrypted."
     fi
