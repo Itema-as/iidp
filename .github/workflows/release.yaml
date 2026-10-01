@@ -16,8 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # The Deploy gate's and Argus's images, ghcr.io/<owner>/iidp-deploy-gate
-      # and ghcr.io/<owner>/iidp-argus (.goreleaser.yaml, dockers_v2).
+      # The Deploy gate's and Argus's images.
       packages: write
     steps:
       - uses: actions/checkout@v7
@@ -42,10 +41,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # See "Releasing" in README.md.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          # Turns on the Deploy gate's image in .goreleaser.yaml, now that
-          # this job can push it (docs/implementation-notes/60-deploy-gate.md).
+          # Turns on the images in .goreleaser.yaml, now that this job can
+          # push them.
           IIDP_PUBLISH_DEPLOY_GATE: "true"
-          # And Argus's (docs/implementation-notes/118-argus-backend.md).
           IIDP_PUBLISH_ARGUS: "true"
 
   # Publishes chart/application to GHCR as an OCI artifact with the tag's
@@ -74,19 +72,15 @@ jobs:
           printf '%s' "${GITHUB_TOKEN}" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
           helm package chart/application --version "${version}" --destination dist
           # GHCR sometimes answers the tag step right after a successful
-          # upload with "failed to perform \"Tag\" ... not found" (seen on
-          # v0.2.0); a re-run of the job went through, so push once more.
+          # upload with "failed to perform \"Tag\" ... not found"; pushing
+          # again goes through.
           helm push "dist/application-${version}.tgz" "oci://ghcr.io/${owner}/charts" \
             || { echo "helm push failed; retrying once in 15s"; sleep 15; helm push "dist/application-${version}.tgz" "oci://ghcr.io/${owner}/charts"; }
 
-  # Moves the major tag (v0 for v0.x.y) to this release, so every
-  # Application repository calling the reusable deploy workflow at @v0
-  # (.github/workflows/application-deploy.yaml) gets it with no edit.
-  # Only forward: a release that finishes after a newer one leaves the tag
-  # alone. Pre-releases (v1.0.0-rc1) never move it. A tag pushed with the
-  # workflow's GITHUB_TOKEN starts no workflow run, and the release
-  # trigger above only matches vX.Y.Z tags anyway
-  # (docs/implementation-notes/74-reusable-deploy-workflow.md).
+  # Moves the major tag (v0 for v0.x.y) to this release, so every Application
+  # repository calling the reusable deploy workflow at @v0 gets it with no
+  # edit. Only forward, and never for a pre-release. A tag pushed with the
+  # workflow's GITHUB_TOKEN starts no workflow run.
   major-tag:
     name: Move the major tag
     needs: [goreleaser, chart]
