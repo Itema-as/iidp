@@ -1,10 +1,10 @@
-{{/*
-The gate's URL is the OIDC audience too.
-*/}}
 {{- define "deploy-gate.host" -}}
 {{- printf "deploy.%s" (required "baseDomain is required" .Values.baseDomain) -}}
 {{- end -}}
 
+{{/*
+The gate's URL, which is also the audience every OIDC token must carry.
+*/}}
 {{- define "deploy-gate.url" -}}
 {{- printf "https://%s" (include "deploy-gate.host" .) -}}
 {{- end -}}

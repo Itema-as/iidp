@@ -1,7 +1,8 @@
 # The gate mounts its Secrets as volumes rather than reading them through the
-# API, so its service account needs no access to Secrets; a pod can only
-# mount a Secret of its own namespace, hence argocd. The files are read on
-# every call, so a rotated key or token is picked up without a restart.
+# API, so its service account needs no access to Secrets. A pod can only
+# mount a Secret of its own namespace, so the gate runs in argocd, where
+# cloud-init writes them. The files are read on every call, so a rotated key
+# or token is picked up without a restart.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

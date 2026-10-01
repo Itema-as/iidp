@@ -156,11 +156,12 @@ spec:
   validationActions: {{ include "guardrails.validationActions" . }}
   # With no namespace, paramRef looks in the Ingress's own namespace.
   #
-  # A missing ConfigMap skips the policy for that Ingress. Deny would refuse
-  # the request outright whatever validationActions say, because the API
-  # server treats a missing param as a misconfigured binding, not a failed
-  # check; an Environment rendered by an older chart without the ConfigMap
-  # would then have every Ingress update refused.
+  # A missing ConfigMap skips the policy for that Ingress. A
+  # parameterNotFoundAction of Deny would refuse the request outright
+  # whatever validationActions say, because the API server treats a missing
+  # param as a misconfigured binding, not a failed check; an Environment
+  # rendered by an older chart without the ConfigMap would then have every
+  # Ingress update refused.
   paramRef:
     name: {{ .Values.declaredDomainsConfigMap }}
     parameterNotFoundAction: Allow

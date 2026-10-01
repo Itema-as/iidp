@@ -45,8 +45,9 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
-          # Alive as long as it serves, even when it has lost the cluster,
-          # since it then shows the last it saw and says so.
+          # Ready once its first look at the cluster is complete; alive as
+          # long as it serves, even when it has lost the cluster, since it
+          # then shows the last it saw and says so.
           readinessProbe:
             httpGet:
               path: /readyz

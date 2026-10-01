@@ -149,8 +149,9 @@ func TestGuardrailsComponentCarriesThePlatformsValues(t *testing.T) {
 	if _, has := paramRef["namespace"]; has {
 		t.Errorf("paramRef names a namespace; without one the API server looks in the Ingress's own")
 	}
-	// Deny would refuse every Ingress in a namespace without the ConfigMap
-	// even while the actions are only Warn and Audit.
+	// A parameterNotFoundAction of Deny would refuse every Ingress in a
+	// namespace without the ConfigMap, even while the actions are only Warn
+	// and Audit.
 	if got := get[string](t, paramRef, "parameterNotFoundAction"); got != "Allow" {
 		t.Errorf("parameterNotFoundAction = %q, want Allow", got)
 	}
