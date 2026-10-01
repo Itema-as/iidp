@@ -72,7 +72,8 @@ WORK="$(scratch_dir)"
 ERR_FILE="$WORK/stderr"
 
 # The format the bootstrap wizard's tfvar_set writes (one key = "value" per
-# line), with the other keys it writes into the same file around them.
+# line), with the other keys it writes into the same file around them. The
+# access key is there twice to show that the script takes the last line.
 cat > "$WORK/wizard.tfvars" <<'EOF'
 object_storage_access_key = "OLDACCESSKEY"
 object_storage_access_key = "AKIAFIXTURE0123"
