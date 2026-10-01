@@ -16,11 +16,12 @@ import (
 // DefaultBaseURL is the GitHub REST API root.
 const DefaultBaseURL = "https://api.github.com"
 
-// Client is a small GitHub REST API client for what the CLI needs beyond git.
+// Client is a small GitHub REST API client for what iidp needs beyond git.
 type Client struct {
 	// BaseURL is the API root. Empty means DefaultBaseURL.
 	BaseURL string
-	// Token authenticates every request as the developer.
+	// Token authenticates every request: the developer's token in the CLI,
+	// the GitHub App's JWT or installation token in the Deploy gate.
 	Token string
 	// HTTPClient makes the requests. Nil means http.DefaultClient.
 	HTTPClient *http.Client

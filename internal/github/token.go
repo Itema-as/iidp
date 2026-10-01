@@ -1,4 +1,4 @@
-// Package github is the CLI's GitHub REST API client and token source.
+// Package github is iidp's GitHub REST API client and token source.
 package github
 
 import (

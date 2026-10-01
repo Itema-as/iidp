@@ -88,17 +88,16 @@ func ContentSecurityPolicy(web fs.FS) string {
 }
 
 // events is the stream: the snapshot, then every message as it happens,
-// and a keepalive comment every Keepalive. It ends when the
-// browser goes, when the server shuts down, or when the browser falls too
-// far behind; the browser's EventSource then reconnects and gets a fresh
-// snapshot.
+// and a keepalive comment every Keepalive. It ends when the browser goes,
+// when the server shuts down, or when the browser falls too far behind;
+// the browser's EventSource then reconnects and gets a fresh snapshot.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
-	// Proxies that buffer (nginx's convention) must not; Traefik does
-	// not buffer a streamed response.
+	// Tells a buffering proxy not to buffer the stream (nginx's
+	// convention); Traefik does not buffer a streamed response anyway.
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 

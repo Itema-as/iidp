@@ -102,7 +102,8 @@ func Read(dir string) (f File, ok bool, err error) {
 
 // Parse parses iidp.yaml's content: a YAML mapping (or an empty document,
 // only comments) whose keys are migrationCommand, a string or null, and
-// tasks, a list of tasks or null.
+// tasks, a list of tasks or null. Values are trimmed, so a folded block
+// scalar (>) reads as the one line it folds to.
 func Parse(data []byte) (File, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {

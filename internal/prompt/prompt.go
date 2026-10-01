@@ -12,7 +12,8 @@ import (
 	"strings"
 )
 
-// Prompter asks questions read line by line from R and written to W.
+// Prompter writes questions to one stream and reads the answers, line by
+// line, from another.
 type Prompter struct {
 	r *bufio.Reader
 	w io.Writer
@@ -24,8 +25,8 @@ func New(r io.Reader, w io.Writer) *Prompter {
 	return &Prompter{r: bufio.NewReader(r), w: w}
 }
 
-// errNoAnswer is returned when the input runs out. A terminal never does, so
-// in practice it means a test's scripted input ran out.
+// errNoAnswer is returned when the input runs out, as a closed stdin or a
+// test's scripted input does.
 var errNoAnswer = errors.New("prompt: no more input")
 
 // readLine reads one line, trimmed, or errNoAnswer if none is left.

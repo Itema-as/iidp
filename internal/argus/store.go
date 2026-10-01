@@ -16,8 +16,9 @@ import (
 // The store's timing.
 const (
 	// TickEvery is how often the model is interpreted again with nothing
-	// having changed, for the rules that wait: the 60 s grace, the 5 and
-	// 30 minutes, and the cluster lost after 30 s.
+	// having changed, so that platformstate's time-based rules (such as
+	// NotReadyGrace, OutOfSyncStuckAfter and WatchLostAfter) take effect
+	// without a new object to trigger them.
 	TickEvery = 5 * time.Second
 	// settle is how long a change waits for others before the model is
 	// interpreted again, so a rollout's burst of updates is one delta.

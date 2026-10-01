@@ -25,9 +25,9 @@ type NonRootFix struct {
 	Advice string
 }
 
-// The users and ports the images Adopt knows run with: the official node
-// image's node user, and the unprivileged nginx, which runs as 101 and
-// listens on 8080 where the official nginx runs as root on 80.
+// nodeUser is the official node image's node user, by number.
+// unprivilegedNginx runs as user 101 and listens on 8080, where the official
+// nginx runs as root on 80.
 const (
 	nodeUser          = "1000:1000"
 	unprivilegedNginx = "nginxinc/nginx-unprivileged"
@@ -69,8 +69,8 @@ func fixNonRoot(dockerfile []byte, kind string) NonRootFix {
 // adviceNumericUser is what every piece of Advice ends with.
 const adviceNumericUser = "The Platform starts a container only as a non-root user it can check, which means a numeric `USER` other than 0 in the final stage, such as `USER 1000:1000`, and an application that runs as that user."
 
-// fixUser handles a final stage whose user is set by USER instruction in,
-// the last one in the stage or the nearest stage it is built FROM.
+// fixUser handles a final stage whose user is set by in: the last USER in
+// the stage, or else in the nearest stage it is built FROM.
 func fixUser(df dockerfile, chain []stage, in instruction, base image, kind string) NonRootFix {
 	user := in.args
 	name, group, _ := strings.Cut(user, ":")
@@ -105,9 +105,9 @@ func fixUser(df dockerfile, chain []stage, in instruction, base image, kind stri
 	return NonRootFix{Advice: fmt.Sprintf("The final stage runs as `USER %s`, and the Dockerfile doesn't show that user's number. Change it to the number the image gives %s. %s", user, name, adviceNumericUser)}
 }
 
-// fixRoot handles a final stage that runs as root: said so by root, a USER
-// instruction, or, when root is "", by having no USER on a base image that
-// runs as root or might.
+// fixRoot handles a final stage that runs as root, or may. root is the USER
+// instruction that asks for root, or "" when no stage in the chain has a
+// USER and the base image's own user, possibly root, applies.
 func fixRoot(df dockerfile, chain []stage, root string, base image, kind string) NonRootFix {
 	final := chain[0]
 	switch {

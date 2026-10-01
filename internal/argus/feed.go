@@ -14,7 +14,7 @@ import (
 //	normal  Arriving (a first image into an Unreleased Environment
 //	        included); Leaving; Unknown; a Promote
 //	quiet   a Deploy; Updating; a Preview Environment arriving, leaving
-//	        or deploying; a backup Warning; a Platform component
+//	        or deploying; a Capability's Warning; a Platform component
 //	        Updating; a refused Deploy
 //
 // A note that only reports something finished is feed-only (Note.FeedOnly)

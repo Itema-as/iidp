@@ -1,7 +1,7 @@
 // Package templates holds the built-in Application repository templates
-// Create renders: a minimal Next.js Web service, a minimal Vite React
-// Static site, and a commented Dockerfile stub for a framework iidp does
-// not generate.
+// Create and Adopt render: a minimal Next.js Web service, a minimal Vite
+// React Static site, and a commented Dockerfile stub for a framework iidp
+// does not generate.
 package templates
 
 import (

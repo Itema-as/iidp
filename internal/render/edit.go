@@ -334,7 +334,8 @@ func SetTasks(valuesYAML []byte, tasks []appconfig.Task) (out []byte, changed bo
 	for _, task := range tasks {
 		item := &yaml.Node{Kind: yaml.MappingNode}
 		for _, field := range [][2]string{{"name", task.Name}, {"schedule", task.Schedule}, {"command", task.Command}} {
-			// A string scalar, so yaml quotes a schedule as needed.
+			// Tagged !!str, so yaml quotes a value that would otherwise
+			// read as another type, such as a schedule starting with *.
 			item.Content = append(item.Content, scalarNode(field[0]), &yaml.Node{Kind: yaml.ScalarNode, Value: field[1], Tag: "!!str"})
 		}
 		list.Content = append(list.Content, item)

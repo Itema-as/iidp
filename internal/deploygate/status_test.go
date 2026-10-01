@@ -173,8 +173,8 @@ func shopCluster(prodTag, stagingTag string) *fakeCluster {
 	}
 
 	// prod: one ready pod that restarted twice, a pod from an old
-	// ReplicaSet still starting, a finished migration pod and a task pod
-	// that are not the Application's.
+	// ReplicaSet still starting, and a finished migration pod and a task
+	// pod, which do not count among the Application's pods.
 	c.add("/apis/apps/v1/namespaces/shop-prod/deployments", deploymentObj("shop-prod", "shop", "shop", "ghcr.io/itema-as/shop:"+prodTag))
 	c.add("/api/v1/namespaces/shop-prod/pods",
 		podObj("shop-abc", "shop-prod", web("shop"), "Running", true, 2),
