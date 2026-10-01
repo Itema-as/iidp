@@ -124,7 +124,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f.StringVar(&opts.image, "image", "", "Image repository (default ghcr.io/<owner lowercased>/<name>)")
 	f.IntVar(&opts.port, "port", 3000, "Port the container listens on")
 	f.StringVar(&opts.probePath, "probe-path", "/", "Path the readiness and liveness probes request")
-	f.BoolVar(&opts.yes, "yes", false, "Skip the confirmation (nothing is asked yet; accepted so scripts keep working once the wizard asks)")
+	f.BoolVar(&opts.yes, "yes", false, "Skip the wizard's confirmation before anything is written")
 	f.BoolVar(&opts.postgres, "postgres", false, "Add a Postgres database Capability: DATABASE_URL injected into every Environment, continuous backups")
 	f.StringVar(&opts.migrationCommand, "migration-command", "", "Shell command run before every rollout with DATABASE_URL set, written to the Application repository's iidp.yaml (requires --postgres); detected from Prisma, Drizzle or an npm migrate script when omitted")
 	f.StringVar(&opts.appDir, "app-dir", "", "Directory to detect the migration command in (default: the generated template with --path create, or the current directory when it has a package.json)")
