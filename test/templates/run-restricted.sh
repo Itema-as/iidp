@@ -1,19 +1,16 @@
 #!/usr/bin/env bash
-# Runs an image built from one of iidp's Create templates the way the
-# Platform does, and checks that it passes Pod Security's restricted level:
-# a kind cluster on the Kubernetes version the Platform runs, a namespace
-# that enforces, warns and audits restricted, as every Application namespace
-# does, and the application chart. It fails on any warning from the apply,
-# on a Pod that does not become Ready, on a container running as root, and
-# on anything but a 200 on / at the template's port.
+# Runs an image built from one of iidp's Create templates through the
+# application chart in a kind cluster, in a namespace enforcing Pod Security
+# restricted as every Application namespace does. Fails on any apply
+# warning, a Pod that is not Ready, a container running as root, or
+# anything but a 200 on / at the template's port.
 #
 #   test/templates/run-restricted.sh <nextjs|vite-react> <image>
 #
 # The image must be fully qualified (for example
 # iidp-templates.local/vite-react:ci) and built locally; it is loaded into
 # the cluster, never pulled. Needs kind, kubectl, helm and docker (or
-# podman, with KIND_EXPERIMENTAL_PROVIDER=podman). The Templates job in
-# .github/workflows/ci.yaml runs it for both templates.
+# podman, with KIND_EXPERIMENTAL_PROVIDER=podman).
 set -euo pipefail
 
 framework=${1:?usage: run-restricted.sh <nextjs|vite-react> <image>}
@@ -65,8 +62,7 @@ image:
 EOF
 
 helm template demoapp "$root/chart/application" --namespace demo --values "$work/values.yaml" >"$work/manifests.yaml"
-# kubectl prints admission warnings (Pod Security's among them) on stderr,
-# prefixed "Warning:".
+# Admission warnings, Pod Security's among them, go to stderr.
 kubectl apply --namespace demo -f "$work/manifests.yaml" 2>&1 | tee "$work/apply.log"
 if grep -q '^Warning:' "$work/apply.log"; then
   echo "applying the chart for the $framework template raised warnings; it must pass restricted" >&2
