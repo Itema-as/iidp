@@ -28,7 +28,8 @@ postgres:
   # The chart's 30-minute default would outlast the test's budget if the
   # backup got stuck; an empty database backs up in well under a minute.
   finalBackupTimeout: 120
-# On staging only, so prod shows an unprotected address still answers 200.
+# Login on staging only, so prod shows that an unprotected address still
+# answers 200.
 # The group, a made-up GUID, routes sign-in through the Environment's own
 # Middleware rather than the shared one.
 login:

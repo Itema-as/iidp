@@ -42,7 +42,8 @@ const (
 	// OrgID is Itema-as's GitHub org id, which the bootstrap pins.
 	OrgID = 1230559
 
-	// The App credential's ids, and what fakegithub answers for its bot.
+	// The GitHub App credential's ids, and what fakegithub answers for the
+	// App's bot account.
 	fakeAppID          = 1
 	fakeInstallationID = 1
 	FakeBotIdentity    = "iidp-deploy[bot] <41898282+iidp-deploy[bot]@users.noreply.github.com>"

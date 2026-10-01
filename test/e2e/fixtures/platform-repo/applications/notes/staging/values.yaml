@@ -1,5 +1,5 @@
-# Never released; the base notes's Preview Environments render from. Each
-# setting here is one a preview must keep (database, migration command,
+# Never released: it is the base notes's Preview Environments render
+# from. Each setting here is one a preview must keep (database, migration command,
 # sign-in groups) or override (size, Scheduled task, backups, Environment,
 # image tag).
 application:

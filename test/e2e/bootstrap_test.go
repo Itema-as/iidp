@@ -129,10 +129,9 @@ func TestBootstrap(t *testing.T) {
 	testFixtureApplication(ctx, t, cluster)
 	testUnreleasedEnvironments(ctx, t, cluster)
 	testDeleteEnvironment(ctx, t, cluster)
-	// The order matters. Workloads that are added (brochure-prod's first
-	// image, a preview's database) only fit on the node's CPU once
-	// shop-staging is deleted;
-	// testAppStatus needs shop-prod's migration and task run; and
+	// The order matters. Workloads added later (brochure-prod's first image,
+	// a preview's database) only fit on the node's CPU once shop-staging is
+	// deleted; testAppStatus needs shop-prod's migration and task run; and
 	// testGuardrails checks that nothing before it tripped a guardrail.
 	testDeployGate(ctx, t, cluster, issuer)
 	testMigrationCommandFromIidpYAML(ctx, t, cluster, issuer)
