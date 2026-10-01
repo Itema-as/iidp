@@ -74,7 +74,8 @@ func decryptSOPSFile(t *testing.T, path string) map[string]any {
 }
 
 // assertPlaintextAbsent fails the test if plaintext appears anywhere in the
-// committed tree at dir. git grep exits 1 when nothing matches.
+// committed tree at dir. git grep exits 1 when nothing matches, the
+// passing case here.
 func assertPlaintextAbsent(t *testing.T, dir, plaintext string) {
 	t.Helper()
 	cmd := exec.Command("git", "grep", "-I", "-l", plaintext)

@@ -253,7 +253,9 @@ func TestAppCreateWritesProdEnvironmentToPlatformRepository(t *testing.T) {
 		{[]any{"spec", "syncPolicy", "automated", "prune"}, true},
 		{[]any{"spec", "syncPolicy", "automated", "selfHeal"}, true},
 		{[]any{"spec", "syncPolicy", "syncOptions", 0}, "CreateNamespace=true"},
-		// The guardrails' bindings select the namespace by the first label.
+		// The Platform's admission policies for Application namespaces
+		// select the namespace by the first label; the Pod Security labels
+		// enforce restricted.
 		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "iidp.itema.no/application"}, "shop"},
 		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "iidp.itema.no/environment"}, "prod"},
 		{[]any{"spec", "syncPolicy", "managedNamespaceMetadata", "labels", "pod-security.kubernetes.io/enforce"}, "restricted"},

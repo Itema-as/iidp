@@ -162,6 +162,8 @@ func (f *fakeGitHub) rename(owner, oldName, newName string) {
 	f.repoIDs[owner+"/"+newName] = id
 }
 
+// recreate gives owner/name a new numeric id on its next lookup, as GitHub
+// does for a repository deleted and created again under the same name.
 func (f *fakeGitHub) recreate(owner, name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

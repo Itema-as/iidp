@@ -147,7 +147,8 @@ func TestCISetImageTakesTheGateURLFromTheFlag(t *testing.T) {
 	}
 }
 
-// Whatever IIDP_DEPLOY_APP_* holds on a runner is neither needed nor read.
+// The GitHub App key lives with the Deploy gate, so ci set-image neither
+// needs nor reads IIDP_DEPLOY_APP_*, even on a runner that still sets them.
 func TestCISetImageNeedsNoAppKey(t *testing.T) {
 	newFakeActionsTokenService(t)
 	gate := newFakeGate(t, gateResponse{http.StatusOK, deployed})

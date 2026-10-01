@@ -17,13 +17,12 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// gateRoute sends the CLI's requests to https://deploy.<baseDomain> to a
-// fake gate, and records the URL asked for.
-
 const statusPlatformYAML = `baseDomain: app.example.test
 chartVersion: 0.3.1
 `
 
+// gateRoute sends the CLI's requests for https://deploy.<baseDomain> to a
+// fake gate, and records each URL and Authorization header.
 type gateRoute struct {
 	target *url.URL
 	// err, when set, is what every request fails with: an unreachable gate.
