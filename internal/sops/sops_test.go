@@ -16,7 +16,7 @@ const testRecipient = "age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqq
 func requireSops(t *testing.T) {
 	t.Helper()
 	if !sops.Available() {
-		t.Skip("sops is not on PATH; skipping (see docs/implementation-notes/16-cli-secret-set.md)")
+		t.Skip("sops is not on PATH; skipping")
 	}
 }
 
