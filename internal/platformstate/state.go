@@ -386,8 +386,8 @@ func matches(labels, selector map[string]string) bool {
 	return true
 }
 
-// newestRun is the result of the newest Job, by creation, with pods the
-// namespace's pods, among which are the Job's.
+// newestRun is the Run of the newest of jobs by creation. pods are the
+// namespace's pods, the Job's among them.
 func newestRun(jobs []Job, pods []Pod) *Run {
 	if len(jobs) == 0 {
 		return nil

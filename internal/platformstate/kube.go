@@ -63,7 +63,8 @@ func Read(ctx context.Context, cluster Lister, application string) ([]Environmen
 	return envs, nil
 }
 
-// The files and variables a pod's service account token is mounted as.
+// serviceAccountDir is where a pod's service account CA and token are
+// mounted.
 const (
 	serviceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
 )
