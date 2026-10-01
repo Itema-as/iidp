@@ -1,8 +1,6 @@
-// Package git wraps the git binary for the few operations the CLI needs on
-// the Platform repository: a shallow clone, adding files, committing and
-// pushing. It shells out rather than embedding a git implementation so the
-// developer's own git configuration (identity, signing) applies to the
-// commits the CLI makes.
+// Package git wraps the git binary for the few operations the CLI needs. It
+// shells out rather than embedding a git implementation so the developer's
+// own git configuration (identity, signing) applies to its commits.
 package git
 
 import (
@@ -21,15 +19,10 @@ import (
 // since the clone, so the push was not a fast-forward.
 var ErrPushRejected = errors.New("the remote branch moved since the clone")
 
-// Auth is the credential git presents to an HTTPS remote. An empty token
-// means no credential, which is what a file:// or ssh remote needs.
-// Identity, when set, is who the commits are made as, author and committer
-// both; empty leaves that to the developer's own git configuration.
-// Committer, when set, overrides the committer alone, so a commit can be
-// authored by one account and committed by another: the Deploy gate
-// commits a deploy authored by the GitHub user who asked for it and
-// committed by the GitHub App that wrote it
-// (docs/implementation-notes/60-deploy-gate.md).
+// Auth is the credential git presents to an HTTPS remote, and who commits
+// are made as. An empty Token means no credential, as for a file:// or ssh
+// remote. Identity sets author and committer; empty leaves them to the git
+// configuration. Committer, when set, overrides the committer alone.
 type Auth struct {
 	Token     string
 	Identity  Identity
@@ -59,9 +52,8 @@ func Clone(ctx context.Context, url, branch, dir string, auth Auth) (*Repository
 	return r, nil
 }
 
-// CloneWithHistory is Clone with the branch's whole history, for reading
-// when a file last changed (FileHistory). The Deploy gate's status read
-// uses it on the Platform repository, which is small.
+// CloneWithHistory is Clone with the branch's whole history, for
+// FileHistory.
 func CloneWithHistory(ctx context.Context, url, branch, dir string, auth Auth) (*Repository, error) {
 	r := &Repository{Dir: dir, auth: auth}
 	if _, err := r.run(ctx, "", "clone", "--quiet", "--single-branch", "--branch", branch, url, dir); err != nil {
@@ -108,10 +100,8 @@ func (r *Repository) Show(ctx context.Context, commit, path string) ([]byte, err
 	return []byte(out), nil
 }
 
-// Init creates a new repository at dir (which must already exist and hold
-// the files to commit) on branch, with an origin remote set to url, ready
-// for Add, Commit and Push. Create uses it for the Application repository's
-// first commit, where there is nothing to clone yet.
+// Init creates a new repository on branch in the existing dir, with an
+// origin remote set to url.
 func Init(ctx context.Context, dir, branch, url string, auth Auth) (*Repository, error) {
 	r := &Repository{Dir: dir, auth: auth}
 	if _, err := r.run(ctx, dir, "init", "--quiet", "--initial-branch", branch); err != nil {
@@ -141,11 +131,7 @@ func (r *Repository) Commit(ctx context.Context, message string) error {
 }
 
 // CreateBranch creates and checks out a new local branch named name from
-// the current HEAD. Adopt uses it, after cloning the default branch, to
-// switch to the branch it pushes the pull request from
-// (docs/implementation-notes/15-cli-adopt-path.md), so the local branch
-// name matches what is pushed even though Push itself always targets its
-// branch argument regardless of the current branch.
+// the current HEAD.
 func (r *Repository) CreateBranch(ctx context.Context, name string) error {
 	if _, err := r.run(ctx, r.Dir, "checkout", "--quiet", "-b", name); err != nil {
 		return fmt.Errorf("checkout -b %s: %w", name, err)
@@ -153,9 +139,8 @@ func (r *Repository) CreateBranch(ctx context.Context, name string) error {
 	return nil
 }
 
-// Remove deletes the given paths (files or directories) from the working
-// tree and stages the removal, the way "git rm -r" does. iidp app delete
-// uses it to remove an Environment's whole directory in one step.
+// Remove deletes the given paths, files or directories, and stages the
+// removal, like "git rm -r".
 func (r *Repository) Remove(ctx context.Context, paths ...string) error {
 	args := append([]string{"rm", "--quiet", "-r", "--"}, paths...)
 	if _, err := r.run(ctx, r.Dir, args...); err != nil {

@@ -1,5 +1,4 @@
-// Package github holds what the CLI needs from GitHub outside git: today
-// only the token the developer's gh login stored.
+// Package github is the CLI's GitHub REST API client and token source.
 package github
 
 import (
@@ -9,8 +8,7 @@ import (
 	"strings"
 )
 
-// TokenSource yields the GitHub token the CLI authenticates with. The
-// production implementation asks the gh CLI; tests inject a fake.
+// TokenSource yields the GitHub token the CLI authenticates with.
 type TokenSource interface {
 	Token() (string, error)
 }

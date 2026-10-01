@@ -17,8 +17,8 @@ import (
 	"github.com/Itema-as/iidp/internal/githubapp"
 )
 
-// testKey generates a fresh RSA key pair and PEM-encodes the private key
-// the way GitHub's own "Generate a private key" button would (PKCS#1).
+// testKey generates an RSA key pair, PEM-encoding the private key as PKCS#1
+// like GitHub does.
 func testKey(t *testing.T) (*rsa.PrivateKey, []byte) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)

@@ -1,9 +1,7 @@
 // Package migrate detects the migration command a Postgres Capability
-// should run before every rollout, by looking for known migration tooling
-// in an Application repository: Prisma, Drizzle or an npm "migrate"
-// script. docs/design.md ("The wizard") names the three; the commands
-// themselves (npx prisma migrate deploy, npx drizzle-kit migrate) match
-// each tool's own documentation for running migrations in production.
+// should run before every rollout, by looking for Prisma, Drizzle or an npm
+// "migrate" script in an Application repository. The commands are the ones
+// each tool documents for running migrations in production.
 package migrate
 
 import (
@@ -13,8 +11,7 @@ import (
 	"path/filepath"
 )
 
-// Detection is a migration command Detect found, and what triggered it, for
-// the message shown to the developer.
+// Detection is a migration command Detect found.
 type Detection struct {
 	// Tool names what was found, for example "Prisma (prisma/schema.prisma)".
 	Tool string
@@ -23,11 +20,8 @@ type Detection struct {
 }
 
 // Detect looks in dir, in order, for a Prisma schema, a Drizzle config or an
-// npm "migrate" script in package.json, and returns the first match. ok is
-// false when dir has none of them, including when dir does not exist: a
-// missing directory is not an error here, since callers may probe one that
-// turns out to have nothing (a freshly generated Create template, an
-// --app-dir the developer got wrong).
+// npm "migrate" script, and returns the first match. A missing dir is not an
+// error: it reports false, like a dir with none of them.
 func Detect(dir string) (Detection, bool, error) {
 	if dir == "" {
 		return Detection{}, false, nil
@@ -62,9 +56,7 @@ func fileExists(path string) bool {
 }
 
 // npmHasMigrateScript reports whether dir's package.json declares a
-// "migrate" script. Its own command is not iidp's concern: the chart always
-// runs "npm run migrate", the same indirection the developer's package.json
-// already gives them to change what that runs.
+// "migrate" script.
 func npmHasMigrateScript(dir string) (bool, error) {
 	path := filepath.Join(dir, "package.json")
 	data, err := os.ReadFile(path)
