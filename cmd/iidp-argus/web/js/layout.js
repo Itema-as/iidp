@@ -1,6 +1,8 @@
 // @ts-check
-// Where things sit, as plain numbers. Nothing here imports three.js; the
-// drawing turns these into vectors.
+// Where things sit, as plain numbers: the Platform core (argocd) at the
+// centre with the other components on a ring round it, and each Application
+// on an orbit slot of its own, joined to the core by a filament. Nothing here
+// imports three.js; the drawing turns these into vectors.
 
 /** @typedef {import('./types.js').Vec} Vec */
 
@@ -149,14 +151,16 @@ export function componentPlaces(names) {
 }
 
 /**
- * Where a Postgres cluster, a custom domain's marker sit on an
- * Environment's cloud.
+ * Where an Environment's Postgres marker sits: below its cloud.
  * @param {AppLayout} L @param {Vec} centre @param {number} R
  */
 export function postgresPlace(L, centre, R) {
   return add(add(centre, scale(L.up, -(R + 0.8))), scale(L.radial, 0.7));
 }
-/** @param {AppLayout} L @param {Vec} centre @param {number} R */
+/**
+ * Where an Environment's custom domain marker sits: above its cloud.
+ * @param {AppLayout} L @param {Vec} centre @param {number} R
+ */
 export function domainPlace(L, centre, R) {
   return add(centre, scale(L.up, R + 1.0));
 }

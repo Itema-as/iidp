@@ -1,7 +1,7 @@
 // @ts-check
-// Building DOM without HTML strings: text is always text, and no style
-// attribute is ever written, so the page's Content-Security-Policy needs
-// no 'unsafe-inline'.
+// Building DOM without HTML strings, so text is always text. The page sets
+// styles through element.style, never as a style attribute, so its
+// Content-Security-Policy needs no 'unsafe-inline'.
 
 /**
  * An element with attributes and children. Attributes named on* are

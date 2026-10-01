@@ -133,6 +133,8 @@ export function createEdges(el, onGo) {
       for (const i of items) {
         let x = i.ndcX;
         let y = i.ndcY;
+        // A place behind the camera projects mirrored: flip it, and push it
+        // off screen so it gets a marker.
         if (!i.front) {
           x = -x * 10;
           y = -y * 10;

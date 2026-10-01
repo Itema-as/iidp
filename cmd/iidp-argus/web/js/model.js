@@ -239,6 +239,8 @@ export function createModel() {
         // A first image into an Unreleased plot: it arrives again.
         life.born = t;
       }
+      // Found Leaving in a snapshot: date it a minute back, so the drawing
+      // shows it already faded instead of fading it out from now.
       if (state === 'Leaving' && !life.leaving) life.leaving = live ? t : t - 60000;
       if (state !== 'Leaving') life.leaving = 0;
       if (state === 'Unreleased') life.wasUnreleased = true;
