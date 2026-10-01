@@ -11,14 +11,11 @@ import (
 )
 
 // NonRootFix is how Adopt makes a repository's own Dockerfile run as a
-// non-root user, which the Platform requires of every container: the
-// chart sets runAsNonRoot, and the kubelet can check that only against a
-// numeric USER (docs/implementation-notes/110-non-root-restricted.md).
-// Adopt changes the Dockerfile only where the fix is known, and otherwise
-// says what to change; it never guesses.
+// non-root user: the chart sets runAsNonRoot, and the kubelet can check
+// that only against a numeric USER. Adopt changes the Dockerfile only where
+// the fix is known, and otherwise says what to change.
 type NonRootFix struct {
-	// Dockerfile is the changed Dockerfile, nil when Adopt changes
-	// nothing.
+	// Dockerfile is the changed Dockerfile, nil when Adopt changes nothing.
 	Dockerfile []byte
 	// Change says what was changed and why, for the pull request body.
 	Change string
