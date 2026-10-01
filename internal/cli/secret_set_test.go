@@ -29,7 +29,7 @@ const testPlatformYAMLWithAgeKey = testPlatformYAML + "agePublicKey: " + testAge
 func requireSops(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("sops"); err != nil {
-		t.Skip("sops is not on PATH; skipping (see docs/implementation-notes/16-cli-secret-set.md)")
+		t.Skip("sops is not on PATH; skipping")
 	}
 }
 
