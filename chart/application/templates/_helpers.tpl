@@ -392,8 +392,8 @@ http:
 {{/*
 The port the container listens on, as an integer. A Static site is an
 unprivileged nginx on 8080 (non-root cannot bind below 1024). Its port value
-is ignored: existing Static sites' values files carry a meaningless 3000
-there, which honouring would break.
+is ignored: the CLI writes --port's default of 3000 for every Kind, which a
+Static site does not listen on.
 */}}
 {{- define "application.port" -}}
 {{- if eq (include "application.kind" .) "static-site" -}}
