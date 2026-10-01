@@ -97,8 +97,7 @@ func readReusableWorkflow(t *testing.T) (map[string]any, string) {
 }
 
 // The rendered deploy.yaml is only a caller: the triggers, the
-// permissions the reusable workflow needs, and its inputs
-// (docs/implementation-notes/74-reusable-deploy-workflow.md).
+// permissions the reusable workflow needs, and its inputs.
 func TestDeployWorkflowIsAShortCaller(t *testing.T) {
 	for _, fw := range []templates.Framework{templates.NextJS, templates.ViteReact, templates.Other} {
 		t.Run(string(fw), func(t *testing.T) {
@@ -109,9 +108,9 @@ func TestDeployWorkflowIsAShortCaller(t *testing.T) {
 			if got := lookup(t, doc, "on", "push", "tags", 0); got != "v*" {
 				t.Errorf(`on.push.tags[0] = %v, want "v*"`, got)
 			}
-			// Preview Environments (#95): the reusable workflow builds a
-			// labelled pull request's image, so the caller passes the
-			// events that can change it or add the label.
+			// The reusable workflow builds a labelled pull request's image,
+			// so the caller passes the events that can change it or add the
+			// label.
 			if got := fmt.Sprint(lookup(t, doc, "on", "pull_request", "types")); got != "[opened synchronize reopened labeled]" {
 				t.Errorf("on.pull_request.types = %v, want [opened synchronize reopened labeled]", got)
 			}
@@ -215,11 +214,10 @@ func TestDeployWorkflowCallerMatchesTheReusableWorkflow(t *testing.T) {
 	}
 }
 
-// The reusable workflow keeps the behaviour the full per-Application
-// workflow had: build on main, promote on a v* tag, each in a checkout of
-// the commit it deploys (iidp.yaml, #66), through the Deploy gate with an
-// OIDC token and no stored secret, and it installs the iidp release its
-// own commit belongs to.
+// The reusable workflow builds on main and promotes on a v* tag, each in a
+// checkout of the commit it deploys (for iidp.yaml), through the Deploy
+// gate with an OIDC token and no stored secret, and it installs the iidp
+// release its own commit belongs to.
 func TestReusableDeployWorkflowJobs(t *testing.T) {
 	doc, content := readReusableWorkflow(t)
 	if got := lookup(t, doc, "env", "IIDP_DEPLOY_GATE_URL"); got != "${{ inputs.deploy-gate-url }}" {
