@@ -1,7 +1,8 @@
 # SOPS creation rules for this Platform repository. Every file under
-# bootstrap/sops is encrypted for the Platform's age public key (the one
-# in platform.yaml); only data and stringData are encrypted so names,
-# namespaces and labels stay readable and diffable.
+# bootstrap/sops, and bootstrap/templates/backups-credentials.enc.yaml, is
+# encrypted for the Platform's age public key (the one in platform.yaml);
+# only data and stringData are encrypted so names, namespaces and labels
+# stay readable and diffable.
 #
 # The matching private key is checked in as test/e2e/fixtures/age-keys.txt
 # and protects nothing.
