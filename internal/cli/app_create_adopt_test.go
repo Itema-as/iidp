@@ -102,8 +102,9 @@ func TestAppAdoptWithoutDockerfileDetectsNextJSAndGeneratesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A short caller of the reusable deploy workflow; app.itma.no's gate
-	// is the workflow's default.
+	// A short caller of the reusable deploy workflow, with no
+	// deploy-gate-url: the test Platform's gate, deploy.app.itma.no, is the
+	// workflow's default.
 	for _, want := range []string{
 		"uses: " + platform.DeployWorkflow + "@v0\n",
 		"application: shop\n",

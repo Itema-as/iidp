@@ -274,8 +274,10 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			LoginGroups:     plan.loginGroups,
 			Previews:        plan.previews,
 		}
-		// The repository is bound only once it exists; the preview checks
-		// the rest with a stand-in.
+		// --previews needs a bound repository, but Create and Adopt bind it
+		// only once it exists. For the summary, PreviewApplication gets a
+		// stand-in binding with placeholder ids, so everything else is still
+		// checked.
 		if plan.previews {
 			app.Repository = &platformrepo.RepositoryBinding{Repository: plan.repoOwner + "/" + plan.repoName, RepositoryID: 1, RepositoryOwnerID: 1}
 			if plan.path == pathCreate {
@@ -703,8 +705,8 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if cmd.Flags().Changed("login-group") && !o.login {
 		return createPlan{}, fmt.Errorf("%w: give --login with --login-group", platformrepo.ErrLoginGroupsWithoutLogin)
 	}
-	// A preview uses staging's values and secrets, and follows the pull
-	// requests of the bound repository.
+	// A Preview Environment uses staging's values and secrets, and follows
+	// the pull requests of the bound repository.
 	if o.previews && !o.staging {
 		return createPlan{}, platformrepo.ErrPreviewsWithoutStaging
 	}

@@ -20,8 +20,8 @@ const (
 	PreviewLabel = "preview"
 
 	// PreviewRequeueSeconds is how often ArgoCD asks GitHub for the
-	// Application repository's pull requests: a trivial share of the App's
-	// API rate limit.
+	// Application repository's pull requests: a trivial share of the GitHub
+	// App's API rate limit.
 	PreviewRequeueSeconds = 180
 
 	// GitHubAppSecret is the Secret in the argocd namespace that holds the

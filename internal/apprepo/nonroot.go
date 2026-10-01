@@ -25,11 +25,11 @@ type NonRootFix struct {
 	Advice string
 }
 
-// nodeUser is the official node image's node user, by number.
-// unprivilegedNginx runs as user 101 and listens on 8080, where the official
-// nginx runs as root on 80.
 const (
-	nodeUser          = "1000:1000"
+	// nodeUser is the official node image's node user, by number.
+	nodeUser = "1000:1000"
+	// unprivilegedNginx runs as user 101 and listens on 8080, where the
+	// official nginx runs as root on 80.
 	unprivilegedNginx = "nginxinc/nginx-unprivileged"
 )
 
@@ -69,8 +69,9 @@ func fixNonRoot(dockerfile []byte, kind string) NonRootFix {
 // adviceNumericUser is what every piece of Advice ends with.
 const adviceNumericUser = "The Platform starts a container only as a non-root user it can check, which means a numeric `USER` other than 0 in the final stage, such as `USER 1000:1000`, and an application that runs as that user."
 
-// fixUser handles a final stage whose user is set by in: the last USER in
-// the stage, or else in the nearest stage it is built FROM.
+// fixUser handles a final stage whose user a USER instruction sets. in is
+// that instruction: the last USER in the stage, or else in the nearest stage
+// it is built FROM.
 func fixUser(df dockerfile, chain []stage, in instruction, base image, kind string) NonRootFix {
 	user := in.args
 	name, group, _ := strings.Cut(user, ":")

@@ -120,9 +120,10 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// Asked only with staging and an Application repository: a preview uses
-	// staging's values and secrets and follows the repository's pull
-	// requests, so without them a yes would only be refused.
+	// Asked only with staging and an Application repository: a Preview
+	// Environment uses staging's values and secrets and follows the
+	// repository's pull requests, so without them a yes would only be
+	// refused.
 	if opts.staging && (opts.path == pathCreate || opts.path == pathAdopt) && !f.Changed("previews") {
 		fmt.Fprintln(out, "Preview Environments (optional)")
 		fmt.Fprintln(out, "Every open pull request labelled "+render.PreviewLabel+" gets an Environment of its own at")

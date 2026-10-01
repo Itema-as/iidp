@@ -48,8 +48,8 @@ func previewsPresent(dir, application string) (bool, error) {
 	}
 }
 
-// previewsRepository splits the binding's owner/name, the repository the
-// generator lists pull requests of. GitHub still answers for the old name
+// previewsRepository splits the binding's owner/name, the repository whose
+// pull requests ArgoCD's Pull Request generator lists. GitHub still answers for the old name
 // after a rename, redirecting to the repository's new one, so a stale name
 // keeps previews working until the name is reused.
 func previewsRepository(application string, b RepositoryBinding, bound bool) (owner, name string, err error) {
