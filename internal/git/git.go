@@ -1,6 +1,7 @@
-// Package git wraps the git binary for the few operations the CLI needs. It
-// shells out rather than embedding a git implementation so the developer's
-// own git configuration (identity, signing) applies to its commits.
+// Package git wraps the git binary for the few operations the CLI and the
+// Deploy gate need. It shells out rather than embedding a git implementation
+// so the developer's own git configuration (identity, signing) applies to
+// the CLI's commits.
 package git
 
 import (
@@ -122,7 +123,8 @@ func (r *Repository) Add(ctx context.Context, paths ...string) error {
 	return nil
 }
 
-// Commit records the staged changes with the author from git config.
+// Commit records the staged changes, as Auth's Identity when it is set and
+// otherwise as the git configuration's.
 func (r *Repository) Commit(ctx context.Context, message string) error {
 	if _, err := r.run(ctx, r.Dir, "commit", "--quiet", "--message", message); err != nil {
 		return fmt.Errorf("commit: %w", err)
