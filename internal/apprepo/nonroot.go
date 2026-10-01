@@ -40,8 +40,8 @@ const (
 //   - a named user whose number the Dockerfile itself shows, with a
 //     useradd or adduser -u/--uid that creates it: that number;
 //   - a Node base image with no USER, or USER root or 0: USER 1000:1000,
-//     the node user, added at the end of the stage; USER node becomes the
-//     same number;
+//     the node user, added after the stage's build steps (see insertUser);
+//     USER node becomes the same number;
 //   - an nginx base image, for a Static site: nginxinc/nginx-unprivileged
 //     at the same tag, which listens on 8080, as long as the stage runs no
 //     command and ships no nginx config of its own that the non-root
