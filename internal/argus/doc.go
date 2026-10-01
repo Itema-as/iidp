@@ -18,8 +18,9 @@
 // change as it happens, and a keepalive comment (": keepalive") every
 // 15 s. There are no event ids and nothing is ever replayed: a browser
 // that reconnects, or that the server closed for falling 256 messages
-// behind, gets a fresh snapshot, and replaces everything it had with it. Message order is the order things happened
-// in: a change's domain objects come before the notes it makes.
+// behind, gets a fresh snapshot, and replaces everything it had with it.
+// Message order is the order things happened in: a change's domain objects
+// come before the notes it makes.
 //
 // The types, and their JSON:
 //
