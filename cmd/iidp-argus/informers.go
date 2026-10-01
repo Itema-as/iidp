@@ -56,12 +56,13 @@ const (
 	applicationSelector = platformstate.ApplicationLabel
 )
 
-// sources are Argus's informers. Certificates are watched everywhere:
-// cert-manager's ingress-shim makes them from the chart's Ingress, so Argus
-// does not rely on them carrying its labels, and they are few. Events are read
-// in full in argocd, where the Deploy gate's carry no labels, and only Warnings
-// elsewhere, through core v1, whose field selector knows type;
-// events.k8s.io/v1 serves the same objects.
+// sources are Argus's informers. Certificates are watched in every namespace
+// rather than by label: cert-manager's ingress-shim makes them from the
+// chart's Ingress, so they may not carry the application label, and they are
+// few. Events are read in full in argocd, where the Deploy gate records its
+// Events without labels, and only Warnings elsewhere. They are read through
+// core v1 because its field selector can filter on type; events.k8s.io/v1
+// serves the same objects.
 var sources = []source{
 	{name: "applications", gvr: applicationsGVR, namespace: argocdNamespace, keep: keepArgoCD},
 	{name: "deployments", gvr: deploymentsGVR, labels: applicationSelector, keep: keepAs[platformstate.Deployment]},
@@ -212,7 +213,7 @@ func startInformers(ctx context.Context, client dynamic.Interface, store *argus.
 	for _, src := range sources {
 		inf := newInformer(client, src)
 		if err := inf.SetTransform(transform(src, log)); err != nil {
-			panic(err) // only before Run
+			panic(err) // SetTransform fails only once the informer has started
 		}
 		_ = inf.SetWatchErrorHandlerWithContext(func(_ context.Context, _ *cache.Reflector, err error) {
 			log.Warn("a watch failed; client-go retries it", "source", src.name, "error", err.Error())

@@ -215,7 +215,7 @@ func TestAnObjectThatDoesNotDecodeIsLeftOut(t *testing.T) {
 }
 
 // Every source's resource is one the ClusterRole grants, and nothing is
-// read that it does not (bootstrap_test.go checks the ClusterRole).
+// read that it does not (bootstrap/bootstrap_test.go checks the ClusterRole).
 func TestSourcesReadOnlyTheGrantedResources(t *testing.T) {
 	granted := map[string]bool{
 		"argoproj.io/applications": true, "apps/deployments": true, "/pods": true, "batch/jobs": true, "batch/cronjobs": true,

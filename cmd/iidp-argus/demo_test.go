@@ -48,11 +48,14 @@ import (
 //	/demo/degrade?env=               crash-looping, and back
 //	/demo/arrive?app=                a new Application, then its first Deploy
 //	/demo/remove?env=                an Environment leaving
-//	/demo/burst                      three places at once
+//	/demo/burst                      several Environments change at once
 //	/demo/cluster                    the API server stops answering, and back
-//	/demo/expire                     every other request answers as oauth2-proxy
-//	                                 does once the Itema login session has
-//	                                 expired, a 302 to the sign-in page, and back
+//	/demo/expire                     every request but /demo/'s answers as
+//	                                 oauth2-proxy does once the Itema login
+//	                                 session has expired, with a 302 to the
+//	                                 sign-in page, and back
+//
+// Each call to one marked "and back" undoes the previous one.
 func TestDemo(t *testing.T) {
 	addr := os.Getenv("IIDP_ARGUS_DEMO")
 	if addr == "" {

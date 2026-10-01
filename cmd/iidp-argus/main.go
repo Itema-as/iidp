@@ -9,11 +9,14 @@
 // It is configured from the environment:
 //
 //	IIDP_ARGUS_LISTEN               the listen address (default :8080)
-//	IIDP_ARGUS_ARGOCD_URL           where the detail card links out to
-//	IIDP_ARGUS_GRAFANA_URL          (argus.Platform); each may be empty,
-//	IIDP_ARGUS_PLATFORM_REPOSITORY  and the card then leaves that link
-//	IIDP_ARGUS_BOOTSTRAP_REPOSITORY out
-//	IIDP_ARGUS_BOOTSTRAP_REVISION
+//	IIDP_ARGUS_ARGOCD_URL           ArgoCD's address
+//	IIDP_ARGUS_GRAFANA_URL          Grafana's address
+//	IIDP_ARGUS_PLATFORM_REPOSITORY  the Platform repository's address
+//	IIDP_ARGUS_BOOTSTRAP_REPOSITORY the bootstrap chart's repository
+//	IIDP_ARGUS_BOOTSTRAP_REVISION   the bootstrap revision the Platform pins
+//
+// All but the listen address are only where the detail card links out to
+// (argus.Platform). Each may be empty, and the card then leaves that link out.
 package main
 
 import (
