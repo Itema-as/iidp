@@ -86,7 +86,7 @@ test('loud looks have a shape and a marked tag, not only a colour', () => {
   assert.equal(componentLook({ name: 'traefik', condition: { state: 'Degraded' }, activity: null }).shape, 'broken');
 });
 
-test("a Scheduled task's Warning tag says whether its last run failed or cannot start (#132)", () => {
+test("a Scheduled task's Warning tag says whether its last run failed or cannot start", () => {
   const task = (warning) => ({ type: 'scheduled-task', name: 'heartbeat', condition: { state: 'Healthy', warning }, activity: null });
   assert.equal(warningTag(task('the last run failed at 2026-09-29 10:00 UTC')), '! TASK FAILED');
   assert.equal(warningTag(task("the last run's Pod hello-heartbeat-1-x is Unschedulable: 0/1 nodes are available: 1 Insufficient cpu.")), '! TASK PENDING');
