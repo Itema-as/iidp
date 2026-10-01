@@ -94,10 +94,10 @@ jobs:
         with:
           version: v0.33.0
           install_only: true
-      # The images the node would otherwise pull from Docker Hub and ECR
-      # Public, whose anonymous rate limits the shared runner addresses
-      # exhaust. The primary key never matches, so the newest cache is
-      # restored; the test pulls whatever is missing.
+      # Caches the images the kind node would otherwise pull from Docker Hub
+      # and ECR Public, whose anonymous rate limits the shared runners keep
+      # hitting. The primary key never matches, so the newest cache is
+      # restored and the test pulls only what is missing.
       - name: Restore the image cache
         id: image-cache
         uses: actions/cache/restore@v6

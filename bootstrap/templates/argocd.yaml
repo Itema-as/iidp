@@ -1,8 +1,8 @@
 {{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
 {{- $host := include "iidp-bootstrap.argocdHost" . }}
-# ArgoCD managing itself. cloud-init installs ArgoCD by rendering this same
-# chart with helm template, so every object already has the shape this
-# Application expects and a sync only ever patches. Installing from the
+# ArgoCD managing itself. cloud-init installs ArgoCD by rendering the same
+# argo-cd chart with helm template, so every object already has the shape
+# this Application expects and a sync only ever patches. Installing from the
 # upstream install.yaml instead would leave Deployments with different
 # (immutable) selectors, which the first sync would have to replace.
 apiVersion: argoproj.io/v1alpha1
@@ -19,7 +19,9 @@ spec:
     helm:
       releaseName: argocd
       valuesObject:
-        # Matches the initial install by cloud-init and the kind harness.
+        # Names every object argocd-<component>, as cloud-init and the kind
+        # harness do when they install ArgoCD, so this Application's first
+        # sync patches the running objects instead of creating new ones.
         fullnameOverride: argocd
         global:
           domain: {{ $host }}
@@ -28,7 +30,7 @@ spec:
           keep: true
         configs:
           cm:
-            # Everyone logs in through Entra ID.
+            # No local admin account: everyone signs in through Entra ID.
             admin.enabled: false
             # KSOPS is a kustomize exec plugin; kustomize refuses to run
             # plugins without both flags.

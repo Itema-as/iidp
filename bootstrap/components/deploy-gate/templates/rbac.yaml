@@ -6,7 +6,8 @@ metadata:
   name: iidp-deploy-gate
   labels:
     {{- include "deploy-gate.labels" . | nindent 4 }}
-# The gate's pod opts in itself.
+# Not mounted into every pod that uses this service account; the gate's
+# Deployment asks for the token itself.
 automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1

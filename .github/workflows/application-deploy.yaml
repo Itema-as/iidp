@@ -32,9 +32,13 @@ on:
         description: The Application's name on the Platform, as `iidp app create` named it.
         type: string
         required: true
-      # The default is a copy of Itema's baseDomain, which this repository
-      # can't read. Change it together with platform.yaml and
-      # platform.DefaultDeployGateURL, which a test keeps equal to it.
+      # The default is Itema's own Deploy gate. Its address follows from
+      # baseDomain in the Platform repository's platform.yaml, which is
+      # private, so this workflow can't read it and repeats it here.
+      # iidp app create writes deploy-gate-url into a caller only for a
+      # Platform whose gate is somewhere else. If baseDomain changes, change
+      # this default and platform.DefaultDeployGateURL together; a test
+      # keeps the two equal.
       deploy-gate-url:
         description: The Platform's Deploy gate, https://deploy.<baseDomain>. Also the audience of the OIDC token.
         type: string
@@ -114,7 +118,9 @@ jobs:
 
   preview:
     name: Build and push the preview image
-    # A labeled event for another label changes nothing about the image.
+    # Builds only for a pull request labelled preview. When the event is the
+    # pull request getting some other label, its code is unchanged, so the
+    # job is skipped instead of building the same image again.
     if: >-
       github.event_name == 'pull_request'
       && contains(github.event.pull_request.labels.*.name, 'preview')
@@ -125,8 +131,8 @@ jobs:
       packages: write
     steps:
       # The pull request's head, not the merge commit a pull_request event
-      # checks out by default: the Preview Environment runs the image
-      # tagged with the head SHA, the one the generator reports.
+      # checks out by default: ArgoCD's Pull Request generator gives the
+      # Preview Environment the head SHA as its image tag.
       - name: Checkout the pull request's head
         uses: actions/checkout@v7
         with:

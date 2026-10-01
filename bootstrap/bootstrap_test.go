@@ -318,7 +318,8 @@ func TestDeployGateFollowsTheBootstrapAndThePlatformValues(t *testing.T) {
 			t.Errorf("deploy-gate source %s = %q, want %q", path, got, want)
 		}
 	}
-	// Next to the Secret holding the App's key.
+	// In argocd, where cloud-init writes the Secret holding the GitHub App's
+	// key, which the gate mounts.
 	if got := get[string](t, gate, "spec", "destination", "namespace"); got != "argocd" {
 		t.Errorf("deploy-gate namespace = %q, want argocd", got)
 	}

@@ -8,7 +8,8 @@ metadata:
   name: iidp-argus
   labels:
     {{- include "argus.labels" . | nindent 4 }}
-# Argus's pod opts in itself.
+# Not mounted into every pod that uses this service account; Argus's
+# Deployment asks for the token itself.
 automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -31,7 +32,8 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "events", "nodes"]
     verbs: ["get", "list", "watch"]
-  # Itema login is an annotation on the Ingress.
+  # Whether an Environment has Itema login is read from its Ingresses'
+  # annotation.
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch"]

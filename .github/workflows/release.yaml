@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # The Deploy gate's and Argus's images.
+      # To push the Deploy gate's and Argus's images to GHCR.
       packages: write
     steps:
       - uses: actions/checkout@v7

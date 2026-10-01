@@ -50,8 +50,8 @@ func TestGuardrailsFollowTheBootstrapAndThePlatformValues(t *testing.T) {
 		t.Errorf("extraAllowedImages = %s, want the fixture's nginx", got)
 	}
 
-	// The Platform's own values add no image, and Deny reaches the
-	// component.
+	// With the Platform's own values: no extra allowed image, and setting
+	// validationActions to Deny reaches the guardrails Application.
 	values = get[object](t, renderApplications(t, "--values", "values.yaml",
 		"--set", "guardrails.validationActions={Deny,Audit}")["guardrails"], "spec", "source", "helm", "valuesObject")
 	if _, has := values["extraAllowedImages"]; has {
