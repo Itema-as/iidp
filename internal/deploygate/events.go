@@ -25,9 +25,9 @@ import (
 
 // The gate records every Deploy and Promote it accepts or refuses as an
 // events.k8s.io/v1 Event regarding the Environment's ArgoCD Application,
-// so Argus and kubectl get events see a Deploy from its first moment
-// (docs/implementation-notes/117-deploy-events.md). An Event lives in the
-// namespace of the object it points at, so these are in argocd.
+// so Argus and kubectl get events see a Deploy from its first moment. An
+// Event lives in the namespace of the object it points at, so these are in
+// argocd.
 
 // The Event reasons.
 const (
@@ -35,10 +35,8 @@ const (
 	ReasonDeployRefused  = "DeployRefused"
 )
 
-// The annotations each Event carries for machines: the Application, the
-// Environment, the image tag, the Platform repository commit (accepted
-// only, and not when nothing was committed), deploy or promote, and the
-// HTTP status of a refusal (refused only).
+// The annotations each Event carries for machines. Commit is set only when
+// something was committed, and Refusal, the HTTP status, only on a refusal.
 const (
 	AnnotationApplication = "iidp.itema.no/application"
 	AnnotationEnvironment = "iidp.itema.no/environment"
@@ -93,9 +91,7 @@ type EventSink interface {
 	CreateEvent(ctx context.Context, event Event) error
 }
 
-// KubeEvents creates Events through the Kubernetes API, with the same
-// connection, service account token and CA as the gate's list calls: one
-// POST, with the standard library.
+// KubeEvents creates Events through the Kubernetes API.
 type KubeEvents struct {
 	Kube *platformstate.Kube
 }
@@ -156,13 +152,10 @@ func (g *Gate) recordAccepted(claims oidc.Claims, req Request, res Response) {
 	g.record(req.Application, res.Environment, action, ReasonDeployAccepted, "Normal", note, annotations)
 }
 
-// recordRefused records a refused Deploy or Promote, when there is an
-// Environment behind it: environment is the one the gate resolved on its
-// clone, after the caller proved to be the Application's own repository,
-// and "" before that. So nothing is recorded for a caller the gate does not
-// trust, an unknown Application, an unbound one, or a call from another
-// repository: there is no Environment to point at, and it is CI
-// misconfiguration, which the caller sees in CI.
+// recordRefused records a refused Deploy or Promote, once the caller has
+// proved to be the Application's own repository and the Environment is
+// resolved; environment is "" before that. Earlier refusals have no
+// Environment to point at, and the caller sees them in CI.
 func (g *Gate) recordRefused(claims oidc.Claims, req Request, environment string, status int, err error) {
 	if environment == "" || errors.Is(err, platformrepo.ErrApplicationMissing) || errors.Is(err, platformrepo.ErrEnvironmentMissing) {
 		return
@@ -218,8 +211,7 @@ func (g *Gate) record(application, environment, action, reason, eventType, note 
 	}()
 }
 
-// deployAction is Promote for a v* tag and Deploy for main: the Event's
-// action, and the first word of its note.
+// deployAction is Promote for a v* tag and Deploy for main.
 func deployAction(claims oidc.Claims) string {
 	if strings.HasPrefix(claims.Ref, TagRefPrefix) {
 		return "Promote"
@@ -236,9 +228,8 @@ func eventAnnotations(claims oidc.Claims, req Request, environment string) map[s
 	}
 }
 
-// eventName is <ArgoCD Application>.<time in hex nanoseconds><random>, the
-// shape client-go names Events with, plus a random suffix: two Deploys of
-// the same Environment never collide, and an Event name sorts by time.
+// eventName is the shape client-go names Events with, plus a random
+// suffix so two Deploys of the same Environment never collide.
 func eventName(regarding string, now time.Time) string {
 	suffix := make([]byte, 4)
 	_, _ = rand.Read(suffix)
