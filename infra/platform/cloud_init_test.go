@@ -1,18 +1,6 @@
-// Package platform_test exercises infra/platform's cloud-init template as
-// plain text. OpenTofu's templatefile() has no practical Go equivalent
-// worth reproducing here: reimplementing HCL template syntax (including
-// the doubled-dollar escaping this file's own header comment explains) to
-// get a byte-for-byte render would be a second template engine to keep in
-// sync with OpenTofu's own, for a test that `tofu validate` (CI already
-// runs it, see infra/README.md) already covers from the OpenTofu side. The
-// trade-off accepted here instead: read the template as text and check the
-// two things issue #41 is actually about -- that the three new variables
-// are genuinely referenced, and that the credential they render into is
-// applied before the root Application and produces syntactically valid
-// YAML once indentation is accounted for -- without asserting on anything
-// templatefile() itself is responsible for (quoting, escaping the doubled
-// dollar). A real render is exercised by `tofu validate` and, eventually,
-// a real `tofu apply` against a Hetzner project.
+// Package platform_test checks infra/platform's cloud-init template. Most
+// tests read it as text rather than reimplementing templatefile(); `tofu
+// validate` and TestOpenTofuRendersRegistriesYAML cover a real render.
 package platform_test
 
 import (
@@ -36,10 +24,8 @@ func readCloudInitTemplate(t *testing.T) string {
 	return string(data)
 }
 
-// TestCloudInitReferencesThePlatformRepoCredentialVariables guards against
-// the OpenTofu side (bootstrap.tf) and the cloud-init side of the wiring
-// drifting apart: every variable bootstrap.tf now passes into
-// templatefile() must actually be read somewhere in the rendered script.
+// TestCloudInitReferencesThePlatformRepoCredentialVariables keeps
+// bootstrap.tf and the template from drifting apart.
 func TestCloudInitReferencesThePlatformRepoCredentialVariables(t *testing.T) {
 	content := readCloudInitTemplate(t)
 	for _, want := range []string{
@@ -53,10 +39,9 @@ func TestCloudInitReferencesThePlatformRepoCredentialVariables(t *testing.T) {
 	}
 }
 
-// TestCloudInitAppliesThePlatformRepoCredentialBeforeTheRootApplication is
-// the acceptance criterion itself: ArgoCD must never be handed the root
-// Application (which points it at the private Platform repository) before
-// it already has a credential for that repository.
+// TestCloudInitAppliesThePlatformRepoCredentialBeforeTheRootApplication:
+// ArgoCD must never be handed the root Application before it has a credential
+// for the Platform repository.
 func TestCloudInitAppliesThePlatformRepoCredentialBeforeTheRootApplication(t *testing.T) {
 	content := readCloudInitTemplate(t)
 
@@ -81,14 +66,10 @@ func TestCloudInitAppliesThePlatformRepoCredentialBeforeTheRootApplication(t *te
 	}
 }
 
-// TestCloudInitRepositorySecretIDsAreQuoted guards a real Kubernetes
-// footgun that TestCloudInitRepositorySecretIsWellFormedYAML cannot catch:
-// yaml.v3 happily converts an unquoted numeric scalar into a Go string
-// field, but `kubectl apply` does not have that luxury -- Secret.stringData
-// is map[string]string, and an unquoted digit string in YAML becomes a
-// JSON number once kubectl converts the manifest, which the API server's
-// decoder then refuses to unmarshal into a string field. Both bash
-// substitutions must stay quoted in the template's own source text.
+// TestCloudInitRepositorySecretIDsAreQuoted: an unquoted digit string
+// becomes a JSON number once kubectl converts the manifest, which the API
+// server refuses for Secret.stringData. yaml.v3 would accept it, so
+// TestCloudInitRepositorySecretIsWellFormedYAML cannot catch this.
 func TestCloudInitRepositorySecretIDsAreQuoted(t *testing.T) {
 	content := readCloudInitTemplate(t)
 	for _, want := range []string{
@@ -102,14 +83,8 @@ func TestCloudInitRepositorySecretIDsAreQuoted(t *testing.T) {
 }
 
 // TestCloudInitRepositorySecretIsWellFormedYAML reconstructs what the
-// script's own heredoc feeds to `kubectl apply` once bash has run it: the
-// static lines from the template (dedented the way cloud-init's write_files
-// block scalar dedents them) plus a stand-in for the private key line,
-// indented the way the script's own `sed 's/^/    /'` indents it. This is
-// the one property a pure text-substring check cannot see -- that the
-// dynamically-generated githubAppPrivateKey block scalar is actually nested
-// deeper than its sibling keys -- so it is worth reconstructing rather than
-// leaving to a real `tofu apply` to discover.
+// script's heredoc feeds to `kubectl apply`, to check that the generated
+// githubAppPrivateKey block scalar is nested deeper than its sibling keys.
 func TestCloudInitRepositorySecretIsWellFormedYAML(t *testing.T) {
 	content := readCloudInitTemplate(t)
 
@@ -166,20 +141,16 @@ func TestCloudInitRepositorySecretIsWellFormedYAML(t *testing.T) {
 	if doc.StringData.GithubAppInstallationID == "" {
 		t.Error("stringData.githubAppInstallationID is empty")
 	}
-	// YAML's "|" block scalar keeps one trailing newline by default
-	// ("clip" chomping); that is exactly what a PEM file already ends
-	// with, so it is not stripped here.
+	// A "|" block scalar keeps one trailing newline, which a PEM file already
+	// ends with.
 	if want := fakeKey + "\n"; doc.StringData.GithubAppPrivateKey != want {
 		t.Errorf("stringData.githubAppPrivateKey = %q, want %q (block-scalar nesting broke the key's content)", doc.StringData.GithubAppPrivateKey, want)
 	}
 }
 
-// dedent strips exactly n leading spaces from every non-empty line,
-// matching the indentation cloud-init's write_files "content: |" block
-// scalar strips (established by the block's first line) before writing
-// the script to disk. It fails the test rather than silently truncating a
-// shorter line, since that would mean this block's own indentation had
-// drifted from the rest of the script.
+// dedent strips exactly n leading spaces from every non-empty line, as
+// cloud-init's "content: |" block scalar does. It fails on a shorter line,
+// which would mean the block's indentation had drifted.
 func dedent(t *testing.T, s string, n int) string {
 	t.Helper()
 	prefix := strings.Repeat(" ", n)
@@ -196,8 +167,8 @@ func dedent(t *testing.T, s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// indent prefixes every line with n spaces, the same transform the
-// script's own `sed 's/^/    /'` applies to the decoded private key.
+// indent prefixes every line with n spaces, like the script's
+// `sed 's/^/    /'`.
 func indent(s string, n int) string {
 	prefix := strings.Repeat(" ", n)
 	lines := strings.Split(s, "\n")
@@ -240,10 +211,8 @@ func TestBootstrapScriptIsValidBash(t *testing.T) {
 	}
 }
 
-// Once the argocd bootstrap Application exists, ArgoCD manages itself, and
-// re-applying the stock argo-cd chart would reset its customisations
-// until it self-heals (#75). The chart is only applied when the
-// Application is absent: at first boot, or after a failed one.
+// Re-applying the stock argo-cd chart over an ArgoCD that manages itself
+// would reset its customisations until it self-heals.
 func TestBootstrapScriptInstallsArgoCDOnlyBeforeItManagesItself(t *testing.T) {
 	script := bootstrapScript(t)
 	guard := strings.Index(script, "if kubectl -n argocd get applications.argoproj.io argocd >/dev/null 2>&1; then")

@@ -1,49 +1,24 @@
 #cloud-config
-# First boot of the Platform node. Provider-neutral: any host that accepts
-# cloud-init user data can run this unchanged. Rendered by OpenTofu with
-# templatefile(): a dollar sign followed by a brace is a template value, so
-# shell expansions that need braces must be written with a doubled dollar.
+# First boot of the Platform node. Rendered by OpenTofu with templatefile():
+# a dollar sign followed by a brace is a template value, so shell expansions
+# that need braces must be written with a doubled dollar.
 #
-# The bootstrap script is written to disk and then run once by cloud-init.
-# It is safe to re-run by hand (ssh root@<node> iidp-bootstrap) after a
-# failure: every step either converges or is skipped when already done.
-# Version bumps are applied the same way, by re-running it with K3S_VERSION,
-# ARGOCD_CHART_VERSION, HELM_VERSION and HELM_SHA256_LINUX_AMD64 set in the
-# environment; the values rendered below are the defaults for the first
-# boot. Rotating the Platform repository's GitHub App credential (below)
-# works the same way, with PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64 (and,
-# if they changed too, PLATFORM_REPO_GITHUB_APP_ID and
-# PLATFORM_REPO_GITHUB_APP_INSTALLATION_ID) set in the environment.
-#
-# k3s's registries.yaml (the GHCR pull credential) is not part of that
-# script: it is a plain file below, which cloud-init writes before runcmd
-# starts the script, so it exists before k3s first starts. The Deploy
-# gate's copy of the same token is a Secret manifest in another plain file
-# below, which the script applies on every run. Adding or rotating the
-# token on a running node means writing both files over ssh, restarting
-# k3s and applying the Secret (infra/README.md, "Adding or rotating the
-# GHCR pull token").
+# The bootstrap script is safe to re-run by hand (ssh root@<node>
+# iidp-bootstrap): every step either converges or is skipped when already
+# done. Version bumps and a rotated GitHub App key are applied that way, with
+# the script's overridable variables set in the environment.
 
 write_files:
-  # Credentials for pulling Applications' private images from ghcr.io
-  # (ADR-0005), rendered by OpenTofu (local.registries_yaml in
-  # bootstrap.tf) and carried as base64. k3s reads this file only when it
-  # starts. Not deferred: write_files runs in cloud-init's init stage,
-  # before runcmd installs k3s.
+  # k3s reads this file only when it starts. Not deferred: write_files runs
+  # in cloud-init's init stage, before runcmd installs k3s.
   - path: /etc/rancher/k3s/registries.yaml
     permissions: "0600"
     owner: root:root
     encoding: b64
     content: ${registries_yaml_b64}
-  # The API server's audit log, where the guardrails' admission policies
-  # and Pod Security record what they report (bootstrap/README.md,
-  # "Guardrails"): the audit policy (infra/platform/cloud-init/
-  # audit-policy.yaml, carried as base64 like registries.yaml) and a k3s
-  # config drop-in pointing kube-apiserver at it. k3s reads both only when
-  # it starts, and write_files runs before runcmd installs it. The log is
-  # rotated at 50 MB, four old files kept for at most 30 days. On a node
-  # that predates them, infra/README.md, "Turning on the audit log",
-  # writes the same two files and restarts k3s.
+  # The API server's audit log, where the guardrails record what they
+  # report: the audit policy and a k3s config drop-in pointing
+  # kube-apiserver at it.
   - path: /etc/rancher/k3s/audit-policy.yaml
     permissions: "0600"
     owner: root:root
@@ -59,14 +34,10 @@ write_files:
         - audit-log-maxsize=50
         - audit-log-maxbackup=4
         - audit-log-maxage=30
-  # The Deploy gate's copy of the same token: the manifest of Secret
-  # argocd/ghcr-pull-token (local.ghcr_pull_secret_yaml in bootstrap.tf),
-  # which iidp-bootstrap applies once the cluster is up. The gate is a pod
-  # and cannot read registries.yaml; it checks with this token that an
-  # image tag exists before committing it
-  # (docs/implementation-notes/61-image-check.md). The rotation recipe
-  # rewrites this file along with registries.yaml, so re-running
-  # iidp-bootstrap re-applies the current token, never the first boot's.
+  # The Deploy gate's copy of the GHCR token, as a Secret manifest that
+  # iidp-bootstrap applies. The rotation recipe rewrites this file along with
+  # registries.yaml, so re-running iidp-bootstrap re-applies the current
+  # token, never the first boot's.
   - path: /etc/iidp/ghcr-pull-token.yaml
     permissions: "0600"
     owner: root:root
@@ -96,9 +67,9 @@ write_files:
       HELM_SHA256_LINUX_AMD64="$${HELM_SHA256_LINUX_AMD64:-${helm_sha256_linux_amd64}}"
       PLATFORM_REPO_URL="${platform_repo_url}"
       PLATFORM_REPO_PATH="${platform_repo_bootstrap_path}"
-      # The org GitHub App that authenticates ArgoCD to the (private)
-      # Platform repository. The private key travels as base64 (see the
-      # header comment above) and is decoded only where it is used, below.
+      # The org GitHub App that authenticates ArgoCD to the private Platform
+      # repository. The private key travels as base64 and is decoded only
+      # where it is used, below.
       PLATFORM_REPO_GITHUB_APP_ID="$${PLATFORM_REPO_GITHUB_APP_ID:-${platform_repo_github_app_id}}"
       PLATFORM_REPO_GITHUB_APP_INSTALLATION_ID="$${PLATFORM_REPO_GITHUB_APP_INSTALLATION_ID:-${platform_repo_github_app_installation_id}}"
       PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64="$${PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64:-${platform_repo_github_app_private_key_b64}}"
@@ -115,8 +86,8 @@ write_files:
       apt-get -o DPkg::Lock::Timeout=300 -q -y install age curl
 
       # Traefik and ServiceLB stay enabled: ServiceLB is what binds Traefik's
-      # LoadBalancer Service to the node's public IP (no Hetzner load balancer,
-      # ADR-0001). The installer restarts k3s every time it runs, so skip it
+      # LoadBalancer Service to the node's public IP (no Hetzner load
+      # balancer). The installer restarts k3s every time it runs, so skip it
       # when the requested version is already installed; with a different
       # version it upgrades the existing installation in place.
       installed_k3s=$(k3s --version 2>/dev/null | awk 'NR == 1 { print $3 }' || true)
@@ -155,25 +126,19 @@ write_files:
       fi
 
       # Once the argocd bootstrap Application exists, ArgoCD manages itself
-      # at the version bootstrap/versions.yaml pins, with the Platform's
-      # customisations (Dex, KSOPS). Re-applying the stock chart over it
-      # would reset those until ArgoCD self-heals, so a re-run leaves it
-      # alone (docs/implementation-notes/75-cutover-friction.md).
+      # with the Platform's customisations (Dex, KSOPS). Re-applying the
+      # stock chart over it would reset those until ArgoCD self-heals, so a
+      # re-run leaves it alone.
       if kubectl -n argocd get applications.argoproj.io argocd >/dev/null 2>&1; then
         log "ArgoCD manages itself (Application argocd); not re-installing it"
       else
         log "installing ArgoCD (argo-cd chart $ARGOCD_CHART_VERSION)"
         kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-        # Rendered from the argo-cd chart itself, not the upstream
-        # install.yaml: the objects this creates already have the selectors
-        # the argocd bootstrap Application's chart takeover expects (chart
-        # and cloud-init use the same fullnameOverride and crds.install), so
-        # the first sync only ever patches instead of having to delete and
-        # recreate Deployments and the application controller's StatefulSet
-        # (docs/implementation-notes/04-bootstrap.md, "Installing from the
-        # chart, not the upstream manifests"). Server-side apply is required:
-        # the ArgoCD CRDs exceed the annotation size limit of client-side
-        # apply.
+        # Rendered from the argo-cd chart, not the upstream install.yaml, so
+        # the objects already have the selectors the argocd bootstrap
+        # Application expects and its first sync only ever patches.
+        # Server-side apply because the ArgoCD CRDs exceed the annotation size
+        # limit of client-side apply.
         helm template argocd argo-cd --repo https://argoproj.github.io/argo-helm \
           --version "$ARGOCD_CHART_VERSION" --namespace argocd --include-crds \
           --set fullnameOverride=argocd --set crds.install=true \
@@ -201,19 +166,10 @@ write_files:
       log "age public key: $(cat /root/age.pub)"
 
       # ArgoCD's credential for the Platform repository, so the root
-      # Application below can reconcile it from first boot with nobody
-      # touching the cluster (issue #41). Same App the Deploy gate commits
-      # deploys as (contents: write, which already implies the read ArgoCD
-      # needs), and the gate mounts this very Secret, so keep its name and
-      # keys (docs/implementation-notes/60-deploy-gate.md); the declarative shape is the one the ArgoCD
-      # documentation gives for GitHub App repository credentials: a Secret
-      # labelled argocd.argoproj.io/secret-type: repository. Re-running
-      # this script re-applies it, so a rotated key or a changed
-      # installation id (both overridable from the environment, see the
-      # header comment above) take effect on the next run. The decoded key
-      # exists only in this shell's memory -- never written to disk, never
-      # passed to log() or echo -- even though this whole script's stdout
-      # and stderr are teed to /var/log/iidp-bootstrap.log.
+      # Application below can reconcile it from first boot. The Deploy gate
+      # mounts this same Secret, so keep its name and keys. The decoded key
+      # is never written to disk or logged, since this script's output is
+      # teed to /var/log/iidp-bootstrap.log.
       log "writing ArgoCD's Platform-repository credential"
       GITHUB_APP_PRIVATE_KEY=$(printf '%s' "$PLATFORM_REPO_GITHUB_APP_PRIVATE_KEY_B64" | base64 -d)
       kubectl apply -n argocd -f - <<EOF

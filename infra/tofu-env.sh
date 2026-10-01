@@ -8,24 +8,16 @@
 #   source ../tofu-env.sh
 #   tofu output -raw node_public_ipv4
 #
-# The S3 backend in platform/backend.tf reads AWS_ACCESS_KEY_ID and
-# AWS_SECRET_ACCESS_KEY from the environment (a backend block cannot read
-# OpenTofu variables). The keys are the Object Storage keys the bootstrap
-# wizard, or the admin by hand, already wrote into
-# state-bucket/terraform.tfvars as
+# The S3 backend reads AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from the
+# environment (a backend block cannot read OpenTofu variables). This reads
+# them from object_storage_access_key and object_storage_secret_key in
+# state-bucket/terraform.tfvars, so they are never typed into shell history.
+# It prints no secret. IIDP_STATE_TFVARS overrides the file to read.
 #
-#   object_storage_access_key = "..."
-#   object_storage_secret_key = "..."
-#
-# so this reads them from there instead of having them typed or pasted
-# into shell history. It prints no secret. IIDP_STATE_TFVARS overrides
-# the file to read.
-#
-# Works when sourced from bash (3.2 or newer) or zsh. Everything it defines
-# besides the two exports is removed again before it returns.
+# Works when sourced from bash (3.2 or newer) or zsh.
 
-# Run instead of sourced: the exports would die with this process, so say
-# so rather than appear to succeed. Only bash can get here (the shebang).
+# Run instead of sourced, the exports would die with this process. Only bash
+# can get here (the shebang).
 if [ -n "${BASH_VERSION:-}" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
   echo "tofu-env.sh: source this file instead of running it, so the exports reach your shell:" >&2
   echo "  source ${0}" >&2
@@ -78,8 +70,7 @@ _iidp_tofu_env_load() {
   echo "tofu-env.sh: exported AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from $file" >&2
 }
 
-# unset -f/unset leave nothing behind but the two exports; the status of
-# the load is what the caller's `source` returns.
+# Leave nothing behind but the two exports.
 if _iidp_tofu_env_load; then
   unset -f _iidp_tofu_env_value _iidp_tofu_env_load
   unset _iidp_tofu_env_self

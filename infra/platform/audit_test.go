@@ -1,10 +1,5 @@
 package platform_test
 
-// Tests for #90: cloud-init turns on the API server's audit log, where the
-// guardrails' admission policies and Pod Security record what they
-// report (their Audit action), before k3s first starts. The two renders in
-// registries_test.go call assertAuditLog.
-
 import (
 	"encoding/base64"
 	"os"
@@ -32,9 +27,8 @@ func readAuditPolicy(t *testing.T) []byte {
 	return data
 }
 
-// The audit policy logs, at Metadata level (so the admission annotations
-// and never an object's body), the writes to every kind the guardrails
-// and Pod Security check, and nothing else.
+// The audit policy logs, at Metadata level, the writes to every kind the
+// guardrails and Pod Security check, and nothing else.
 func TestAuditPolicyLogsWhatTheGuardrailsCheck(t *testing.T) {
 	var policy struct {
 		APIVersion string   `yaml:"apiVersion"`
@@ -91,10 +85,9 @@ func TestAuditPolicyLogsWhatTheGuardrailsCheck(t *testing.T) {
 	}
 }
 
-// assertAuditLog checks a rendered cloud-config: the audit policy, byte
-// for byte the one the kind harness uses too, and the k3s config drop-in
-// that points kube-apiserver at it, both written by write_files (before
-// runcmd starts k3s) and root-only.
+// assertAuditLog checks that the audit policy, byte for byte the one the kind
+// harness uses, and the k3s drop-in pointing kube-apiserver at it are written
+// by write_files and root-only.
 func assertAuditLog(t *testing.T, rendered string) {
 	t.Helper()
 	var cfg cloudConfig
