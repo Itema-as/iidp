@@ -19,11 +19,10 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// fakeGitHub is an in-process fake of the few GitHub REST endpoints the
-// Create path uses. It records every request and, on repository creation,
-// makes a real local bare repository and returns its file:// URL as
-// clone_url, so the pushed template can be inspected by cloning it, the
-// way docs/design.md's testing seam asks for.
+// fakeGitHub is an in-process fake of the GitHub REST endpoints the CLI
+// uses. It records every request and, on repository creation, makes a real
+// local bare repository and returns its file:// URL as clone_url, so the
+// pushed template can be inspected by cloning it.
 type fakeGitHub struct {
 	srv *httptest.Server
 	t   *testing.T
@@ -36,12 +35,7 @@ type fakeGitHub struct {
 	reposDir            string
 	createDefaultBranch string
 
-	// The following support the Adopt path's endpoints
-	// (docs/implementation-notes/15-cli-adopt-path.md): reading an existing
-	// repository's default branch and push permission, checking whether a
-	// branch already exists (against the real bare repository, so a push
-	// the CLI makes is genuinely observable afterwards), and opening a
-	// pull request.
+	// For the Adopt path's endpoints.
 	repoDefaultBranch map[string]string // owner/name -> default branch
 	canPush           map[string]bool   // owner/name -> permissions.push
 	bareDir           map[string]string // owner/name -> the bare repository's filesystem path
@@ -49,26 +43,20 @@ type fakeGitHub struct {
 	nextPRNumber      int
 
 	// oauthScopes is the X-OAuth-Scopes header every response carries,
-	// the way GitHub reports a classic OAuth token's scopes
-	// (docs/implementation-notes/47-workflow-scope.md); omitScopes drops
-	// the header altogether, the way GitHub answers a fine-grained or
-	// GitHub App token.
+	// as for a classic OAuth token; omitScopes drops it, as GitHub does
+	// for a fine-grained or GitHub App token.
 	oauthScopes string
 	omitScopes  bool
 
-	// repoIDs and ownerIDs are the numeric ids GitHub reports for a
-	// repository and for its owner, assigned the first time the fake
-	// learns of each (docs/implementation-notes/58-repository-binding.md).
-	// transferredTo makes GET /repos/{owner}/{name} report a different
-	// owner, the way GitHub follows the redirect of a repository that was
-	// transferred away.
+	// repoIDs and ownerIDs are assigned the first time the fake learns of
+	// each. transferredTo makes GET /repos/{owner}/{name} report a
+	// different owner, as GitHub does for a transferred repository.
 	repoIDs       map[string]int64
 	ownerIDs      map[string]int64
 	nextID        int64
 	transferredTo map[string]string
 }
 
-// fakeOrgID is the numeric id the fake reports for platform.Org.
 const fakeOrgID = 4242
 
 // gh auth login's minimum scopes, plus workflow: the fake's default token.
@@ -80,8 +68,6 @@ type fakeRequest struct {
 	Body   map[string]any
 }
 
-// fakePullRequest is one POST /repos/{owner}/{name}/pulls the fake
-// recorded, for asserting on its base, head, title and body.
 type fakePullRequest struct {
 	Owner, Name string
 	Number      int
@@ -119,10 +105,9 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 	return f
 }
 
-// seedAdoptRepository seeds a real bare Application repository for
-// owner/name on defaultBranch with files, registers it with the fake as
-// existing with push access, and returns its file:// clone URL and bare
-// directory (for pushExistingBranch, to simulate a pre-existing AdoptBranch).
+// seedAdoptRepository seeds a bare Application repository for owner/name,
+// registers it with the fake as existing with push access, and returns its
+// file:// clone URL and directory.
 func (f *fakeGitHub) seedAdoptRepository(t *testing.T, owner, name, defaultBranch string, files map[string]string) (cloneURL, bareDir string) {
 	t.Helper()
 	bare, url := seedApplicationRepository(t, defaultBranch, files)
@@ -137,8 +122,6 @@ func (f *fakeGitHub) seedAdoptRepository(t *testing.T, owner, name, defaultBranc
 	return url, bare
 }
 
-// repoID returns the numeric id the fake reports for owner/name, assigning
-// one the first time it is asked.
 func (f *fakeGitHub) repoID(owner, name string) int64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -154,8 +137,6 @@ func (f *fakeGitHub) repoIDLocked(key string) int64 {
 	return f.nextID
 }
 
-// ownerIDLocked returns the numeric id the fake reports for the account
-// login: fakeOrgID for platform.Org, another stable id for anyone else.
 func (f *fakeGitHub) ownerIDLocked(login string) int64 {
 	if id, ok := f.ownerIDs[login]; ok {
 		return id
@@ -166,16 +147,13 @@ func (f *fakeGitHub) ownerIDLocked(login string) int64 {
 }
 
 // transferAway makes GET /repos/{owner}/{name} answer as if the repository
-// had been transferred to newOwner: GitHub follows the redirect and
-// reports the new owner and full name.
+// had been transferred to newOwner.
 func (f *fakeGitHub) transferAway(owner, name, newOwner string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.transferredTo[owner+"/"+name] = newOwner
 }
 
-// rename makes owner/newName exist with owner/oldName's numeric id, the
-// way GitHub reports a renamed repository.
 func (f *fakeGitHub) rename(owner, oldName, newName string) {
 	id := f.repoID(owner, oldName)
 	f.markExisting(owner, newName)
@@ -184,24 +162,20 @@ func (f *fakeGitHub) rename(owner, oldName, newName string) {
 	f.repoIDs[owner+"/"+newName] = id
 }
 
-// recreate gives owner/name a new numeric id, the way deleting a
-// repository and creating another under the same name does.
+// recreate gives owner/name a new numeric id on its next lookup, as GitHub
+// does for a repository deleted and created again under the same name.
 func (f *fakeGitHub) recreate(owner, name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.repoIDs, owner+"/"+name)
 }
 
-// denyPush makes owner/name (already seeded) report permissions.push:
-// false, the way a repository the developer cannot push to does.
 func (f *fakeGitHub) denyPush(owner, name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.canPush[owner+"/"+name] = false
 }
 
-// pullRequestsTo returns the pull requests the fake recorded for
-// owner/name.
 func (f *fakeGitHub) pullRequestsTo(owner, name string) []fakePullRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -214,8 +188,6 @@ func (f *fakeGitHub) pullRequestsTo(owner, name string) []fakePullRequest {
 	return out
 }
 
-// markExisting makes owner/name answer 200 to GET /repos/owner/name, the
-// way a repository that already exists does.
 func (f *fakeGitHub) markExisting(owner, name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -224,8 +196,6 @@ func (f *fakeGitHub) markExisting(owner, name string) {
 	f.repoDefaultBranch[owner+"/"+name] = "main"
 }
 
-// requestsTo reports how many recorded requests match method and a path
-// suffix.
 func (f *fakeGitHub) requestsTo(method, pathSuffix string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -238,8 +208,6 @@ func (f *fakeGitHub) requestsTo(method, pathSuffix string) int {
 	return n
 }
 
-// createBody returns the JSON body of the POST that created owner/name,
-// or nil if none was made.
 func (f *fakeGitHub) createBody(owner, name string) map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -257,15 +225,12 @@ func (f *fakeGitHub) createBody(owner, name string) map[string]any {
 	return nil
 }
 
-// cloneURL returns the clone_url the fake handed back for owner/name.
 func (f *fakeGitHub) cloneURL(owner, name string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.created[owner+"/"+name]
 }
 
-// defaultBranch returns the branch a PATCH set as owner/name's default, or
-// "" if none was made.
 func (f *fakeGitHub) defaultBranch(owner, name string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -286,8 +251,8 @@ func (f *fakeGitHub) record(r *http.Request) map[string]any {
 	return body
 }
 
-// setScopes makes every response report scopes (a comma-separated list, as
-// GitHub sends it) as the token's OAuth scopes.
+// setScopes sets the token's OAuth scopes, a comma-separated list as GitHub
+// sends it.
 func (f *fakeGitHub) setScopes(scopes string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -302,8 +267,6 @@ func (f *fakeGitHub) reportNoScopes() {
 	f.omitScopes = true
 }
 
-// withScopes adds the X-OAuth-Scopes header to every response, as GitHub
-// does for a classic token, unless reportNoScopes was called.
 func (f *fakeGitHub) withScopes(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -316,8 +279,7 @@ func (f *fakeGitHub) withScopes(next http.Handler) http.Handler {
 	})
 }
 
-// handleRoot answers GET /, the API root the CLI reads the token's scopes
-// from.
+// handleRoot answers GET /, which the CLI reads the token's scopes from.
 func (f *fakeGitHub) handleRoot(w http.ResponseWriter, r *http.Request) {
 	f.record(r)
 	writeJSON(w, http.StatusOK, map[string]any{"current_user_url": f.srv.URL + "/user"})
@@ -378,7 +340,6 @@ func (f *fakeGitHub) handleRepo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// splitOwnerName splits "owner/name" into its two parts.
 func splitOwnerName(s string) (owner, name string) {
 	parts := strings.SplitN(s, "/", 2)
 	if len(parts) != 2 {
@@ -387,10 +348,8 @@ func splitOwnerName(s string) (owner, name string) {
 	return parts[0], parts[1]
 }
 
-// handleBranchExists answers GET /repos/{owner}/{name}/branches/{branch}
-// by checking the real bare repository the fake seeded or created for
-// owner/name: a genuine reflection of whatever the CLI has actually pushed,
-// rather than a separately tracked flag.
+// handleBranchExists answers from the real bare repository, so it reflects
+// whatever the CLI has pushed.
 func (f *fakeGitHub) handleBranchExists(w http.ResponseWriter, owner, name, branch string) {
 	f.mu.Lock()
 	bareDir := f.bareDir[owner+"/"+name]
@@ -407,7 +366,6 @@ func (f *fakeGitHub) handleBranchExists(w http.ResponseWriter, owner, name, bran
 	writeJSON(w, http.StatusOK, map[string]any{"name": branch})
 }
 
-// createPullRequest answers POST /repos/{owner}/{name}/pulls.
 func (f *fakeGitHub) createPullRequest(w http.ResponseWriter, owner, name string, body map[string]any) {
 	title, _ := body["title"].(string)
 	head, _ := body["head"].(string)
@@ -466,8 +424,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// cloneAppRepo clones the Application repository the fake created for
-// owner/name into a fresh directory and returns it.
 func cloneAppRepo(t *testing.T, f *fakeGitHub, owner, name string) string {
 	t.Helper()
 	url := f.cloneURL(owner, name)
@@ -600,7 +556,7 @@ func TestAppCreatePathOtherProducesOnlyADockerfileStub(t *testing.T) {
 		t.Errorf("Dockerfile stub does not mention PORT:\n%s", dockerfile)
 	}
 	// Like every generated Dockerfile, the stub's runs as a numeric,
-	// non-root user: the Platform starts nothing else (#110).
+	// non-root user: the Platform starts nothing else.
 	if !strings.Contains(string(dockerfile), "USER 1000:1000") {
 		t.Errorf("Dockerfile stub has no numeric USER:\n%s", dockerfile)
 	}
@@ -645,8 +601,8 @@ func TestAppCreatePathFrameworkDerivesKindAndRefusesExplicitKind(t *testing.T) {
 }
 
 func TestAppCreatePathHasNoOwnerFlag(t *testing.T) {
-	// Only repositories in the org can be Applications (ADR-0005), so
-	// Create no longer offers a personal account: --owner is not a flag.
+	// Only repositories in the org can be Applications, so there is no
+	// --owner flag.
 	platformURL := newPlatformRepository(t, testPlatformYAML)
 	gh := newFakeGitHub(t)
 
@@ -703,8 +659,7 @@ func TestAppCreatePathBindsTheApplicationRepositoryByID(t *testing.T) {
 	}
 }
 
-// assertBinding checks applications/<name>/repository.yaml in clone: the
-// shape docs/platform-repository.md promises the Deploy gate.
+// assertBinding checks applications/<name>/repository.yaml in clone.
 func assertBinding(t *testing.T, clone, name, repository string, repositoryID, ownerID int64) {
 	t.Helper()
 	path := filepath.Join(clone, "applications", name, "repository.yaml")
@@ -840,9 +795,6 @@ func TestAppCreatePathReportsWhatWasCreatedWhenThePlatformPushFails(t *testing.T
 	assertFileExists(t, filepath.Join(clone, "Dockerfile"))
 }
 
-// The Adopt path itself (--path adopt --repo ...) is covered end to end in
-// app_create_adopt_test.go; it is implemented, not refused, as of #15.
-
 func TestAppCreatePathFrameworkRequiresPathCreate(t *testing.T) {
 	platformURL := newPlatformRepository(t, testPlatformYAML)
 
@@ -905,8 +857,7 @@ func TestAppCreatePathAddsTheDeployWorkflow(t *testing.T) {
 	}
 	content := string(data)
 	// A short caller of the reusable deploy workflow at the major tag (v0
-	// for this dev build), with the Application's name
-	// (docs/implementation-notes/74-reusable-deploy-workflow.md).
+	// for this dev build), with the Application's name.
 	for _, want := range []string{
 		"uses: " + platform.DeployWorkflow + "@v0\n",
 		"application: shop\n",
@@ -926,9 +877,7 @@ func TestAppCreatePathAddsTheDeployWorkflow(t *testing.T) {
 }
 
 // The migration command lives in the Application repository's iidp.yaml,
-// which the deploy workflow sends the Deploy gate with every deploy; app
-// create writes it there, not into the Platform repository
-// (docs/implementation-notes/66-migration-command-in-repo.md).
+// which the deploy workflow sends the Deploy gate with every deploy.
 func TestAppCreatePathWritesTheMigrationCommandIntoIidpYAML(t *testing.T) {
 	for _, tc := range []struct {
 		name string

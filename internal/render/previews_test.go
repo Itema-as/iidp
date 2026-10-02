@@ -125,7 +125,6 @@ func ExamplePreviewApplicationSet() {
 	//                         maxDuration: 3m
 }
 
-// The generator's api is written only for a GitHub other than GitHub.com.
 func TestPreviewApplicationSetNamesTheGitHubAPIOnlyWhenGiven(t *testing.T) {
 	for _, api := range []string{"", "https://github.example.com/api/v3"} {
 		out, err := render.PreviewApplicationSet(render.Previews{Application: "shop", Owner: "Itema-as", Repository: "shop", GitHubAPI: api, Staging: stagingApplication(false)})
@@ -154,10 +153,8 @@ func TestPreviewApplicationSetNamesTheGitHubAPIOnlyWhenGiven(t *testing.T) {
 	}
 }
 
-// A preview retries a failed sync a limited number of times, so a sync that
-// keeps failing ends and lets ArgoCD delete the preview when its pull
-// request closes (#131). The staging Environment it copies still retries
-// without limit (#75).
+// A sync that keeps failing must end, or ArgoCD never deletes the preview
+// when its pull request closes.
 func TestPreviewRetriesALimitedNumberOfTimesWhereStagingRetriesForEver(t *testing.T) {
 	type syncRetry struct {
 		Limit   int  `yaml:"limit"`

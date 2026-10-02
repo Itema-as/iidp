@@ -22,23 +22,18 @@ type Dependencies struct {
 	// BeforePush, when set, runs between committing to the Platform
 	// repository and each push attempt. Tests use it to move main.
 	BeforePush func() error
-	// GitHubAPI overrides the GitHub API base URL the CLI's GitHub client
-	// talks to; empty means the real API. Tests point it at an in-process
-	// fake server.
+	// GitHubAPI overrides the GitHub API base URL; empty means the real API.
 	GitHubAPI string
 	// CIRetryDelay is how long ci set-image waits before calling an
-	// unavailable Deploy gate again; zero means ten seconds. Tests shorten
-	// it.
+	// unavailable Deploy gate again; zero means ten seconds.
 	CIRetryDelay time.Duration
-	// HTTPClient is what app status calls the Deploy gate's service with;
-	// nil means a client with a one-minute timeout. Tests route it to a
-	// fake gate.
+	// HTTPClient is what app status calls the Deploy gate with; nil means a
+	// client with a one-minute timeout.
 	HTTPClient *http.Client
 }
 
-// Run executes the CLI with the given arguments (excluding the program name)
-// and streams, and returns the process exit code. main calls it with the real
-// process streams; tests call it with buffers.
+// Run executes the CLI with args (excluding the program name) and returns
+// the process exit code.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return RunWith(args, stdin, stdout, stderr, Dependencies{})
 }

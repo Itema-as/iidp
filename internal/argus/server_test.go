@@ -201,7 +201,6 @@ func TestStreamSendsTheSnapshotThenDeltas(t *testing.T) {
 	}
 }
 
-// An idle stream gets a keepalive comment.
 func TestStreamKeepsAlive(t *testing.T) {
 	s, _ := newStore(t)
 	s.Seed()
@@ -281,7 +280,6 @@ func TestASlowBrowserIsClosed(t *testing.T) {
 	s.unsubscribe(c) // after the store closed it: no panic
 }
 
-// The probes, and the web directory.
 func TestProbesAndTheWebDirectory(t *testing.T) {
 	s, _ := newStore(t)
 	srv := serve(t, s, time.Hour)

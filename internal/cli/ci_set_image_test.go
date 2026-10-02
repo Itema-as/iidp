@@ -15,15 +15,11 @@ import (
 	"github.com/Itema-as/iidp/internal/cli"
 )
 
-// iidp ci set-image is the Deploy gate's client
-// (docs/implementation-notes/60-deploy-gate.md). These tests run it the way
-// the deploy workflow does, against a fake of the GitHub Actions OIDC token
-// endpoint and a fake gate.
+// These tests run ci set-image the way the deploy workflow does, against a
+// fake GitHub Actions OIDC token endpoint and a fake gate.
 
 // fakeActionsTokenService is the endpoint behind
-// ACTIONS_ID_TOKEN_REQUEST_URL: it answers {"value": <token>} to a request
-// carrying ACTIONS_ID_TOKEN_REQUEST_TOKEN, and records the audience asked
-// for.
+// ACTIONS_ID_TOKEN_REQUEST_URL. It records the audience asked for.
 type fakeActionsTokenService struct {
 	srv          *httptest.Server
 	mu           sync.Mutex
@@ -97,7 +93,6 @@ func (f *fakeGate) callCount() int {
 	return len(f.calls)
 }
 
-// setImage runs iidp ci set-image in-process.
 func setImage(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -152,8 +147,8 @@ func TestCISetImageTakesTheGateURLFromTheFlag(t *testing.T) {
 	}
 }
 
-// The App key left CI with the Deploy gate: whatever IIDP_DEPLOY_APP_*
-// still holds on a runner is neither needed nor read.
+// The GitHub App key lives with the Deploy gate, so ci set-image neither
+// needs nor reads IIDP_DEPLOY_APP_*, even on a runner that still sets them.
 func TestCISetImageNeedsNoAppKey(t *testing.T) {
 	newFakeActionsTokenService(t)
 	gate := newFakeGate(t, gateResponse{http.StatusOK, deployed})
@@ -285,8 +280,7 @@ func TestCISetImageRefusesBadArgumentsBeforeAnyCall(t *testing.T) {
 }
 
 // ci set-image reads iidp.yaml from the checkout it runs in, the commit
-// being deployed, and sends its migration command with the tag
-// (docs/implementation-notes/66-migration-command-in-repo.md).
+// being deployed, and sends its migration command with the tag.
 func TestCISetImageSendsTheMigrationCommandFromIidpYAML(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

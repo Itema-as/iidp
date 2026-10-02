@@ -20,22 +20,14 @@ import (
 	"github.com/Itema-as/iidp/internal/templates"
 )
 
-// runWizard asks the nine questions docs/design.md's wizard describes, in
-// order, with the agreed defaults, reading from cmd.InOrStdin() and writing
-// to cmd.OutOrStdout() — the same seam the CLI's tests already inject
-// (docs/implementation-notes/14-cli-wizard.md). A question whose flag was
-// already given (cmd.Flags().Changed) is skipped entirely: it never prints
-// anything. Answers are applied with Flags().Set, which both assigns opts'
-// bound field and marks the flag Changed, so the rest of the command (plan,
-// detectMigrationCommand) cannot tell an answer typed at a prompt from one
-// given on the command line. loginCookieDomain reads the Itema login
-// cookie's domain from platform.yaml; it is called only when question 7
-// needs it.
+// runWizard asks app create's questions, skipping any whose flag was given.
+// Answers are applied with Flags().Set, which also marks the flag Changed,
+// so the rest of the command cannot tell a typed answer from a flag.
+// loginCookieDomain is called only when custom domains were given.
 func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, loginCookieDomain func() (string, error)) error {
 	f := cmd.Flags()
 	out := cmd.OutOrStdout()
 
-	// 1. Application name.
 	if !f.Changed("name") {
 		name, err := p.Text("Application name", "", func(s string) error {
 			return platformrepo.ValidateNewName(s)
@@ -48,7 +40,6 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// 2. Create or Adopt?
 	if !f.Changed("path") {
 		choice, err := p.Choice("Create or Adopt?", []string{pathCreate, pathAdopt}, pathCreate)
 		if err != nil {
@@ -58,7 +49,6 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 			return err
 		}
 	}
-	// 2b. Adopt asks for the repository to open a pull request on.
 	if opts.path == pathAdopt && !f.Changed("repo") {
 		repo, err := p.Text("Application repository ("+platform.Org+"/name or a URL)", "", func(s string) error {
 			if s == "" {
@@ -78,12 +68,8 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// 3. Kind and framework. On the Create path the framework decides the
-	// Kind, except "other", which asks for it directly. Adopt asks
-	// neither: an existing Dockerfile's Kind cannot be derived at all (it
-	// is required as a flag, checked once the repository is cloned), and
-	// without one the framework is detected from the repository itself,
-	// not chosen (docs/implementation-notes/15-cli-adopt-path.md).
+	// Adopt asks neither Kind nor framework: both come from what the
+	// repository contains, checked once it is cloned.
 	if opts.path == pathCreate {
 		if !f.Changed("framework") {
 			fw, err := p.Choice("Framework", []string{
@@ -102,18 +88,13 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 			}
 		}
 	} else if opts.path == "" && !f.Changed("kind") {
-		// The legacy bare path (no --path, kept for compatibility per
-		// docs/implementation-notes/11-cli-create-path.md): the wizard
-		// never chooses it itself (question 2 only offers Create or
-		// Adopt), but a flag combination can still reach here, so the
-		// question is asked all the same. Adopt (opts.path == pathAdopt)
-		// asks nothing here, per the comment above.
+		// The wizard never offers writing only the Platform repository, but
+		// an explicit --path "" still reaches here.
 		if err := askKind(f, p); err != nil {
 			return err
 		}
 	}
 
-	// 4. Postgres database, then, if enabled, the migration command.
 	if !f.Changed("postgres") {
 		yes, err := p.YesNo("Postgres database?", false)
 		if err != nil {
@@ -129,7 +110,6 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// 5. Staging Environment.
 	if !f.Changed("staging") {
 		yes, err := p.YesNo("Staging Environment?", false)
 		if err != nil {
@@ -140,10 +120,10 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// 5b. Preview Environments, right after staging and only with it: a
-	// preview uses staging's values and secrets. Without --path there is no
-	// Application repository whose pull requests it could follow, so the
-	// question would only lead to a refusal.
+	// Asked only with staging and an Application repository: a Preview
+	// Environment uses staging's values and secrets and follows the
+	// repository's pull requests, so without them a yes would only be
+	// refused.
 	if opts.staging && (opts.path == pathCreate || opts.path == pathAdopt) && !f.Changed("previews") {
 		fmt.Fprintln(out, "Preview Environments (optional)")
 		fmt.Fprintln(out, "Every open pull request labelled "+render.PreviewLabel+" gets an Environment of its own at")
@@ -158,7 +138,6 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// 6. Custom domain.
 	if !f.Changed("domain") {
 		answer, err := p.Text("Custom domain (comma-separated for more than one)", "none", nil)
 		if err != nil {
@@ -171,9 +150,8 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// 7. Itema login: docs/design.md's wizard offers this unless a custom
-	// domain is outside the login cookie domain, which only platform.yaml
-	// knows, so it is read (once, lazily) only when domains were given.
+	// Login is not offered when a custom domain is outside the login cookie
+	// domain, which only platform.yaml knows.
 	if !f.Changed("login") {
 		offer := true
 		if len(opts.domains) > 0 {
@@ -192,14 +170,12 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 			}
 		}
 	}
-	// 7b. Sign-in groups, right after login, when login is on.
 	if opts.login && !f.Changed("login-group") {
 		if err := askSignInGroups(f, p, out); err != nil {
 			return err
 		}
 	}
 
-	// 8. Size.
 	if !f.Changed("size") {
 		size, err := p.Choice("Size", sizes, "small")
 		if err != nil {
@@ -213,9 +189,7 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 	return nil
 }
 
-// askKind asks the Kind question (used both for --framework other, which
-// does not derive one, and for the legacy bare path) and sets --kind with
-// the answer.
+// askKind asks for the Kind and sets --kind.
 func askKind(f *pflag.FlagSet, p *prompt.Prompter) error {
 	kind, err := p.Choice("Kind", []string{platformrepo.KindWebService, platformrepo.KindStaticSite}, platformrepo.KindWebService)
 	if err != nil {
@@ -224,11 +198,9 @@ func askKind(f *pflag.FlagSet, p *prompt.Prompter) error {
 	return f.Set("kind", kind)
 }
 
-// askMigrationCommand shows docs/design.md's migration help text, including
-// the detected suggestion (or "nothing" when none was found), and asks for
-// the command. The flag is set even on a blank answer, so
-// detectMigrationCommand does not run detection a second time and
-// potentially disagree with a developer who declined the suggestion.
+// askMigrationCommand asks for the migration command, suggesting the
+// detected one. The flag is set even on a blank answer, so detection does
+// not run again and override a developer who declined the suggestion.
 func askMigrationCommand(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, out io.Writer) error {
 	planSoFar, err := opts.plan(cmd)
 	if err != nil {
@@ -250,8 +222,7 @@ func askMigrationCommand(cmd *cobra.Command, opts *createOptions, p *prompt.Prom
 	return cmd.Flags().Set("migration-command", answer)
 }
 
-// migrationHelpText is docs/design.md's "The wizard" help text for the
-// migration command question, with det filled in.
+// migrationHelpText is the help text for the migration command question.
 func migrationHelpText(det migrate.Detection, ok bool) string {
 	var b strings.Builder
 	b.WriteString("Migration command (optional)\n")
@@ -265,10 +236,8 @@ func migrationHelpText(det migrate.Detection, ok bool) string {
 	return b.String()
 }
 
-// splitList turns a wizard answer into the values a repeatable flag
-// (--domain, --login-group) would have received, one per repeated flag:
-// comma-separated, trimmed, with blanks and a literal "none" (the
-// question's bracketed default) dropped.
+// splitList splits a comma-separated wizard answer into values for a
+// repeatable flag, dropping blanks and the default "none".
 func splitList(answer string) []string {
 	var hosts []string
 	for _, part := range strings.Split(answer, ",") {
@@ -281,12 +250,7 @@ func splitList(answer string) []string {
 	return hosts
 }
 
-// askItemaLogin asks docs/design.md's wizard question 7, "Itema login?
-// [no]", and sets --login with the answer. runWizard only calls it when
-// every custom domain given is inside the login cookie domain (the cookie
-// never reaches a host outside it): the wizard does not ask a question
-// whose answer would then be refused
-// (docs/implementation-notes/76-login-in-zone-domains.md).
+// askItemaLogin asks whether to require Itema login and sets --login.
 func askItemaLogin(f *pflag.FlagSet, p *prompt.Prompter) error {
 	yes, err := p.YesNo("Itema login?", false)
 	if err != nil {
@@ -295,11 +259,8 @@ func askItemaLogin(f *pflag.FlagSet, p *prompt.Prompter) error {
 	return f.Set("login", strconv.FormatBool(yes))
 }
 
-// askSignInGroups asks which Entra groups may sign in, saying how to find a
-// group's object id, and sets --login-group once per id. The default,
-// none, sets nothing: every Itema user gets in. An answer that is not a
-// comma-separated list of GUIDs is asked again, with the reason
-// (docs/implementation-notes/92-sign-in-groups.md).
+// askSignInGroups asks which Entra groups may sign in and sets --login-group
+// once per id. The default, none, lets every Itema user in.
 func askSignInGroups(f *pflag.FlagSet, p *prompt.Prompter, out io.Writer) error {
 	fmt.Fprintln(out, "Sign-in groups (optional)")
 	fmt.Fprintln(out, "Only members of these Entra groups get past Itema login; leave empty to let")
@@ -319,11 +280,8 @@ func askSignInGroups(f *pflag.FlagSet, p *prompt.Prompter, out io.Writer) error 
 	return nil
 }
 
-// printSummary lists every choice the developer made — the wizard's
-// question 9 — before asking for confirmation. preview is what
-// platformrepo.Writer.PreviewApplication reports for app: real addresses
-// and domain classification read from platform.yaml, without writing
-// anything. migrationCommand is the command resolved for iidp.yaml.
+// printSummary lists every choice before the confirmation. preview is
+// Writer.PreviewApplication's result for app, with the real addresses.
 func printSummary(out io.Writer, plan createPlan, app platformrepo.Application, migrationCommand string, preview platformrepo.Result, adoptFiles []string) {
 	fmt.Fprintln(out, "\nSummary:")
 	fmt.Fprintf(out, "  Name:       %s\n", plan.name)

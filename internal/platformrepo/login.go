@@ -9,12 +9,9 @@ import (
 
 // LoginCookieDomain is the domain the Itema login cookie is set for,
 // without the leading dot: CloudflareZone, or BaseDomain when platform.yaml
-// has no zone. The bootstrap's oauth2-proxy derives its cookie-domain and
-// whitelist-domain from the same two fields
-// (bootstrap/templates/_helpers.tpl, iidp-bootstrap.loginCookieDomain), and
-// the CLI writes it into every Environment with login as
-// platform.loginCookieDomain, which the chart checks custom domains
-// against (docs/implementation-notes/76-login-in-zone-domains.md).
+// has no zone. The bootstrap's oauth2-proxy derives its cookie domain the
+// same way (iidp-bootstrap.loginCookieDomain), and the chart checks custom
+// domains against it.
 func (c Config) LoginCookieDomain() string {
 	if c.CloudflareZone != "" {
 		return c.CloudflareZone
@@ -36,11 +33,8 @@ func HostsOutsideLoginCookieDomain(domains []string, cookieDomain string) []stri
 }
 
 // CheckLoginDomains refuses Itema login together with custom domains that
-// are not all inside cfg's login cookie domain, naming the ones outside
-// it: --login on app create, or on add-capability for an Application whose
-// prod already has domains. The same rule the chart enforces at render
-// time (chart/application/templates/_helpers.tpl,
-// application.login.checkDomains).
+// are not all inside cfg's login cookie domain, naming the ones outside.
+// The chart enforces the same rule (application.login.checkDomains).
 func CheckLoginDomains(cfg Config, domains []string) error {
 	cookieDomain := cfg.LoginCookieDomain()
 	outside := HostsOutsideLoginCookieDomain(domains, cookieDomain)
@@ -73,13 +67,10 @@ var groupIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 const FindGroupIDHelp = "a group's object id is on its Overview page in the Entra admin center (Groups > All groups), or: az ad group show --group <name> --query id -o tsv"
 
 // NormalizeLoginGroups checks sign-in groups, Entra ID group object ids,
-// and returns them lowercased, in the order given: the form the ID token's
-// groups claim and Microsoft Graph use, which oauth2-proxy compares as
-// strings. Only the shape is checked. The CLI has no Entra access, so a
-// GUID that is no group of Itema's is not caught; it lets nobody in. An id
-// that is not a GUID, or one given twice, is refused, naming it. The chart
-// applies the same rule (chart/application/templates/_helpers.tpl,
-// application.login.groups).
+// and returns them lowercased, in the order given: oauth2-proxy compares
+// them as strings with the ID token's groups claim. Only the shape is
+// checked, since the CLI has no Entra access. An id that is not a GUID, or
+// one given twice, is refused. The chart applies the same rule.
 func NormalizeLoginGroups(ids []string) ([]string, error) {
 	groups := make([]string, 0, len(ids))
 	seen := map[string]bool{}

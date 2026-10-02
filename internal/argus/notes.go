@@ -9,10 +9,10 @@ import (
 )
 
 // Every change Argus sees in the model is a note, with the loudness the
-// spec's table gives it (feed.go). The rules below compare an object as
-// it was with the object as it is now; nil is an object that was not
-// there. An object seen for the first time when Argus starts gives no
-// note: the snapshot shows it, and the seeded notes say what came before.
+// table in feed.go gives it. The rules below compare an object as it was
+// with the object as it is now; nil is an object that was not there. An
+// object seen for the first time when Argus starts gives no note: the
+// snapshot shows it, and the seeded notes say what came before.
 
 // applicationNotes are the notes for one Application's change.
 func applicationNotes(prev, next *platformstate.Application, now time.Time) []Note {

@@ -23,7 +23,7 @@ type ObjectMeta struct {
 	Generation int64 `json:"generation"`
 }
 
-// Condition types and reasons the interpretation looks for.
+// The values of a condition's status.
 const (
 	conditionTrue    = "True"
 	conditionFalse   = "False"

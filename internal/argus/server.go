@@ -11,7 +11,7 @@ import (
 )
 
 // Keepalive is how often a stream gets a comment, so that proxies and
-// browsers keep it open however quiet the Platform is (#101).
+// browsers keep it open however quiet the Platform is.
 const Keepalive = 15 * time.Second
 
 // Server serves Argus: the stream, the probes and the web directory.
@@ -62,11 +62,9 @@ func (s *Server) Handler() http.Handler {
 var importMap = regexp.MustCompile(`(?s)<script type="importmap">(.*?)</script>`)
 
 // ContentSecurityPolicy is the policy the web directory is served with.
-// The page loads nothing from outside Argus (#119): scripts, styles,
-// images, fonts and the stream all come from Argus itself, and the
-// browser refuses anything else. Its one inline script, the import map,
-// is allowed by its hash, read from web's index.html. The card's links
-// are navigations, which the policy does not govern.
+// The page loads nothing from outside Argus. Its one inline script, the
+// import map, is allowed by its hash, read from web's index.html. The
+// card's links are navigations, which the policy does not govern.
 func ContentSecurityPolicy(web fs.FS) string {
 	scripts := []string{"'self'"}
 	if index, err := fs.ReadFile(web, "index.html"); err == nil {
@@ -90,17 +88,16 @@ func ContentSecurityPolicy(web fs.FS) string {
 }
 
 // events is the stream: the snapshot, then every message as it happens,
-// and a keepalive comment every Keepalive. It ends when the
-// browser goes, when the server shuts down, or when the browser falls too
-// far behind; the browser's EventSource then reconnects and gets a fresh
-// snapshot.
+// and a keepalive comment every Keepalive. It ends when the browser goes,
+// when the server shuts down, or when the browser falls too far behind;
+// the browser's EventSource then reconnects and gets a fresh snapshot.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
-	// Proxies that buffer (nginx's convention) must not; Traefik does
-	// not buffer a streamed response.
+	// Tells a buffering proxy not to buffer the stream (nginx's
+	// convention); Traefik does not buffer a streamed response anyway.
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 

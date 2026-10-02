@@ -21,21 +21,17 @@ import (
 	"github.com/Itema-as/iidp/internal/platformrepo"
 )
 
-// DeployGateURLEnvVar is where ci set-image finds the Deploy gate: the
-// generated deploy workflow sets it to https://deploy.<baseDomain>,
-// rendered in by iidp app create, since CI cannot read the private
-// Platform repository to find it (docs/implementation-notes/60-deploy-gate.md).
+// DeployGateURLEnvVar is where ci set-image finds the Deploy gate. The
+// generated deploy workflow sets it, since CI cannot read the private
+// Platform repository to find it.
 const DeployGateURLEnvVar = "IIDP_DEPLOY_GATE_URL"
 
-// The two variables GitHub Actions sets in a job with
-// permissions: id-token: write, through which the job asks for an OIDC
-// token.
+// GitHub Actions sets these in a job with permissions: id-token: write.
 const (
 	actionsTokenURLEnvVar   = "ACTIONS_ID_TOKEN_REQUEST_URL"
 	actionsTokenTokenEnvVar = "ACTIONS_ID_TOKEN_REQUEST_TOKEN"
 )
 
-// ciSetImageOptions are the arguments of ci set-image.
 type ciSetImageOptions struct {
 	application string
 	environment string
@@ -101,15 +97,14 @@ func runCISetImage(cmd *cobra.Command, opts ciSetImageOptions, deps Dependencies
 		gate = strings.TrimSuffix(strings.TrimSpace(os.Getenv(DeployGateURLEnvVar)), "/")
 	}
 	if gate == "" {
-		return fmt.Errorf("the Deploy gate's URL is not set: pass --gate-url or set %s to https://deploy.<baseDomain>. A deploy workflow generated before the Deploy gate lacks it; see docs/implementation-notes/60-deploy-gate.md for moving it over", DeployGateURLEnvVar)
+		return fmt.Errorf("the Deploy gate's URL is not set: pass --gate-url or set %s to https://deploy.<baseDomain>, as the generated deploy workflow does", DeployGateURLEnvVar)
 	}
 	if u, err := url.Parse(gate); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return fmt.Errorf("the Deploy gate's URL %q is not an http(s) URL", gate)
 	}
 
-	// The workflow runs this in the checkout of the commit it deploys or
-	// promotes, so the migration command and tasks read here are that
-	// commit's.
+	// The workflow runs this in the checkout of the commit it deploys, so
+	// iidp.yaml here is that commit's.
 	migrationCommand, tasks, err := readAppConfig()
 	if err != nil {
 		return err
@@ -183,8 +178,6 @@ func readAppConfig() (*string, []appconfig.Task, error) {
 	return &f.MigrationCommand, f.Tasks, nil
 }
 
-// validateCIEnvironment refuses anything but the three values ci set-image
-// accepts, clearly, before any network call.
 func validateCIEnvironment(environment string) error {
 	switch environment {
 	case "prod", "staging", platformrepo.EnvironmentAuto:

@@ -24,18 +24,15 @@ const (
 
 const testPlatformYAMLWithAgeKey = testPlatformYAML + "agePublicKey: " + testAgePublicKey + "\n"
 
-// requireSops skips the test when the sops binary is not on PATH, the way
-// the chart tests skip when helm or kubeconform are missing: the Go CI job
-// stays tool-free (see docs/implementation-notes/16-cli-secret-set.md).
+// requireSops skips the test when sops is not on PATH, so the Go CI job
+// stays tool-free.
 func requireSops(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("sops"); err != nil {
-		t.Skip("sops is not on PATH; skipping (see docs/implementation-notes/16-cli-secret-set.md)")
+		t.Skip("sops is not on PATH; skipping")
 	}
 }
 
-// setSecret runs iidp secret set in-process against the Platform repository
-// at url with a fake token, the way tests drive the seam.
 func setSecret(t *testing.T, url string, deps cli.Dependencies, stdin string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	if deps.TokenSource == nil {
@@ -47,9 +44,6 @@ func setSecret(t *testing.T, url string, deps cli.Dependencies, stdin string, ar
 	return out.String(), errOut.String(), code
 }
 
-// createShopApplication seeds the Platform repository with a prod
-// Environment for "shop" through the real app create command, so secret set
-// tests have an Environment directory to write into.
 func createShopApplication(t *testing.T, url string) {
 	t.Helper()
 	_, stderr, code := createApplication(t, url, cli.Dependencies{}, "--name", "shop", "--kind", "web-service")
@@ -59,8 +53,7 @@ func createShopApplication(t *testing.T, url string) {
 }
 
 // decryptSOPSFile decrypts path with the fixture private key and returns
-// the parsed YAML, proving the document is a valid, decryptable SOPS
-// document (round trip), not merely shaped like one.
+// the parsed YAML.
 func decryptSOPSFile(t *testing.T, path string) map[string]any {
 	t.Helper()
 	keyFile, err := filepath.Abs(testAgeKeyFilePath)
@@ -81,8 +74,8 @@ func decryptSOPSFile(t *testing.T, path string) map[string]any {
 }
 
 // assertPlaintextAbsent fails the test if plaintext appears anywhere in the
-// committed tree at dir. git grep exits 1 when nothing matches, which is
-// the success case here.
+// committed tree at dir. git grep exits 1 when nothing matches, the
+// passing case here.
 func assertPlaintextAbsent(t *testing.T, dir, plaintext string) {
 	t.Helper()
 	cmd := exec.Command("git", "grep", "-I", "-l", plaintext)
@@ -448,10 +441,8 @@ func TestSecretSetRetriesOnceWhenMainMoved(t *testing.T) {
 }
 
 // TestSecretSetProducesAKustomizationKsopsCanBuild renders the written
-// sops/ directory with the real kustomize and ksops binaries, the way
-// ArgoCD's repo server does. It only runs when both are on PATH: the Go CI
-// job stays tool-free, the same convention the chart tests use for helm and
-// kubeconform.
+// sops/ directory with kustomize and ksops, the way ArgoCD's repo server
+// does. It runs only when both are on PATH.
 func TestSecretSetProducesAKustomizationKsopsCanBuild(t *testing.T) {
 	requireSops(t)
 	if _, err := exec.LookPath("kustomize"); err != nil {

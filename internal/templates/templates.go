@@ -1,8 +1,7 @@
 // Package templates holds the built-in Application repository templates
-// Create renders: a minimal Next.js Web service, a minimal Vite React
-// Static site, and a commented Dockerfile stub for a framework iidp does
-// not generate. docs/implementation-notes/11-cli-create-path.md records the
-// versions pinned and why.
+// Create and Adopt render: a minimal Next.js Web service, a minimal Vite
+// React Static site, and a commented Dockerfile stub for a framework iidp
+// does not generate.
 package templates
 
 import (
@@ -56,10 +55,8 @@ func (f Framework) Kind() string {
 //go:embed all:nextjs all:vite-react all:other
 var files embed.FS
 
-// DeployWorkflowPath is where every framework's rendered template gets the
-// shared deploy workflow, relative to the template's root. Exported so the
-// Adopt path (internal/apprepo) can compare a target repository's existing
-// workflow, if any, at the same path Create writes it to.
+// DeployWorkflowPath is where every rendered template gets the shared
+// deploy workflow, relative to the repository root.
 const DeployWorkflowPath = ".github/workflows/deploy.yaml"
 
 //go:embed deploy-workflow.yaml
@@ -67,37 +64,22 @@ var deployWorkflowSource []byte
 
 // Data is the Application-specific value the templates are rendered with.
 type Data struct {
-	// Name is the Application's name: used as the package.json name and in
-	// the README, wherever the template says what it generated.
 	Name string
-	// DeployWorkflowRef is what .github/workflows/deploy.yaml calls:
-	// platform.DeployWorkflow at the major tag of the iidp binary that
-	// rendered it, for example
-	// Itema-as/iidp/.github/workflows/application-deploy.yaml@v0
-	// (docs/implementation-notes/74-reusable-deploy-workflow.md).
+	// DeployWorkflowRef is what .github/workflows/deploy.yaml calls, such
+	// as Itema-as/iidp/.github/workflows/application-deploy.yaml@v0.
 	DeployWorkflowRef string
-	// DeployGateURL is the Platform's Deploy gate,
-	// https://deploy.<baseDomain> (platformrepo.Config.DeployGateURL): the
-	// deploy workflow calls it, and asks for OIDC tokens with it as the
-	// audience. CI can't read the private Platform repository to find it
-	// (docs/implementation-notes/60-deploy-gate.md), so it's rendered into
-	// the caller, but only when it isn't the reusable workflow's default,
-	// platform.DefaultDeployGateURL.
+	// DeployGateURL is the Platform's Deploy gate. CI can't read the
+	// private Platform repository to find it, so it's rendered into the
+	// caller, but only when it isn't the reusable workflow's default.
 	DeployGateURL string
-	// MigrationCommand is written into iidp.yaml (AppConfigPath): the
-	// detected or given --migration-command, or "" for none.
+	// MigrationCommand is written into iidp.yaml; "" for none.
 	MigrationCommand string
 }
 
-// AppConfigPath is where every rendered template gets iidp.yaml, the
-// settings the deploy workflow sends the Deploy gate with each deploy
-// (internal/appconfig). Like the deploy workflow, it is the same for every
-// framework, so it is written here rather than kept in each framework's
-// directory.
+// AppConfigPath is where every rendered template gets iidp.yaml.
 const AppConfigPath = appconfig.FileName
 
-// RenderAppConfig returns iidp.yaml's rendered bytes for data. The Adopt
-// path adds it only when the repository has none.
+// RenderAppConfig returns iidp.yaml's rendered bytes for data.
 func RenderAppConfig(data Data) []byte {
 	return appconfig.Render(data.MigrationCommand)
 }
@@ -141,10 +123,6 @@ func Render(framework Framework, data Data, dir string) ([]string, error) {
 		return nil, fmt.Errorf("rendering the %s template: %w", framework, err)
 	}
 
-	// The deploy workflow is identical for every framework (it builds
-	// whatever Dockerfile the template shipped and never inspects the
-	// framework itself), so it lives once, here, rather than once per
-	// framework directory under nextjs/vite-react/other.
 	dest := filepath.Join(dir, filepath.FromSlash(DeployWorkflowPath))
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return nil, err
@@ -165,12 +143,8 @@ func Render(framework Framework, data Data, dir string) ([]string, error) {
 
 // RenderDockerfile writes only framework's Dockerfile and .dockerignore
 // into dir (which must already exist) and returns their paths relative to
-// dir, sorted. The Adopt path (internal/apprepo) uses this instead of
-// Render when the target repository has no Dockerfile of its own: unlike
-// Create, which generates a whole fresh repository, Adopt must not write
-// the rest of the framework's template (package.json, source files,
-// READMEs, .gitignore) into a repository that already has its own
-// (docs/implementation-notes/15-cli-adopt-path.md).
+// dir, sorted. Adopt uses it for a repository that has its own source but
+// no Dockerfile.
 func RenderDockerfile(framework Framework, data Data, dir string) ([]string, error) {
 	if !framework.Valid() {
 		return nil, fmt.Errorf("no built-in template for framework %q", framework)
@@ -196,11 +170,7 @@ func RenderDockerfile(framework Framework, data Data, dir string) ([]string, err
 }
 
 // RenderDeployWorkflow returns the deploy workflow's rendered bytes for
-// data, without writing anything. The Adopt path only calls this after
-// checking that the target repository has no file at DeployWorkflowPath
-// yet (a plain existence check, not a content comparison): an existing
-// workflow there, identical or not, is left untouched rather than
-// overwritten.
+// data, without writing anything.
 func RenderDeployWorkflow(data Data) []byte {
 	return renderWorkflow(deployWorkflowSource, data)
 }
@@ -217,11 +187,9 @@ func renderFile(name string, content []byte, data Data) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// renderWorkflow substitutes the placeholder tokens deploy-workflow.yaml
-// uses in place of Go template actions with data's values. Plain string
-// substitution, not text/template, because the workflow is full of GitHub
-// Actions' own ${{ ... }} expression syntax, which uses the same {{ }}
-// delimiters text/template does.
+// renderWorkflow substitutes deploy-workflow.yaml's placeholder tokens.
+// It doesn't use text/template because GitHub Actions' ${{ ... }}
+// expressions use the same delimiters.
 func renderWorkflow(content []byte, data Data) []byte {
 	r := strings.NewReplacer(
 		"__IIDP_APP_NAME__", data.Name,
@@ -233,13 +201,8 @@ func renderWorkflow(content []byte, data Data) []byte {
 }
 
 // deployGateURLInput is the caller's deploy-gate-url line, with its
-// comment, or nothing when gateURL is the reusable workflow's default
-// (platform.DefaultDeployGateURL): every Application on Itema's Platform
-// then has one line less that would all be the same. An empty gateURL
-// also writes nothing. Only renders with no Platform behind them pass one
-// (cmd/renderfixture, the copy the CLI renders to detect a migration
-// command); Create and Adopt always pass platform.yaml's, and LoadConfig
-// refuses an empty baseDomain.
+// comment, or nothing when gateURL is empty or the reusable workflow's
+// default.
 func deployGateURLInput(gateURL string) string {
 	if gateURL == "" || gateURL == platform.DefaultDeployGateURL {
 		return ""

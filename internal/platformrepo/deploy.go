@@ -19,7 +19,7 @@ import (
 // EnvironmentAuto is the Environment a deploy asks for when it leaves the
 // choice to the Platform: the Deploy gate turns it into staging or prod
 // from the Platform repository and the ref being deployed, never from what
-// the workflow says (docs/implementation-notes/60-deploy-gate.md).
+// the workflow says.
 const EnvironmentAuto = "auto"
 
 // ImageTagChange is one Deploy or Promote: a new image tag for one
@@ -39,15 +39,12 @@ type ImageTagChange struct {
 	// MigrationCommand, when not nil, is written into
 	// postgres.migrationCommand in the same commit as the tag: "" clears
 	// it. nil leaves it as it is. A non-empty command for an Environment
-	// without Postgres is refused with ErrPostgresMissing, and nothing is
-	// written (docs/implementation-notes/66-migration-command-in-repo.md).
+	// without Postgres is refused with ErrPostgresMissing.
 	MigrationCommand *string
-	// Tasks are written into the top-level tasks list in the same commit
-	// as the tag, replacing whatever the Environment had: none removes
-	// them, since tasks only ever come from the deployed commit's
-	// iidp.yaml. Tasks for a Static site are refused with
-	// ErrTasksOnStaticSite, and nothing is written
-	// (docs/implementation-notes/91-scheduled-tasks.md).
+	// Tasks replace the Environment's tasks list in the same commit as the
+	// tag: none removes them, since tasks only ever come from the deployed
+	// commit's iidp.yaml. Tasks for a Static site are refused with
+	// ErrTasksOnStaticSite.
 	Tasks []appconfig.Task
 }
 
@@ -78,15 +75,11 @@ type DeployResult struct {
 	TasksChanged bool
 }
 
-// SetImageTag writes change.Tag into image.tag of an Environment's
-// values.yaml. It clones main, refuses an Application with no directory,
-// asks change.Environment which Environment to write, refuses one without
-// a live application.yaml, edits image.tag in place (every other key, and
-// every comment, untouched), and postgres.migrationCommand too when the
-// change carries one, and the tasks list to the change's tasks, commits
-// them together as "Deploy <application> <environment> <tag>" and pushes,
-// with the same retry-once-on-a-moved-main logic as CreateApplication.
-// Every check runs again on the retry's fresh clone.
+// SetImageTag writes change.Tag, and the migration command and tasks it
+// carries, into an Environment's values.yaml in one commit. values.yaml is
+// edited in place, so every other key and comment is untouched. A push
+// refused because main moved is retried once from a fresh clone, where
+// every check runs again.
 func (w *Writer) SetImageTag(ctx context.Context, change ImageTagChange) (DeployResult, error) {
 	if change.Environment == nil {
 		return DeployResult{}, errors.New("SetImageTag: no Environment decision")

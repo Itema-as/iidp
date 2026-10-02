@@ -1,7 +1,5 @@
-// Package platformrepo reads and writes the Platform repository: the
-// Platform-wide settings in platform.yaml and, per Application, one
-// directory per Environment. docs/platform-repository.md describes the
-// layout.
+// Package platformrepo reads and writes the Platform repository:
+// platform.yaml and, per Application, one directory per Environment.
 package platformrepo
 
 import (
@@ -25,8 +23,8 @@ const ConfigFile = "platform.yaml"
 // platform.yaml does not name one: where the release workflow pushes it.
 var DefaultChartRepository = "oci://" + platform.Registry + "/charts/application"
 
-// Config is what the CLI reads from platform.yaml. Fields other tickets
-// add to the file are ignored rather than rejected.
+// Config is what the CLI reads from platform.yaml. Unknown fields are
+// ignored rather than rejected.
 type Config struct {
 	// BaseDomain is the Platform base domain; prod addresses are
 	// <name>.<BaseDomain>. Required.
@@ -61,12 +59,9 @@ type Config struct {
 	// platform.objectStorageEndpoint. Required for --postgres; not required
 	// otherwise.
 	ObjectStorageEndpoint string `yaml:"objectStorageEndpoint"`
-	// GitHubApp documents the org GitHub App the Deploy gate and ArgoCD
-	// authenticate as: the bootstrap wizard records it here after creating
-	// and installing the App, for a human reading platform.yaml to see
-	// which App and installation is in play. Nothing reads it to
-	// authenticate: the gate takes the App from the cluster Secret
-	// cloud-init writes (docs/implementation-notes/60-deploy-gate.md).
+	// GitHubApp records the org GitHub App the Deploy gate and ArgoCD
+	// authenticate as, for people reading platform.yaml. Nothing reads it
+	// to authenticate: the gate takes the App from a cluster Secret.
 	GitHubApp GitHubApp `yaml:"githubApp"`
 	// GitHubAPI is the GitHub REST API the Preview Environments' pull
 	// request generator lists an Application repository's pull requests
@@ -77,10 +72,8 @@ type Config struct {
 	GitHubAPI string `yaml:"githubAPI"`
 }
 
-// GitHubApp documents the org GitHub App id and installation id the
-// bootstrap wizard records after creating and installing the deploy App
-// (docs/implementation-notes/05-bootstrap-wizard.md). The private key is
-// never written here.
+// GitHubApp is the org GitHub App id and installation id the bootstrap
+// wizard records. The private key is never written here.
 type GitHubApp struct {
 	ID             int64 `yaml:"id"`
 	InstallationID int64 `yaml:"installationId"`
@@ -117,11 +110,10 @@ func LoadConfig(dir string) (Config, error) {
 // way (bootstrap/templates/deploy-gate.yaml).
 const DeployGateHostLabel = "deploy"
 
-// DeployGateURL is the Deploy gate's address on the Platform with this
-// base domain: where the deploy workflow calls it, and the audience its
-// GitHub Actions OIDC token is requested for. iidp app create renders it
-// into the workflow, because the workflow cannot read the private Platform
-// repository to find it (docs/implementation-notes/60-deploy-gate.md).
+// DeployGateURL is the Deploy gate's address: where the deploy workflow
+// calls it, and the audience of its GitHub Actions OIDC token. It is
+// rendered into the workflow, which cannot read the private Platform
+// repository.
 func (c Config) DeployGateURL() string {
 	return "https://" + DeployGateHostLabel + "." + c.BaseDomain
 }

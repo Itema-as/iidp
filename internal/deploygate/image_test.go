@@ -21,23 +21,18 @@ import (
 	"github.com/Itema-as/iidp/internal/registry"
 )
 
-// The image check (docs/implementation-notes/61-image-check.md), through
-// the gate's HTTP boundary, against fakeRegistry: one TLS server standing
-// in for every registry host. The gate's HTTP client dials it whatever the
-// host, so values.yaml keeps the real ghcr.io and docker.io references and
-// the gate's rules about which host gets the pull token are the real ones.
-
 const (
 	pullUser  = "platform-admin"
 	pullToken = "ghp_pulltoken0123456789"
 )
 
-// fakeRegistry answers manifest HEADs and token requests the way GHCR and
-// Docker Hub do: a HEAD without a bearer token gets 401 and a Bearer
-// challenge naming the realm; the realm hands out a token for a public
-// repository to anyone and for a private one only with the pull
-// credential (and answers 403 DENIED otherwise, as GHCR does); a HEAD
-// with the token gets 200, or 404 for a tag it does not have.
+// fakeRegistry is one TLS server standing in for every registry host. The
+// gate's HTTP client dials it whatever the host, so values.yaml keeps the
+// real ghcr.io and docker.io references and the gate's rules about which
+// host gets the pull token are the real ones. It answers like GHCR: a HEAD
+// without a bearer token gets 401 and a Bearer challenge; the realm hands
+// out a token for a public repository to anyone and for a private one only
+// with the pull credential, answering 403 DENIED otherwise.
 type fakeRegistry struct {
 	srv *httptest.Server
 

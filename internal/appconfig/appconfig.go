@@ -1,28 +1,19 @@
 // Package appconfig is iidp.yaml, the file at the root of an Application
-// repository that holds the settings the Platform takes from the code
-// rather than from the Platform repository, because they must change
-// together with the code: the migration command
-// (docs/implementation-notes/66-migration-command-in-repo.md) and the
-// Scheduled tasks (docs/implementation-notes/91-scheduled-tasks.md).
-//
-// iidp ci set-image reads it from the checkout of the commit being deployed
-// or promoted and sends it to the Deploy gate with the image tag, so an
-// Environment always runs the migration command and the Scheduled tasks of
-// the code it runs.
+// repository that holds the settings that must change together with the
+// code: the migration command and the Scheduled tasks. iidp ci set-image
+// sends it to the Deploy gate with the image tag, from the commit it
+// deploys.
 //
 // What the file's presence means is part of the contract:
 //
 //   - No iidp.yaml: the deploy sends no migration command, and the gate
-//     leaves the Environment's postgres.migrationCommand as it is. An
-//     Application made before the file existed keeps working unchanged.
+//     leaves the Environment's postgres.migrationCommand as it is.
 //   - iidp.yaml without migrationCommand, or with an empty one: the deploy
-//     sends "", and the gate clears the Environment's command. Deleting the
-//     line is how a developer says "no migration".
+//     sends "", and the gate clears the Environment's command.
 //   - iidp.yaml with migrationCommand: the gate sets it.
 //
-// Scheduled tasks have no "leave it as it is" case: they only ever come
-// from iidp.yaml, so a deploy that sends none (no tasks, or no iidp.yaml at
-// all) removes any the Environment had, and deleting a task stops it.
+// Scheduled tasks only ever come from iidp.yaml, so a deploy that sends none
+// removes any the Environment had.
 package appconfig
 
 import (
@@ -48,14 +39,12 @@ const FileName = "iidp.yaml"
 // belongs in a script shipped in the image.
 const MaxMigrationCommandBytes = 1024
 
-// MaxTaskCommandBytes is the longest command a Scheduled task may run: one
-// shell line, the same limit as the migration command's.
+// MaxTaskCommandBytes is the longest command a Scheduled task may run.
 const MaxTaskCommandBytes = MaxMigrationCommandBytes
 
-// MaxTasks is how many Scheduled tasks an Application may declare. Each is
-// a CronJob, and each run a Pod with the smallest size's CPU and memory on
-// a single node. A handful covers the nightly cleanups and reports tasks
-// are for; more belongs in one task that does several things.
+// MaxTasks is how many Scheduled tasks an Application may declare. Each run
+// is a Pod on a single node, so more belongs in one task that does several
+// things.
 const MaxTasks = 5
 
 // maxCronJobName is the longest CronJob name Kubernetes accepts: the
@@ -79,10 +68,8 @@ type File struct {
 }
 
 // Task is one Scheduled task: Command runs with sh -c on Schedule, on
-// Europe/Oslo time, in a one-off container from the Application's image
-// with the Environment's env, secrets and DATABASE_URL. The chart renders
-// it as the CronJob <Environment's object name>-<Name>. It is also the
-// shape the Deploy gate receives and writes into values.yaml's tasks.
+// Europe/Oslo time, in a one-off container from the Application's image.
+// The chart renders it as the CronJob <Environment's object name>-<Name>.
 type Task struct {
 	Name     string `json:"name" yaml:"name"`
 	Schedule string `json:"schedule" yaml:"schedule"`
@@ -90,10 +77,8 @@ type Task struct {
 }
 
 // Read reads FileName from dir. ok is false when dir has no such file.
-// Only known keys are accepted, each with the type it must have, so a
-// misspelt key fails the deploy instead of silently clearing the
-// migration command. Surrounding whitespace is trimmed, so a folded
-// block scalar (>) reads as the one line it folds to.
+// Only known keys are accepted, so a misspelt key fails the deploy instead
+// of silently clearing the migration command.
 func Read(dir string) (f File, ok bool, err error) {
 	path := filepath.Join(dir, FileName)
 	data, err := os.ReadFile(path)
@@ -117,7 +102,8 @@ func Read(dir string) (f File, ok bool, err error) {
 
 // Parse parses iidp.yaml's content: a YAML mapping (or an empty document,
 // only comments) whose keys are migrationCommand, a string or null, and
-// tasks, a list of tasks or null.
+// tasks, a list of tasks or null. Values are trimmed, so a folded block
+// scalar (>) reads as the one line it folds to.
 func Parse(data []byte) (File, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -225,13 +211,8 @@ func parseTasks(value *yaml.Node) ([]Task, error) {
 // name and is a label value.
 var taskNamePattern = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 
-// ValidateTasks refuses tasks the Platform cannot run: more than MaxTasks;
-// a name that is not lowercase letters, digits and dashes starting with a
-// letter, or is used twice; a schedule ValidateSchedule refuses; a command
-// that is empty or not one shell line of at most MaxTaskCommandBytes. How
-// long a name may be also depends on the Application's name: see
-// CheckTaskNamesFit. The Deploy gate applies both to every deploy, and ci
-// set-image before it calls the gate.
+// ValidateTasks refuses tasks the Platform cannot run. How long a name may
+// be also depends on the Application's name: see CheckTaskNamesFit.
 func ValidateTasks(tasks []Task) error {
 	if len(tasks) > MaxTasks {
 		return fmt.Errorf("%d tasks are declared, more than the %d allowed; combine related work into one task", len(tasks), MaxTasks)
@@ -262,11 +243,9 @@ func ValidateTasks(tasks []Task) error {
 }
 
 // CheckTaskNamesFit refuses a task whose CronJob name would be too long for
-// Kubernetes in application's Environments: <application>-<task> in prod
-// and <application>-staging-<task> in staging, at most 52 characters. The
-// limit is taken against staging's name whichever Environment is deployed,
-// so a task prod accepts is not refused once a staging Environment is
-// added.
+// Kubernetes. The limit is taken against staging's longer name whichever
+// Environment is deployed, so a task prod accepts is not refused once a
+// staging Environment is added.
 func CheckTaskNamesFit(application string, tasks []Task) error {
 	room := maxCronJobName - len(application) - len(longestEnvironmentSuffix) - len("-")
 	for _, task := range tasks {
@@ -288,9 +267,8 @@ func CheckTaskNamesFit(application string, tasks []Task) error {
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
 // ValidateSchedule refuses anything but a standard five-field cron
-// expression: minute, hour, day of month, month, day of week. Macros such
-// as @daily and time zone prefixes are refused: tasks always run on
-// Europe/Oslo time, and five fields are the one way to say when.
+// expression. Macros such as @daily and time zone prefixes are refused:
+// tasks always run on Europe/Oslo time.
 func ValidateSchedule(schedule string) error {
 	fields := strings.Fields(schedule)
 	switch {
@@ -310,10 +288,8 @@ func ValidateSchedule(schedule string) error {
 }
 
 // ValidateMigrationCommand refuses a migration command that is not one
-// shell line of at most MaxMigrationCommandBytes: valid UTF-8, no line
-// break or other control character (a tab is fine). "" is valid: it
-// means no migration. The Deploy gate applies it to every command it
-// receives, and ci set-image before it calls the gate.
+// shell line of at most MaxMigrationCommandBytes. "" is valid: it means no
+// migration.
 func ValidateMigrationCommand(command string) error {
 	return validateShellLine("the migration command", command)
 }
@@ -340,8 +316,7 @@ func validateShellLine(what, command string) error {
 }
 
 // MigrationCommandLine is the line of iidp.yaml that sets command, quoted
-// as YAML needs it: what add-capability --postgres tells the developer
-// to add, and what Render writes.
+// as YAML needs it.
 func MigrationCommandLine(command string) string {
 	value, err := yaml.Marshal(command)
 	if err != nil {
@@ -354,10 +329,8 @@ func MigrationCommandLine(command string) string {
 // exampleCommand is shown commented out in a file that sets no command.
 const exampleCommand = "npx prisma migrate deploy"
 
-// Render is the iidp.yaml iidp app create and Adopt write: a comment
-// saying what the file is and when and where the migration command runs,
-// then the command, or a commented-out example when there is none, and a
-// commented-out example of a Scheduled task.
+// Render is the iidp.yaml iidp app create and Adopt write, with a
+// commented-out example command when migrationCommand is "".
 func Render(migrationCommand string) []byte {
 	var b strings.Builder
 	b.WriteString(`# Settings the Platform takes from this repository rather than from the

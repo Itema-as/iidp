@@ -13,7 +13,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platformrepo"
 )
 
-// bindOptions are the flags of app bind.
 type bindOptions struct {
 	repo         string
 	rebind       bool

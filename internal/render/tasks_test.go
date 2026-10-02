@@ -12,9 +12,6 @@ import (
 	"github.com/Itema-as/iidp/internal/render"
 )
 
-// SetTasks is the Deploy gate's edit for the Scheduled tasks a deploy
-// carries (docs/implementation-notes/91-scheduled-tasks.md).
-
 func tasksOf(t *testing.T, values []byte) []appconfig.Task {
 	t.Helper()
 	var doc struct {

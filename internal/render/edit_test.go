@@ -219,8 +219,8 @@ func TestEnableLoginSetsEnabledAndTheCookieDomain(t *testing.T) {
 	}
 }
 
-// Enabling again, as add-capability --domain does for an Environment that
-// already has login, rewrites the cookie domain and leaves one of each key.
+// add-capability --domain enables login again on an Environment that
+// already has it; that must leave one of each key.
 func TestEnableLoginAgainRewritesTheCookieDomain(t *testing.T) {
 	first, err := render.EnableLogin([]byte(testValuesYAML), "app.itma.no")
 	if err != nil {
@@ -257,9 +257,6 @@ const (
 	groupB = "6e1d2c3b-4a5f-4b6c-8d7e-9f0a1b2c3d4e"
 )
 
-// Setting groups writes the whole list, and setting another list replaces
-// it rather than adding to it: add-capability --login-group gives the new
-// list in full.
 func TestSetLoginGroupsWritesAndReplacesTheList(t *testing.T) {
 	enabled, err := render.EnableLogin([]byte(testValuesYAML), "itma.no")
 	if err != nil {
@@ -296,8 +293,7 @@ func TestSetLoginGroupsWritesAndReplacesTheList(t *testing.T) {
 	}
 }
 
-// An empty list clears the groups, written as groups: [] the way app
-// create writes it; the same list again changes nothing.
+// An empty list is written as groups: [], the way app create writes it.
 func TestSetLoginGroupsClearsAndReportsNoChange(t *testing.T) {
 	with, _, err := render.SetLoginGroups([]byte(testValuesYAML), []string{groupA})
 	if err != nil {
@@ -318,8 +314,6 @@ func TestSetLoginGroupsClearsAndReportsNoChange(t *testing.T) {
 	}
 }
 
-// A new staging Environment takes prod's groups with the rest of prod's
-// values.
 func TestCopyValuesForStagingKeepsTheLoginGroups(t *testing.T) {
 	with, _, err := render.SetLoginGroups([]byte(testValuesYAML), []string{groupA})
 	if err != nil {

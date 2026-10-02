@@ -1,7 +1,6 @@
-// Package platform holds the two values compiled into the CLI: the GitHub
-// org and the name of the Platform repository. Every other Platform setting
-// (base domain, chart version, buckets) is read from platform.yaml in the
-// Platform repository at run time, so changing it is a commit, not a release.
+// Package platform holds the values compiled into the CLI: the GitHub org and
+// the Platform repository name. Every other Platform setting is read from
+// platform.yaml at run time, so changing it is a commit, not a release.
 //
 // This is the only place the org and the Platform repository name may
 // appear in code.
@@ -9,8 +8,7 @@ package platform
 
 import "strings"
 
-// Registry is the GHCR namespace of Org, where Application images and the
-// generic chart are pushed: ghcr.io/<org> in lowercase, as GHCR wants it.
+// Registry is the GHCR namespace of Org, lowercased as GHCR requires.
 var Registry = "ghcr.io/" + strings.ToLower(Org)
 
 const (
@@ -24,25 +22,20 @@ const (
 	// Repository is the Platform repository as "owner/name".
 	Repository = Org + "/" + RepositoryName
 
-	// RepositoryURL is the git URL the CLI clones and pushes, and the URL
-	// the ArgoCD Applications it writes name as their values source. It is
-	// the same URL the bootstrap's root Application reconciles from.
+	// RepositoryURL is the git URL of the Platform repository. ArgoCD
+	// Applications name it as their values source, so it must match the URL
+	// the bootstrap's root Application reconciles from.
 	RepositoryURL = "https://github.com/" + Repository + ".git"
 
-	// CLIRepository is this repository itself, as "owner/name": where the
-	// deploy workflow downloads iidp release archives from
-	// (docs/implementation-notes/12-deploy-workflow.md).
+	// CLIRepository is this repository, as "owner/name": where the deploy
+	// workflow downloads iidp release archives from.
 	CLIRepository = Org + "/iidp"
 
 	// DefaultDeployGateURL is the default of the reusable deploy workflow's
-	// deploy-gate-url input: Itema's Platform, https://deploy.<baseDomain>
-	// for the baseDomain in its platform.yaml. A caller for a Platform
-	// whose gate is elsewhere passes the input; for this one it's left
-	// out. A test keeps it equal to the workflow's default.
+	// deploy-gate-url input. A test keeps the two equal.
 	DefaultDeployGateURL = "https://deploy.app.itma.no"
 
 	// DeployWorkflow is the reusable workflow every Application
-	// repository's .github/workflows/deploy.yaml calls, without a ref
-	// (docs/implementation-notes/74-reusable-deploy-workflow.md).
+	// repository's .github/workflows/deploy.yaml calls, without a ref.
 	DeployWorkflow = CLIRepository + "/.github/workflows/application-deploy.yaml"
 )

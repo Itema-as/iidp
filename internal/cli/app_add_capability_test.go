@@ -12,8 +12,7 @@ import (
 )
 
 // seedApplication creates "shop" on the Platform repository at url through
-// iidp app create, so add-capability tests start from an Application that
-// already exists, the way #13's Capability tests seed nothing further.
+// iidp app create.
 func seedApplication(t *testing.T, url string, extraCreateArgs ...string) {
 	t.Helper()
 	args := append([]string{"--name", "shop", "--kind", "web-service"}, extraCreateArgs...)
@@ -23,8 +22,6 @@ func seedApplication(t *testing.T, url string, extraCreateArgs ...string) {
 	}
 }
 
-// addCapability runs iidp app add-capability in-process against the
-// Platform repository at url.
 func addCapability(t *testing.T, url, name string, deps cli.Dependencies, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	if deps.TokenSource == nil {
@@ -54,9 +51,7 @@ func TestAppAddCapabilityExplicitFalseFlagStillRequiresACapability(t *testing.T)
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url)
 
-	// --staging=false is "changed" from cobra's point of view but asks for
-	// nothing; it must not slip past the "at least one flag" gate and reach
-	// AddCapabilities with an all-zero request.
+	// --staging=false is "changed" to cobra but asks for nothing.
 	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--staging=false")
 
 	if code == 0 {
@@ -120,9 +115,7 @@ func TestAppAddCapabilityPostgresPreservesSecretsAndComments(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url)
 
-	// Stand in for iidp secret set having already run: a secrets list
-	// added by hand, the way a real Environment would carry one before
-	// add-capability touches it.
+	// Stand in for iidp secret set having already run.
 	clone := cloneMain(t, url)
 	valuesPath := filepath.Join(clone, "applications/shop/prod/values.yaml")
 	original, err := os.ReadFile(valuesPath)
@@ -204,8 +197,8 @@ func TestAppAddCapabilityStagingCopiesProdValues(t *testing.T) {
 	if got := lookup(t, stagingApp, "metadata", "name"); got != "shop-staging" {
 		t.Errorf("staging ArgoCD Application name = %v, want shop-staging", got)
 	}
-	// A staging added later is an Application namespace like any new
-	// Environment's (#90), whatever prod's application.yaml carries.
+	// A staging added later gets the same namespace labels as any new
+	// Environment, whatever prod's application.yaml carries.
 	for label, want := range map[string]string{
 		"iidp.itema.no/application":          "shop",
 		"iidp.itema.no/environment":          "staging",
@@ -433,8 +426,8 @@ func TestAppAddCapabilityRefusesDomainOutsideTheZoneWithLogin(t *testing.T) {
 }
 
 // An in-zone domain is accepted, and writes platform.loginCookieDomain
-// into prod even when its values.yaml predates the field (#76): the chart
-// would otherwise check the domain against baseDomain and refuse it.
+// into prod even when its values.yaml lacks the field: the chart would
+// otherwise check the domain against baseDomain and refuse it.
 func TestAppAddCapabilityDomainInsideTheZoneWithLoginWritesTheCookieDomain(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url, "--login")
@@ -509,11 +502,9 @@ func TestAppAddCapabilityDetectsMigrationCommand(t *testing.T) {
 	if !strings.Contains(stdout, "Detected") || !strings.Contains(stdout, "Prisma") {
 		t.Errorf("stdout = %q, want it to report detecting Prisma", stdout)
 	}
-	// add-capability cannot write the developer's repository, so it prints
-	// the line to add to iidp.yaml, and leaves the Platform's command to
-	// the Deploy gate: setting it now would run it against the image
-	// already deployed, which may not have the tooling
-	// (docs/implementation-notes/66-migration-command-in-repo.md).
+	// add-capability prints the line to add to iidp.yaml and leaves the
+	// Platform's command to the Deploy gate: setting it now would run it
+	// against the image already deployed, which may not have the tooling.
 	if !strings.Contains(stdout, "Add this line to iidp.yaml and push:\n  migrationCommand: npx prisma migrate deploy\n") {
 		t.Errorf("stdout = %q, want the iidp.yaml line to add", stdout)
 	}

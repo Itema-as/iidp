@@ -9,8 +9,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// The feed keeps the last 200 notes or the last 24 hours of them,
-// whichever is fewer.
 func TestFeedKeeps200NotesOr24Hours(t *testing.T) {
 	var f feed
 	for i := 0; i < 250; i++ {

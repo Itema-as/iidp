@@ -28,38 +28,33 @@ var ErrApplicationMissing = errors.New("Application does not exist")
 var ErrCapabilityExists = errors.New("Capability already present")
 
 // Capabilities is what iidp app add-capability asks AddCapabilities to add
-// to an existing Application. The CLI requires at least one field to differ
-// from its zero value before calling in; AddCapabilities then refuses each
-// one that is already present.
+// to an existing Application. AddCapabilities refuses each one that is
+// already present.
 type Capabilities struct {
 	// Postgres enables the Postgres Capability in every Environment the
 	// Application already has. It never sets a migration command: that
 	// comes from the Application repository's iidp.yaml, through the Deploy
-	// gate, with the image it belongs to
-	// (docs/implementation-notes/66-migration-command-in-repo.md).
+	// gate, with the image it belongs to.
 	Postgres bool
 	// Staging adds a second Environment next to prod, copying prod's
-	// values (docs/implementation-notes/17-cli-add-capability-delete.md).
+	// values.
 	Staging bool
-	// Domains are custom domains to add to prod (repeatable; custom domains
-	// apply to prod only, the same rule app create follows).
+	// Domains are custom domains to add to prod; custom domains apply to
+	// prod only.
 	Domains []string
 	// Size, when not "", is the new size for every Environment.
 	Size string
 	// Login is the Itema login Capability, added to every Environment the
-	// Application already has (docs/implementation-notes/18-itema-login.md).
+	// Application already has.
 	Login bool
-	// SetLoginGroups replaces the sign-in groups of every Environment the
-	// Application already has with LoginGroups (NormalizeLoginGroups); an
-	// empty LoginGroups removes them, letting any Itema user in again.
-	// Needs Itema login, already on or turned on by Login
-	// (docs/implementation-notes/92-sign-in-groups.md).
+	// SetLoginGroups replaces the sign-in groups of every Environment with
+	// LoginGroups; an empty LoginGroups removes them, letting any Itema user
+	// in again. Needs Itema login, already on or turned on by Login.
 	SetLoginGroups bool
 	LoginGroups    []string
 	// Previews adds the Preview Environments' ApplicationSet (PreviewsPath).
 	// It needs a staging Environment, already there or added by Staging, and
-	// a repository binding
-	// (docs/adr/0006-preview-environments-from-an-argocd-applicationset.md).
+	// a repository binding.
 	Previews bool
 }
 
@@ -78,13 +73,10 @@ type environmentState struct {
 	} `yaml:"login"`
 }
 
-// AddCapabilities adds caps to application's existing Environments: it
-// clones main, checks the Application exists, refuses any Capability
-// already present, edits every Environment's values.yaml in place (the
-// yaml.v3 node helpers in internal/render, so unrelated keys, secrets and
-// comments survive), writes a new staging Environment when asked, commits
-// and pushes. A push refused because main moved is retried once from a
-// fresh clone, exactly as CreateApplication does.
+// AddCapabilities adds caps to application's existing Environments, in one
+// commit. values.yaml is edited in place, so unrelated keys, secrets and
+// comments survive. A push refused because main moved is retried once
+// from a fresh clone.
 func (w *Writer) AddCapabilities(ctx context.Context, application string, caps Capabilities, out io.Writer) (Result, error) {
 	return runWithRetry(ctx, func(ctx context.Context, retry bool) (Result, error) {
 		return w.attemptAddCapabilities(ctx, application, caps, out, retry)
@@ -133,7 +125,7 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		return Result{}, err
 	}
 	// A binding that is not YAML binds nothing, the way every other reader
-	// takes it (docs/platform-repository.md).
+	// takes it.
 	binding, bound, bindingErr := ReadRepositoryBinding(dir, application)
 	bound = bound && bindingErr == nil
 	if caps.Previews {
@@ -150,14 +142,9 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 	if caps.Postgres && (cfg.BackupsBucket == "" || cfg.ObjectStorageEndpoint == "") {
 		return Result{}, fmt.Errorf("%s in %s sets no backupsBucket or objectStorageEndpoint, needed for the Postgres Capability", ConfigFile, platform.Repository)
 	}
-	// postgresEnabledAfter is Postgres's state once this run's edits land:
-	// already on (prod.Postgres.Enabled, read above) or being turned on
-	// now. Postgres is uniform across an Application's Environments by
-	// construction (docs/implementation-notes/17-cli-add-capability-delete.md,
-	// "add-capability's already-present checks read prod only"), so it
-	// decides both whether every existing Environment needs
-	// BackupsCredentialsFile copied and whether a new staging Environment
-	// (below) does too.
+	// postgresEnabledAfter is Postgres's state once this run's edits land.
+	// Postgres is the same in every Environment of an Application, so
+	// prod's answer holds for a new staging too.
 	postgresEnabledAfter := caps.Postgres || prod.Postgres.Enabled
 	if caps.Postgres || (caps.Staging && prod.Postgres.Enabled) {
 		if err := checkBackupsCredentialsPresent(dir); err != nil {
@@ -173,8 +160,7 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		return Result{}, err
 	}
 	// Itema login and custom domains go together only inside the login
-	// cookie domain, whichever of the two is being added
-	// (docs/implementation-notes/76-login-in-zone-domains.md).
+	// cookie domain, whichever of the two is being added.
 	switch {
 	case caps.Login:
 		if err := CheckLoginDomains(cfg, append(slices.Clone(prod.Domains), caps.Domains...)); err != nil {
@@ -199,9 +185,8 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		}
 		files = append(files, envFiles...)
 		if caps.Postgres {
-			// Only when Postgres is being newly enabled in this call: an
-			// Environment that already had it enabled already has the file
-			// copied, from whichever run turned it on.
+			// Only when Postgres is turned on now: an Environment that
+			// already had it has the file.
 			credFiles, err := copyBackupsCredentials(dir, application, env)
 			if err != nil {
 				return Result{}, err
@@ -224,9 +209,7 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		}
 		files = append(files, stagingFiles...)
 		if postgresEnabledAfter {
-			// The new staging Environment never had the file copied
-			// before, regardless of whether Postgres was already on (from
-			// a previous run) or is being turned on in this same one.
+			// A new staging Environment never had the file copied.
 			credFiles, err := copyBackupsCredentials(dir, application, "staging")
 			if err != nil {
 				return Result{}, err
@@ -332,12 +315,11 @@ func checkCapabilitiesAbsent(application string, caps Capabilities, prod environ
 }
 
 // applyCapabilitiesToEnvironment edits one existing Environment's
-// values.yaml for the Capabilities that touch every Environment (Postgres,
-// size, login, and, for prod only, domains), returning the paths it wrote
-// and, for convenience, the values.yaml content after editing. loginOn is
-// whether the Application already has Itema login: custom domains added to
-// its prod also (re)write platform.loginCookieDomain, which an Environment
-// written before #76 does not have and the chart checks them against.
+// values.yaml for Postgres, size, login and, for prod only, domains,
+// returning the paths it wrote and the edited values.yaml. loginOn is
+// whether the Application already has Itema login: custom domains added
+// to its prod then also write platform.loginCookieDomain, which the chart
+// checks them against and older values.yaml files lack.
 func applyCapabilitiesToEnvironment(dir, application, environment string, caps Capabilities, cfg Config, loginOn bool) (files []string, newValues []byte, err error) {
 	valuesRelPath := path.Join(EnvironmentDir(application, environment), "values.yaml")
 	valuesAbsPath := filepath.Join(dir, filepath.FromSlash(valuesRelPath))
@@ -437,7 +419,7 @@ func writeStagingFromProd(dir, application string, cfg Config, prodValues []byte
 }
 
 // capabilityNames lists the Capabilities caps carries, for the commit
-// message ("iidp app add-capability <app> <capabilities>").
+// message.
 func capabilityNames(caps Capabilities) []string {
 	var names []string
 	if caps.Postgres {
@@ -464,9 +446,8 @@ func capabilityNames(caps Capabilities) []string {
 	return names
 }
 
-// prodHasSecrets reports whether prod's values.yaml (after Capability
-// edits) lists any secrets, so writeStagingFromProd's caller can log that
-// they were not copied.
+// prodHasSecrets reports whether prod's values.yaml lists any secrets, so
+// the caller can say they were not copied to staging.
 func prodHasSecrets(valuesYAML []byte) bool {
 	var v struct {
 		Secrets []string `yaml:"secrets"`

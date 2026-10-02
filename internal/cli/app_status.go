@@ -18,7 +18,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// statusOptions are the flags of app status.
 type statusOptions struct {
 	json         bool
 	platformRepo string
@@ -114,8 +113,8 @@ func fetchStatus(cmd *cobra.Command, client *http.Client, gate, token, name stri
 	}
 	var refusal deploygate.ErrorResponse
 	if json.Unmarshal(data, &refusal) != nil || refusal.Error == "" {
-		// Not the gate's own answer: a proxy's error page, or a gate from
-		// before iidp app status.
+		// Not the gate's own answer: a proxy's error page, or an older gate
+		// without the status call.
 		if resp.StatusCode >= 500 {
 			return platformstate.Status{}, fmt.Errorf("the Deploy gate at %s is unavailable: HTTP %d: %s", gate, resp.StatusCode, strings.TrimSpace(string(data)))
 		}
@@ -133,7 +132,6 @@ func fetchStatus(cmd *cobra.Command, client *http.Client, gate, token, name stri
 	}
 }
 
-// printStatus prints one block per Environment.
 func printStatus(out io.Writer, status platformstate.Status) {
 	fmt.Fprintf(out, "%s (%s)\n", status.Application, status.Repository)
 	if len(status.Environments) == 0 {
@@ -225,8 +223,7 @@ var hopText = map[string]string{
 	platformstate.HopServing:          "serving",
 }
 
-// activityText is an Activity in words: what is changing, the Deploy's
-// tag and hop, and why it is stuck.
+// activityText is an Activity in words.
 func activityText(a platformstate.Activity) string {
 	text := a.State
 	hop := ""
@@ -242,7 +239,7 @@ func activityText(a platformstate.Activity) string {
 	}
 	switch {
 	case a.Stuck && hop != "":
-		// The hop's name, as the five hops are named: "Rolling out".
+		// Capitalised, as the hops are named: "Rolling out".
 		text += ", stuck at " + strings.ToUpper(hop[:1]) + hop[1:]
 	case a.Stuck:
 		text += ", stuck"
@@ -269,8 +266,7 @@ func runText(run platformstate.Run) string {
 	}
 }
 
-// statusTime is a time as iidp app status prints it, in UTC, which reads
-// the same on every machine.
+// statusTime formats t in UTC, so it reads the same on every machine.
 func statusTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04 UTC")
 }

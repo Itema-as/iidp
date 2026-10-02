@@ -16,9 +16,7 @@ import (
 	"github.com/Itema-as/iidp/internal/render"
 )
 
-// Environments is the two Environments an Application may have. Both
-// directory names and the layout in docs/platform-repository.md are fixed
-// to these two.
+// Environments is the two Environments an Application may have.
 var Environments = []string{"prod", "staging"}
 
 // ErrInvalidEnvironment is wrapped by ValidateEnvironmentName.
@@ -61,9 +59,8 @@ func ValidateSecretKey(key string) error {
 
 // chartFullname is the object name the chart gives every Environment's
 // objects (_helpers.tpl's application.fullname): the bare Application name
-// for prod, <name>-staging for staging. A Secret this ticket writes takes
-// the same shape, <fullname>-<key-slug>, so prod and staging never collide
-// in a shared namespace.
+// for prod, <name>-staging for staging. Secrets are named
+// <fullname>-<key-slug>, so prod and staging never collide.
 func chartFullname(application, environment string) string {
 	if environment == "prod" {
 		return application
@@ -87,13 +84,8 @@ type Secret struct {
 
 // SetSecrets encrypts each of secrets with the Platform's age public key and
 // writes one SOPS-encrypted Kubernetes Secret per key under
-// applications/<application>/<environment>/sops/, in the KSOPS layout
-// docs/platform-repository.md describes: it clones main, checks the
-// Environment exists and platform.yaml sets agePublicKey, writes the
-// encrypted documents and updates kustomization.yaml, ksops.yaml,
-// values.yaml and application.yaml, commits and pushes. A push refused
-// because main moved is retried once from a fresh clone, exactly as
-// CreateApplication does.
+// applications/<application>/<environment>/sops/, in one commit. A push
+// refused because main moved is retried once from a fresh clone.
 func (w *Writer) SetSecrets(ctx context.Context, application, environment string, secrets []Secret) (Result, error) {
 	return runWithRetry(ctx, func(ctx context.Context, _ bool) (Result, error) {
 		return w.attemptSetSecrets(ctx, application, environment, secrets)
@@ -250,17 +242,10 @@ func (w *Writer) writeSecrets(ctx context.Context, dir, application, environment
 	return files, nil
 }
 
-// registerSopsDirectory rewrites an Environment's sops/ directory
-// kustomization.yaml (always generators: [ksops.yaml]) and ksops.yaml (the
-// KSOPS generator, from a fresh listing of every *.enc.yaml file present),
-// the bookkeeping every writer of that directory needs after adding or
-// changing a file in it: writeSecrets (iidp secret set, one file per key)
-// and copyBackupsCredentials (the Postgres Capability's single, shared
-// file, docs/implementation-notes/42-backups-credentials.md) both call
-// this rather than duplicating it. Returns the two paths written, in a
-// fixed order; both are written unconditionally, the same "let git diff
-// decide" idempotency #16's notes describe, since re-encoding unchanged
-// content produces identical bytes.
+// registerSopsDirectory rewrites an Environment's sops/ kustomization.yaml
+// and ksops.yaml from a fresh listing of every *.enc.yaml file present, and
+// returns the two paths. Both are always written: unchanged content
+// re-encodes to identical bytes, so git sees no change.
 func registerSopsDirectory(dir, sopsDir, sopsAbs, fullname string) ([]string, error) {
 	kustRelPath := path.Join(sopsDir, "kustomization.yaml")
 	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(kustRelPath)), render.SopsKustomization(), 0o644); err != nil {

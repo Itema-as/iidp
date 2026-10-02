@@ -1,8 +1,6 @@
-// Package apprepo creates the Application repository the Create path
-// writes to: a new GitHub repository generated from a built-in framework
-// template (internal/templates) and pushed as the repository's first
-// commit. docs/design.md ("The wizard") and
-// docs/implementation-notes/11-cli-create-path.md describe the Create path.
+// Package apprepo creates and adopts Application repositories: a new GitHub
+// repository generated from a built-in framework template, or a pull request
+// that prepares an existing one.
 package apprepo
 
 import (
@@ -25,19 +23,14 @@ import (
 const Branch = "main"
 
 // ErrRepositoryExists is wrapped by Create when owner/name already exists.
-// Create always generates a fresh repository; an existing one is what
-// Adopt (--path adopt --repo owner/name) is for.
 var ErrRepositoryExists = errors.New("repository already exists")
 
-// Application is what Create needs to make the Application repository. It
-// is always created in platform.Org: only repositories in the org can be
-// Applications (docs/adr/0005-private-application-repositories-on-github-free.md).
+// Application is what Create needs to make the Application repository in
+// platform.Org.
 type Application struct {
-	Name      string
-	Framework templates.Framework
-	Private   bool
-	// DeployGateURL is the Platform's Deploy gate, rendered into the
-	// deploy workflow (templates.Data.DeployGateURL).
+	Name          string
+	Framework     templates.Framework
+	Private       bool
 	DeployGateURL string
 	// MigrationCommand is written into the repository's iidp.yaml; "" for
 	// none.
@@ -45,35 +38,29 @@ type Application struct {
 }
 
 // Result is what Create wrote and where. On an error after the repository
-// was created, Create still returns the Result it has so far (at least
-// URL), so the caller can tell the developer what already exists.
+// was created, Create still returns what it has so far (at least URL), so
+// the caller can tell the developer what already exists.
 type Result struct {
 	// URL is the Application repository's web address.
-	URL string
-	// CloneURL is the git URL the initial commit was pushed to.
+	URL      string
 	CloneURL string
 	// Files are the rendered template's files, relative to the repository
-	// root, in the order they were written.
-	Files []string
-	// DeployWorkflowRef is the reusable workflow, at its major tag, that
-	// .github/workflows/deploy.yaml calls.
+	// root.
+	Files             []string
 	DeployWorkflowRef string
-	// Binding is the new repository's ids, as GitHub reported them on
-	// creation, for the Platform repository to bind the Application to.
-	Binding platformrepo.RepositoryBinding
+	Binding           platformrepo.RepositoryBinding
 }
 
 // Creator creates Application repositories through the GitHub API.
 type Creator struct {
-	// Client talks to the GitHub API.
 	Client *github.Client
 	// Auth is the credential git presents when pushing the initial commit.
 	Auth git.Auth
 }
 
-// Create makes app's repository on GitHub, renders its Framework's template
-// into a temporary directory, and pushes it as the repository's first
-// commit on Branch. It refuses if owner/name already exists.
+// Create makes app's repository on GitHub and pushes its Framework's
+// template as the first commit on Branch. It refuses if the repository
+// already exists.
 func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 	owner := platform.Org
 	exists, err := c.Client.RepositoryExists(ctx, owner, app.Name)
@@ -133,10 +120,9 @@ func (c *Creator) Create(ctx context.Context, app Application) (Result, error) {
 }
 
 // DeployWorkflowRef is the reusable deploy workflow at the major tag of the
-// running binary's version, for example
-// Itema-as/iidp/.github/workflows/application-deploy.yaml@v0. Callers get
-// every release in that major version with no edit. A dev build, or any
-// version that isn't vX.Y.Z-shaped, gets @v0, the first major.
+// running binary's version, so callers get every release in that major
+// version with no edit. A dev build, or any version that isn't
+// vX.Y.Z-shaped, gets @v0.
 func DeployWorkflowRef() string {
 	return platform.DeployWorkflow + "@" + majorTag(version.Version)
 }

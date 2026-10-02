@@ -14,11 +14,6 @@ import (
 	"github.com/Itema-as/iidp/internal/deploygate"
 )
 
-// A deploy may carry the Scheduled tasks of the Application repository's
-// iidp.yaml, which the gate writes with the tag and which replace the
-// Environment's own (docs/implementation-notes/91-scheduled-tasks.md). The
-// same HTTP boundary, fakes and bare Platform repository as gate_test.go.
-
 // addKindApplication seeds shop like addApplication, bound to its
 // repository, with kind as its Kind and tasks already in every
 // Environment's values.yaml.

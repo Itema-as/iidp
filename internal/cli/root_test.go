@@ -9,8 +9,7 @@ import (
 	"github.com/Itema-as/iidp/internal/version"
 )
 
-// run invokes the CLI in-process, the way main does, and returns what it
-// wrote and the exit code it would have exited with.
+// run invokes the CLI in-process and returns its output and exit code.
 func run(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	var out, errOut bytes.Buffer

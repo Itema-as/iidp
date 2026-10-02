@@ -7,11 +7,10 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// Platform is where the browser's detail card links out to (#113): the
-// Platform's ArgoCD and Grafana, the Platform repository, and the
-// bootstrap it runs. Argus reads none of them; the bootstrap passes them
-// in (bootstrap/templates/argus.yaml), and an empty field is a link the
-// card leaves out.
+// Platform is the addresses the browser's detail card links out to. Argus
+// reads none of them itself: the bootstrap passes them in
+// (bootstrap/templates/argus.yaml), and an empty field is a link the card
+// leaves out.
 type Platform struct {
 	// ArgoCDURL is ArgoCD's address, such as https://argocd.app.itma.no.
 	ArgoCDURL string `json:"argocdURL,omitempty"`

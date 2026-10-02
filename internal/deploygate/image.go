@@ -20,11 +20,9 @@ import (
 // the gate sends it to.
 const GHCR = "ghcr.io"
 
-// RegistryCredentialFromDir reads the GHCR pull credential from the files
-// a Kubernetes Secret volume of argocd/ghcr-pull-token holds (username and
-// token; infra/README.md, "Adding or rotating the GHCR pull token"). Like
-// the App credential, the files are read on every check, so a rotated
-// token is picked up once the kubelet refreshes the volume.
+// RegistryCredentialFromDir reads the GHCR pull credential from a Secret
+// volume of argocd/ghcr-pull-token. The files are read on every check, so a
+// rotated token is picked up once the kubelet refreshes the volume.
 func RegistryCredentialFromDir(dir string) func() (registry.Credential, error) {
 	return func() (registry.Credential, error) {
 		var cred registry.Credential
@@ -42,11 +40,10 @@ func RegistryCredentialFromDir(dir string) func() (registry.Credential, error) {
 }
 
 // checkImage refuses a tag the Environment's image repository does not
-// have (docs/implementation-notes/61-image-check.md). It runs on the
-// clone the write is made from, after the caller is authorised, so an
-// unauthorised call never makes the gate ask a registry anything. A tag
-// the Environment already runs is not checked again: nothing will be
-// committed, and a repeated call stays harmless while a registry is down.
+// have. It runs after the caller is authorised, so an unauthorised call
+// never makes the gate ask a registry anything. A tag the Environment
+// already runs is not checked again, so a repeated call stays harmless
+// while a registry is down.
 func (g *Gate) checkImage(ctx context.Context, dir, application, environment, tag string) error {
 	file := path.Join(platformrepo.EnvironmentDir(application, environment), "values.yaml")
 	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(file)))

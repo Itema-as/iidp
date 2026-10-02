@@ -15,13 +15,11 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 )
 
-// RepositoryFile is the name of the file, directly under
-// applications/<name>/, that binds an Application to its Application
-// repository by GitHub's numeric ids. It sits beside the Environment
-// directories rather than inside them because the binding is the
-// Application's, not an Environment's, and outside them so the
+// RepositoryFile is the file directly under applications/<name>/ that
+// binds an Application to its Application repository by GitHub's numeric
+// ids. It sits outside the Environment directories so the
 // '*/*/application.yaml' glob that makes ArgoCD apply Environments never
-// matches it (docs/platform-repository.md).
+// matches it.
 const RepositoryFile = "repository.yaml"
 
 // RepositoryBindingPath is the binding file of application, relative to
@@ -35,11 +33,10 @@ func RepositoryBindingPath(application string) string {
 var ErrAlreadyBound = errors.New("Application is bound to another repository")
 
 // RepositoryBinding is the Application repository an Application is bound
-// to, as GitHub identifies it: by numeric ids that survive a rename and a
-// transfer, and that a repository deleted and recreated under the same name
-// does not get back. The Deploy gate (#60) authorises a deploy only when the
-// caller's GitHub Actions OIDC token carries these ids as repository_id and
-// repository_owner_id (docs/adr/0005-private-application-repositories-on-github-free.md).
+// to, by numeric ids that survive a rename and a transfer, and that a
+// repository deleted and recreated under the same name does not get back.
+// The Deploy gate authorises a deploy only when the caller's GitHub Actions
+// OIDC token carries these ids as repository_id and repository_owner_id.
 type RepositoryBinding struct {
 	// Repository is owner/name when the binding was written, for people
 	// reading the file. It goes stale on a rename and is never used to
@@ -64,7 +61,6 @@ func (b RepositoryBinding) SameRepository(other RepositoryBinding) bool {
 	return b.RepositoryID == other.RepositoryID && b.RepositoryOwnerID == other.RepositoryOwnerID
 }
 
-// renderRepositoryBinding is the content of application's binding file.
 func renderRepositoryBinding(application string, b RepositoryBinding) ([]byte, error) {
 	body, err := yaml.Marshal(b)
 	if err != nil {
@@ -79,12 +75,9 @@ func renderRepositoryBinding(application string, b RepositoryBinding) ([]byte, e
 }
 
 // ReadRepositoryBinding reads application's binding file from a clone of
-// the Platform repository at dir, ignoring keys it does not know. ok is
-// false when there is no file. A file that is present but not valid YAML
-// is an error; one that parses but lacks an id comes back with Complete()
-// false. The Deploy gate reads bindings with this; every one of those
-// cases except a Complete binding means the Application is unbound
-// (docs/platform-repository.md).
+// the Platform repository at dir, ignoring unknown keys. ok is false when
+// there is no file. A file that is not valid YAML is an error; one that
+// lacks an id comes back with Complete() false.
 func ReadRepositoryBinding(dir, application string) (b RepositoryBinding, ok bool, err error) {
 	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(RepositoryBindingPath(application))))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -99,8 +92,6 @@ func ReadRepositoryBinding(dir, application string) (b RepositoryBinding, ok boo
 	return b, true, nil
 }
 
-// writeRepositoryBinding writes application's binding file into the clone
-// at dir and returns its repository-relative path.
 func writeRepositoryBinding(dir, application string, b RepositoryBinding) (string, error) {
 	content, err := renderRepositoryBinding(application, b)
 	if err != nil {
@@ -130,15 +121,10 @@ type BindResult struct {
 }
 
 // BindRepository binds application, which must have a live Environment, to
-// the repository b names, in one commit: the backfill for an Application
-// written before Create and Adopt recorded the ids, or written without an
-// Application repository at all (app create without --path). A binding to
-// the same ids is left alone, or only has its human-readable name
-// refreshed; a binding to a different repository is refused unless rebind
-// is true. A binding file that is not valid YAML or lacks an id binds
-// nothing, so it is replaced without needing rebind. A push refused
-// because main moved is retried once from a fresh clone, exactly as
-// CreateApplication does.
+// the repository b names, in one commit. A binding to the same ids is left
+// alone, or only has its name refreshed; a binding to a different
+// repository is refused unless rebind is true. A binding file that is not
+// valid YAML or lacks an id binds nothing, so it is replaced without rebind.
 func (w *Writer) BindRepository(ctx context.Context, application string, b RepositoryBinding, rebind bool) (BindResult, error) {
 	if !b.Complete() {
 		return BindResult{}, fmt.Errorf("binding %s: the repository id and the owner id are both required", application)

@@ -157,7 +157,7 @@ func ingress(name, middlewares string) obj {
 
 // Itema login is modelled from the Environment's Ingresses: the
 // application chart's annotation names the shared ForwardAuth middleware,
-// or the Environment's own copy with sign-in groups (#92). It has no state
+// or the Environment's own copy with sign-in groups. It has no state
 // of its own, and it never touches the Environment's.
 func TestItemaLoginFromIngresses(t *testing.T) {
 	leavingIngress := ingress("shop", "oauth2-proxy-itema-login-auth@kubernetescrd")
@@ -302,8 +302,7 @@ func TestRunIsPendingUntilItsPodStarts(t *testing.T) {
 
 // A Scheduled task run whose pod cannot be scheduled is the task's
 // Warning, as a failed run is. Tasks do not block serving, so the
-// Environment is neither Degraded nor stuck (#132, heartbeat in
-// hello-staging and hello-prod).
+// Environment is neither Degraded nor stuck.
 func TestUnschedulableScheduledTaskRunIsAWarning(t *testing.T) {
 	f := env()
 	f.cronJobs = []obj{{"metadata": obj{"name": "shop-heartbeat", "namespace": "shop-prod", "creationTimestamp": ago(24 * time.Hour),
@@ -437,8 +436,8 @@ func TestComponentVersion(t *testing.T) {
 	}
 }
 
-// The new cut-down structs decode the API's own JSON, as a list response
-// or an unstructured object's content would give it.
+// The cut-down structs decode the API's own JSON, as a list response or
+// an unstructured object's content would give it.
 func TestObjectsDecodeTheAPIsJSON(t *testing.T) {
 	var events []platformstate.Event
 	if err := json.Unmarshal([]byte(`[{"apiVersion":"events.k8s.io/v1","kind":"Event",

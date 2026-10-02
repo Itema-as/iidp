@@ -1,4 +1,4 @@
-// Package argus is Argus's server (#115, #118): it keeps the objects
+// Package argus is Argus's server: it keeps the objects
 // cmd/iidp-argus's informers hand it, interprets them with
 // internal/platformstate into domain objects, and streams those to
 // browsers over server-sent events. The server interprets and the browser
@@ -16,11 +16,11 @@
 //
 // A stream starts with "retry: 3000" and the snapshot, then sends each
 // change as it happens, and a keepalive comment (": keepalive") every
-// 15 s. There are no event ids and nothing is ever
-// replayed: a browser that reconnects, or that the server closed for
-// falling 256 messages behind, gets a fresh snapshot, and replaces
-// everything it had with it. Message order is the order things happened
-// in: a change's domain objects come before the notes it makes.
+// 15 s. There are no event ids and nothing is ever replayed: a browser
+// that reconnects, or that the server closed for falling 256 messages
+// behind, gets a fresh snapshot, and replaces everything it had with it.
+// Message order is the order things happened in: a change's domain objects
+// come before the notes it makes.
 //
 // The types, and their JSON:
 //
@@ -196,9 +196,9 @@
 //	 "seam": true}                       the one "since Argus restarted at
 //	                                     hh:mm" entry
 //
-// Loudness follows the spec's table (feed.go). The feed keeps the last 200
-// notes or 24 hours of them, whichever is fewer; a browser that keeps its
-// own feed from note messages should drop the same.
+// feed.go lists which changes are loud, normal and quiet. The feed keeps
+// the last 200 notes or 24 hours of them, whichever is fewer; a browser
+// that keeps its own feed from note messages should drop the same.
 //
 // # ClusterState
 //
@@ -207,8 +207,8 @@
 //	{"state": "lost", "since": "2026-09-28T10:00:00Z"}
 //
 // interrupted is the API server not answering, for less than 30 s; lost is
-// 30 s or more. While lost, every Condition is to be read as Unknown
-// (#100): the objects still sent are interpreted from the last the
-// informers saw, kept so that the picture stays, but nothing new about
-// the cluster reaches them until the state is connected again.
+// 30 s or more. While lost, every Condition is to be read as Unknown: the
+// objects still sent are interpreted from the last the informers saw, kept
+// so that the picture stays, but nothing new about the cluster reaches
+// them until the state is connected again.
 package argus

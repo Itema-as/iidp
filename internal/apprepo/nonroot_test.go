@@ -9,8 +9,7 @@ import (
 	"github.com/Itema-as/iidp/internal/platformrepo"
 )
 
-// helloDockerfile is Itema-as/hello's Dockerfile as the Next.js template
-// generated it before #90: a named user, created with its number.
+// helloDockerfile runs as a named user, created with its number.
 const helloDockerfile = `ARG NODE_VERSION=24-slim
 
 FROM node:${NODE_VERSION} AS deps
@@ -183,8 +182,6 @@ func TestFixNonRoot(t *testing.T) {
 	}
 }
 
-// What iidp's own templates generate already runs as a numeric non-root
-// user, so Adopt would leave it as it is.
 func TestTheTemplatesDockerfilesNeedNoFix(t *testing.T) {
 	for framework, kind := range map[string]string{"nextjs": platformrepo.KindWebService, "vite-react": platformrepo.KindStaticSite} {
 		dockerfile, err := os.ReadFile(filepath.Join("..", "templates", framework, "Dockerfile"))
@@ -197,7 +194,6 @@ func TestTheTemplatesDockerfilesNeedNoFix(t *testing.T) {
 	}
 }
 
-// The Change for a named user says where the number came from.
 func TestFixNonRootSaysWhereTheNumberComesFrom(t *testing.T) {
 	got := fixNonRoot([]byte(helloDockerfile), platformrepo.KindWebService)
 	if want := "`USER nextjs` becomes `USER 1001`, the number the Dockerfile gives it (`adduser --uid 1001`)"; !strings.HasPrefix(got.Change, want) {

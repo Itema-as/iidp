@@ -18,11 +18,7 @@ import (
 // Environment's ArgoCD Application straight away instead of waiting for
 // its 3-minute poll of the Platform repository. It sets the annotation
 // argocd.argoproj.io/refresh: normal, as ArgoCD's own webhook handler
-// does; ArgoCD's controller then compares against the branch's newest
-// commit and removes the annotation. This is one of the gate's two writes
-// in the cluster; the other is its Deploy Events (events.go)
-// (docs/adr/0007-app-status-reads-through-the-deploy-gate.md,
-// docs/implementation-notes/114-argocd-refresh.md).
+// does; ArgoCD's controller then removes the annotation.
 
 // RefreshAnnotation is the annotation that asks ArgoCD to refresh an
 // ArgoCD Application, and RefreshNormal the kind of refresh asked for: a
@@ -53,12 +49,10 @@ func ArgoCDApplicationPath(name string) string {
 	return "/apis/argoproj.io/v1alpha1/namespaces/" + platformstate.ArgoCDNamespace + "/applications/" + url.PathEscape(name)
 }
 
-// requestRefresh asks ArgoCD to refresh environment's ArgoCD Application,
-// <application>-<environment>, the name the CLI gives it
-// (render.Environment.Name). It runs only after a commit, and never fails
-// the Deploy: a failure is logged, and ArgoCD's poll still picks the
-// commit up. It does not follow the request's context, so a caller that
-// hangs up once the commit is made still gets the refresh.
+// requestRefresh asks ArgoCD to refresh environment's ArgoCD Application.
+// It never fails the Deploy: a failure is logged, and ArgoCD's poll still
+// picks the commit up. It ignores the request's cancellation, so a caller
+// that hangs up once the commit is made still gets the refresh.
 func (g *Gate) requestRefresh(ctx context.Context, application, environment, commit string) {
 	if g.ArgoCD == nil {
 		return
@@ -73,8 +67,7 @@ func (g *Gate) requestRefresh(ctx context.Context, application, environment, com
 	}
 }
 
-// KubePatcher sends merge patches over the same connection, as the same
-// service account, as the status reads (platformstate.Kube).
+// KubePatcher sends merge patches through the Kubernetes API.
 type KubePatcher struct {
 	Kube *platformstate.Kube
 }

@@ -12,12 +12,6 @@ import (
 	"github.com/Itema-as/iidp/internal/deploygate"
 )
 
-// A deploy may carry the migration command from the Application
-// repository's iidp.yaml, which the gate writes with the tag
-// (docs/implementation-notes/66-migration-command-in-repo.md). These tests
-// use the same HTTP boundary, fakes and bare Platform repository as
-// gate_test.go.
-
 // addPostgresApplication seeds an Application like addApplication, with
 // the postgres block app create writes: enabled as given, and command as
 // its migration command in every Environment.

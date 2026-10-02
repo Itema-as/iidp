@@ -27,11 +27,9 @@ import (
 	"github.com/Itema-as/iidp/internal/templates"
 )
 
-// The two values --path accepts: create generates a new Application
-// repository (issue #11), adopt opens a pull request on an existing one
-// (issue #15). The zero value (no --path) is the legacy bare behaviour of
-// app create from before either existed: it writes only the Platform
-// repository and creates no Application repository.
+// The values --path accepts: create generates a new Application repository,
+// adopt opens a pull request on an existing one. Without --path, app create
+// writes only the Platform repository.
 const (
 	pathCreate = "create"
 	pathAdopt  = "adopt"
@@ -76,9 +74,8 @@ type createOptions struct {
 	login            bool
 	loginGroups      []string
 	previews         bool
-	// interactive forces the wizard even without a terminal on stdin: the
-	// hidden --interactive flag, so tests can drive it with an injected
-	// reader and writer (docs/implementation-notes/14-cli-wizard.md).
+	// interactive forces the wizard without a terminal on stdin, so tests
+	// can drive it with an injected reader and writer.
 	interactive bool
 }
 
@@ -118,7 +115,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.name, "name", "", "Application name: lowercase letters, digits and dashes, starting with a letter, at most 40 characters, unique on the Platform (defaults to the repository name with --path adopt)")
 	f.StringVar(&opts.kind, "kind", "", "Kind of Application: web-service or static-site (derived from --framework with --path create, unless --framework other; required with --path adopt when the repository already has a Dockerfile or no known framework is detected)")
-	f.StringVar(&opts.path, "path", "", "How the Application repository comes to be: create (generate one) or adopt (open a pull request on an existing one). Omit to write only the Platform repository, as before this flag existed")
+	f.StringVar(&opts.path, "path", "", "How the Application repository comes to be: create (generate one) or adopt (open a pull request on an existing one). Omit to write only the Platform repository")
 	f.StringVar(&opts.repo, "repo", "", "Existing Application repository to adopt, in "+platform.Org+": "+platform.Org+"/name or a URL (--path adopt only)")
 	f.StringVar(&opts.framework, "framework", "", "Framework to generate the Application repository from (--path create only): nextjs, vite-react or other")
 	f.BoolVar(&opts.private, "private", true, "Create the Application repository as private (--path create only; default)")
@@ -127,7 +124,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	f.StringVar(&opts.image, "image", "", "Image repository (default ghcr.io/<owner lowercased>/<name>)")
 	f.IntVar(&opts.port, "port", 3000, "Port the container listens on")
 	f.StringVar(&opts.probePath, "probe-path", "/", "Path the readiness and liveness probes request")
-	f.BoolVar(&opts.yes, "yes", false, "Skip the confirmation (nothing is asked yet; accepted so scripts keep working once the wizard asks)")
+	f.BoolVar(&opts.yes, "yes", false, "Skip the wizard's confirmation before anything is written")
 	f.BoolVar(&opts.postgres, "postgres", false, "Add a Postgres database Capability: DATABASE_URL injected into every Environment, continuous backups")
 	f.StringVar(&opts.migrationCommand, "migration-command", "", "Shell command run before every rollout with DATABASE_URL set, written to the Application repository's iidp.yaml (requires --postgres); detected from Prisma, Drizzle or an npm migrate script when omitted")
 	f.StringVar(&opts.appDir, "app-dir", "", "Directory to detect the migration command in (default: the generated template with --path create, or the current directory when it has a package.json)")
@@ -144,17 +141,10 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-// isInteractive reports whether app create should run the wizard: forced by
-// the hidden --interactive flag (how tests drive it without a real
-// terminal), or stdin being a terminal. Without either, behaviour is
-// unchanged: a missing required flag is an error.
+// isInteractive reports whether app create should run the wizard.
 //
-// This checks golang.org/x/term.IsTerminal rather than only
-// os.Stdin.Stat's os.ModeCharDevice bit: /dev/null is itself a character
-// device, so that bit alone cannot tell a real terminal from stdin
-// redirected from /dev/null, which every non-interactive script, cron job
-// and CI runner does
-// (docs/implementation-notes/14-cli-wizard.md).
+// It uses term.IsTerminal rather than os.ModeCharDevice: /dev/null is also a
+// character device, and scripts and CI runners redirect stdin from it.
 func isInteractive(opts createOptions) bool {
 	if opts.interactive {
 		return true
@@ -211,13 +201,10 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		ghClient.BaseURL = deps.GitHubAPI
 	}
 
-	// Create and Adopt both push .github/workflows/deploy.yaml with this
-	// token, which GitHub refuses without the workflow scope. Create always
-	// adds it, so it refuses here, before the summary and before anything
-	// exists; Adopt adds it only when the repository has none, which is
-	// known once it is cloned, so it refuses after detection instead,
-	// still before anything is written
-	// (docs/implementation-notes/47-workflow-scope.md).
+	// Create and Adopt push .github/workflows/deploy.yaml, which GitHub
+	// refuses without the workflow scope. Create always adds it, so it is
+	// checked here; Adopt adds it only when the repository has none, which
+	// is known once it is cloned, so Adopt checks after detection.
 	var scopes github.TokenScopes
 	if plan.path == pathCreate || plan.path == pathAdopt {
 		scopes, err = ghClient.TokenScopes(cmd.Context())
@@ -231,20 +218,15 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		}
 	}
 
-	// Every Application repository is in the org, whichever path made the
-	// Application (docs/adr/0005-private-application-repositories-on-github-free.md),
-	// so its image is always in the org's GHCR namespace.
+	// Every Application repository is in the org, so its image is in the
+	// org's GHCR namespace.
 	image := plan.imageOverride
 	if image == "" {
 		image = platform.Registry + "/" + plan.name
 	}
-	// kind and migrationCommand are already final for Create and the
-	// legacy bare path (plan.kind is resolved, and detectMigrationCommand
-	// runs against a freshly rendered template or the current directory).
-	// For Adopt, both depend on cloning the target repository, which the
-	// Create/legacy paths never do: they are resolved below, either during
-	// the interactive preview (to show real values in the summary) or,
-	// definitively, once Adopter.Adopt itself has cloned the repository.
+	// For Adopt, kind and migrationCommand depend on the cloned repository:
+	// they are resolved for the interactive summary by Adopter.Preview, and
+	// finally by Adopter.Adopt.
 	kind := plan.kind
 	migrationCommand := plan.migrationCommand
 	if plan.path != pathAdopt {
@@ -292,8 +274,10 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			LoginGroups:     plan.loginGroups,
 			Previews:        plan.previews,
 		}
-		// Create and Adopt bind the repository only once it exists; the
-		// preview checks the rest with a stand-in.
+		// --previews needs a bound repository, but Create and Adopt bind it
+		// only once it exists. For the summary, PreviewApplication gets a
+		// stand-in binding with placeholder ids, so everything else is still
+		// checked.
 		if plan.previews {
 			app.Repository = &platformrepo.RepositoryBinding{Repository: plan.repoOwner + "/" + plan.repoName, RepositoryID: 1, RepositoryOwnerID: 1}
 			if plan.path == pathCreate {
@@ -356,10 +340,8 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	if plan.path == pathAdopt {
 		fmt.Fprintf(out, "Adopting %s/%s onto the Platform:\n", plan.repoOwner, plan.repoName)
 
-		// The name is checked before the pull request is opened, not only
-		// when the Platform repository is written after it, and the same
-		// clone gives the base domain the Deploy gate's URL is rendered
-		// from.
+		// Check the name before the pull request is opened; the same clone
+		// gives the base domain for the Deploy gate's URL.
 		cfg, err := platformWriter.CheckAvailable(cmd.Context(), plan.name)
 		if err != nil {
 			return err
@@ -368,13 +350,9 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			return err
 		}
 
-		// Postgres-vs-Kind is validated inside Adopter.Adopt itself, right
-		// after Kind is resolved and before anything is written, committed
-		// or pushed: unlike the interactive summary's preview (which can
-		// check this before the developer even confirms), a flag-driven
-		// run does not know the final Kind until the repository has been
-		// cloned, and a refusal must never come after the pull request
-		// already exists (docs/implementation-notes/15-cli-adopt-path.md).
+		// Adopter.Adopt checks --postgres against the Kind once it has
+		// resolved it, before anything is pushed: a refusal must never come
+		// after the pull request exists.
 		adoptResult, err = adopter.Adopt(cmd.Context(), apprepo.AdoptRequest{
 			Owner:               plan.repoOwner,
 			Name:                plan.repoName,
@@ -418,10 +396,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		}
 	}
 
-	// Create and Adopt bind the Application to its Application repository
-	// by id, in the same commit as its Environments; without --path there
-	// is no Application repository to bind
-	// (docs/implementation-notes/58-repository-binding.md).
+	// Without --path there is no Application repository to bind.
 	var binding *platformrepo.RepositoryBinding
 	switch plan.path {
 	case pathCreate:
@@ -507,10 +482,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 }
 
 // printMigrationCommandToAdd tells the developer what to put in iidp.yaml
-// when the CLI cannot write it there itself: add-capability --postgres, and
-// app create without --path. Neither writes the migration command to the
-// Platform repository: the Deploy gate does, from iidp.yaml, with the image
-// it belongs to (docs/implementation-notes/66-migration-command-in-repo.md).
+// when the CLI cannot write it there itself.
 func printMigrationCommandToAdd(out io.Writer, name, command string) {
 	fmt.Fprintf(out, "\nThe migration command lives in %s at the root of %s's Application repository: the deploy workflow sends it to the Platform with every deploy, so it always matches the code it migrates.\n", appconfig.FileName, name)
 	if command != "" {
@@ -520,17 +492,13 @@ func printMigrationCommandToAdd(out io.Writer, name, command string) {
 	fmt.Fprintf(out, "If %s has migrations, add a line like this to %s and push:\n  %s\n", name, appconfig.FileName, appconfig.MigrationCommandLine("npx prisma migrate deploy"))
 }
 
-// bindCommand is the iidp app bind invocation that binds name to repo,
-// for the messages that point at it.
+// bindCommand is the iidp app bind invocation that binds name to repo.
 func bindCommand(name, repo string) string {
 	return "iidp app bind " + name + " --repo " + repo
 }
 
-// checkPostgresKind refuses --postgres against a Static site Kind: a
-// Static site has no server to run a database against. A no-op when kind
-// is "" (Adopt, before it is resolved): the same check runs again once
-// Kind is known, inside Adopter.Adopt and the interactive summary's
-// preview.
+// checkPostgresKind refuses --postgres for a Static site. It is a no-op when
+// kind is "" (Adopt, before detection); Adopter.Adopt checks again later.
 func checkPostgresKind(postgres bool, kind string) error {
 	if postgres && kind == platformrepo.KindStaticSite {
 		return errors.New("--postgres needs --kind web-service (or a framework/detected framework that derives it); a Static site has no server to use a database")
@@ -539,10 +507,8 @@ func checkPostgresKind(postgres bool, kind string) error {
 }
 
 // checkLoginDomains refuses --login together with a --domain outside the
-// login cookie domain that cfg, platform.yaml, names. Create and Adopt run
-// it on the clone that checks the name, before the Application repository
-// is created or the pull request opened; the Writer checks again when it
-// writes, which is the only check the bare path gets.
+// login cookie domain in platform.yaml. It runs before the Application
+// repository is created or the pull request opened; the Writer checks again.
 func checkLoginDomains(plan createPlan, cfg platformrepo.Config) error {
 	if !plan.login {
 		return nil
@@ -550,11 +516,8 @@ func checkLoginDomains(plan createPlan, cfg platformrepo.Config) error {
 	return platformrepo.CheckLoginDomains(cfg, plan.domains)
 }
 
-// checkAdoptPreview turns an AdoptPreview's refusal conditions (no push
-// access, the branch already there, and a token without the workflow scope
-// when the pull request would add the deploy workflow) into the same
-// errors Adopter.Adopt itself would return, so the interactive wizard
-// refuses before the summary rather than after a developer confirms.
+// checkAdoptPreview returns the errors Adopter.Adopt would, so the wizard
+// refuses before the summary rather than after the developer confirms.
 func checkAdoptPreview(preview apprepo.AdoptPreview, scopes github.TokenScopes, owner, name string) error {
 	if !preview.CanPush {
 		return fmt.Errorf("%w: you do not have write access to %s/%s; Adopt needs it to open a pull request", apprepo.ErrNoPushAccess, owner, name)
@@ -569,9 +532,8 @@ func checkAdoptPreview(preview apprepo.AdoptPreview, scopes github.TokenScopes, 
 }
 
 // checkRequiredFlags reports flags missing for the chosen --path, in the
-// style of cobra's own required-flag message ("kind" is not a cobra
-// required flag any more because whether it is required depends on
-// --framework, which cobra cannot express).
+// style of cobra's required-flag message. Cobra cannot express that --kind
+// is required only for some --path and --framework values.
 func (o createOptions) checkRequiredFlags(cmd *cobra.Command) error {
 	f := cmd.Flags()
 	var missing []string
@@ -584,10 +546,8 @@ func (o createOptions) checkRequiredFlags(cmd *cobra.Command) error {
 			missing = append(missing, "framework")
 		}
 	case pathAdopt:
-		// --name is not required for Adopt: it defaults to the repository
-		// name (createOptions.plan). --kind's requirement depends on
-		// detection, which needs the repository cloned, so it cannot be
-		// checked here; Adopter.Adopt refuses clearly once it knows.
+		// --name defaults to the repository name. Whether --kind is needed
+		// depends on detection, so Adopter.Adopt checks it.
 		if !f.Changed("repo") {
 			missing = append(missing, "repo")
 		}
@@ -610,9 +570,7 @@ func (o createOptions) checkRequiredFlags(cmd *cobra.Command) error {
 	return fmt.Errorf("required flag(s) %s not set", strings.Join(quoted, ", "))
 }
 
-// createPlan is what createOptions.plan validates the flags into: enough to
-// build both the Application repository (when path is pathCreate) and the
-// Platform repository's Environment.
+// createPlan is the validated form of createOptions.
 type createPlan struct {
 	name          string
 	kind          string
@@ -622,29 +580,25 @@ type createPlan struct {
 	port          int
 	probePath     string
 	path          string
-	// repoOwner and repoName are --repo, parsed (--path adopt only).
+	// repoOwner and repoName are --repo, parsed.
 	repoOwner        string
 	repoName         string
 	private          bool
 	postgres         bool
 	migrationCommand string
-	// migrationCommandSet is true when --migration-command was given
-	// explicitly (including by the wizard, which sets the flag even on an
-	// empty answer): detectMigrationCommand then uses migrationCommand
-	// as-is instead of running detection again.
+	// migrationCommandSet is true when --migration-command was given, even
+	// empty (the wizard sets it on an empty answer); detection is then
+	// skipped.
 	migrationCommandSet bool
 	appDir              string
 	staging             bool
 	domains             []string
 	login               bool
-	// loginGroups are --login-group, lowercased and checked
-	// (platformrepo.NormalizeLoginGroups).
-	loginGroups []string
-	previews    bool
+	loginGroups         []string
+	previews            bool
 }
 
-// plan validates every flag before anything is cloned or written, and
-// turns them into the plan for the chosen --path.
+// plan validates every flag before anything is cloned or written.
 func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	switch o.path {
 	case "", pathCreate, pathAdopt:
@@ -674,7 +628,6 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 		if err != nil {
 			return createPlan{}, err
 		}
-		// Refused here, before the token is read or anything is cloned;
 		// Adopter checks again against the owner GitHub reports.
 		if err := apprepo.CheckInOrg(repoOwner, repoName); err != nil {
 			return createPlan{}, err
@@ -709,13 +662,9 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 			return createPlan{}, fmt.Errorf("unknown Kind %q: --kind must be %s or %s", kind, platformrepo.KindWebService, platformrepo.KindStaticSite)
 		}
 	case pathAdopt:
-		// Whether Kind is required at all depends on what Adopt finds when
-		// it clones the repository (an existing Dockerfile, or no known
-		// framework), which needs network access plan() never does; the
-		// eventual refusal is apprepo.ResolveKind's job, run once the
-		// repository has actually been read
-		// (docs/implementation-notes/15-cli-adopt-path.md). An explicit
-		// --kind is validated here and used unconditionally later.
+		// Whether Kind is required depends on what the clone contains, so
+		// apprepo.ResolveKind refuses later. An explicit --kind is validated
+		// here.
 		if cmd.Flags().Changed("kind") {
 			if !platformrepo.ValidKind(kind) {
 				return createPlan{}, fmt.Errorf("unknown Kind %q: --kind must be %s or %s", kind, platformrepo.KindWebService, platformrepo.KindStaticSite)
@@ -744,19 +693,11 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if err := appconfig.ValidateMigrationCommand(o.migrationCommand); err != nil {
 		return createPlan{}, fmt.Errorf("--migration-command: %w", err)
 	}
-	// For Adopt, kind can still be "" here (it must be derived from
-	// detection, which needs the repository cloned); checkPostgresKind is a
-	// no-op against an empty Kind, and this check runs again, with the
-	// real Kind, inside Adopter.Adopt and the interactive summary's
-	// preview, both before anything is written.
 	if err := checkPostgresKind(o.postgres, kind); err != nil {
 		return createPlan{}, err
 	}
-	// --login with --domain is not refused here: whether every domain is
-	// inside the login cookie domain depends on platform.yaml's
-	// cloudflareZone, which needs the Platform repository cloned.
-	// checkLoginDomains runs on the first clone, before anything is
-	// created (docs/implementation-notes/76-login-in-zone-domains.md).
+	// --domain against --login needs platform.yaml, so checkLoginDomains
+	// checks it after the clone.
 	loginGroups, err := parseLoginGroups(o.loginGroups)
 	if err != nil {
 		return createPlan{}, err
@@ -764,9 +705,8 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if cmd.Flags().Changed("login-group") && !o.login {
 		return createPlan{}, fmt.Errorf("%w: give --login with --login-group", platformrepo.ErrLoginGroupsWithoutLogin)
 	}
-	// A preview renders staging's values with staging's secrets, and the
-	// generator follows the pull requests of the repository Create or
-	// Adopt binds; without --path there is none.
+	// A Preview Environment uses staging's values and secrets, and follows
+	// the pull requests of the bound repository.
 	if o.previews && !o.staging {
 		return createPlan{}, platformrepo.ErrPreviewsWithoutStaging
 	}
@@ -811,12 +751,9 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	}, nil
 }
 
-// parseLoginGroups turns the values of the repeatable --login-group flag
-// into sign-in groups: Entra group object ids, lowercased and checked by
-// platformrepo.NormalizeLoginGroups. A single empty value (an empty
-// --login-group) means no groups at all, which is how add-capability
-// removes them; an empty value next to ids is refused, since it would
-// otherwise be silently dropped.
+// parseLoginGroups normalises --login-group values. A single empty value
+// means no groups, which is how add-capability removes them; an empty value
+// next to ids is refused rather than silently dropped.
 func parseLoginGroups(values []string) ([]string, error) {
 	if len(values) == 1 && strings.TrimSpace(values[0]) == "" {
 		return []string{}, nil
@@ -829,7 +766,6 @@ func parseLoginGroups(values []string) ([]string, error) {
 	return platformrepo.NormalizeLoginGroups(values)
 }
 
-// signInGroupsText describes the sign-in groups for the command's output.
 func signInGroupsText(groups []string) string {
 	if len(groups) == 0 {
 		return "none, every Itema user gets in"
@@ -837,9 +773,8 @@ func signInGroupsText(groups []string) string {
 	return strings.Join(groups, ", ") + " (a member of any one gets in)"
 }
 
-// parseRepoFlag splits --repo into an owner and a repository name: either
-// the short form owner/name, or a GitHub URL such as
-// https://github.com/owner/name, with or without a trailing .git or slash.
+// parseRepoFlag splits --repo, owner/name or a GitHub URL, into owner and
+// name.
 func parseRepoFlag(s string) (owner, name string, err error) {
 	trimmed := strings.TrimSpace(s)
 	p := trimmed
@@ -858,13 +793,10 @@ func parseRepoFlag(s string) (owner, name string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// resolveMigrationDir picks the directory detection should look in for
-// plan, in the order docs/design.md's wizard describes: --app-dir, then the
-// Create path's rendered template, then the current directory when it has a
-// package.json. dir is "" when there is nowhere to look; description names
-// the directory for the "Looking for a migration command in ..." message;
-// cleanup removes any temporary directory this created and must always be
-// called.
+// resolveMigrationDir picks the directory to detect the migration command
+// in: --app-dir, then the Create path's rendered template, then the current
+// directory when it has a package.json. dir is "" when there is nowhere to
+// look. cleanup must always be called.
 func resolveMigrationDir(plan createPlan) (dir, description string, cleanup func(), err error) {
 	noop := func() {}
 	switch {
@@ -890,12 +822,8 @@ func resolveMigrationDir(plan createPlan) (dir, description string, cleanup func
 	}
 }
 
-// detectMigrationCommand resolves plan's migration command: migrationCommand
-// as-is when migrationCommandSet (an explicit --migration-command, including
-// one the wizard set from the developer's answer), otherwise, with
-// --postgres, a detection with resolveMigrationDir. It prints what it looked
-// in and what it found (or didn't) to out, the way docs/design.md's wizard
-// help text does.
+// detectMigrationCommand returns the explicit --migration-command, or with
+// --postgres detects one, printing what it found to out.
 func detectMigrationCommand(plan createPlan, out io.Writer) (string, error) {
 	if plan.migrationCommandSet {
 		return plan.migrationCommand, nil
@@ -926,11 +854,8 @@ func detectMigrationCommand(plan createPlan, out io.Writer) (string, error) {
 	return det.Command, nil
 }
 
-// suggestMigrationCommand runs the same detection detectMigrationCommand
-// would, without printing anything: the wizard's migration question uses it
-// to show docs/design.md's help text (including the detected suggestion)
-// before asking, given the answers gathered so far (name, path, framework,
-// app-dir).
+// suggestMigrationCommand runs detectMigrationCommand's detection without
+// printing, for the wizard's suggestion.
 func suggestMigrationCommand(plan createPlan) (migrate.Detection, bool, error) {
 	dir, _, cleanup, err := resolveMigrationDir(plan)
 	if err != nil {
@@ -967,8 +892,6 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 	fmt.Fprintf(out, "\nThe Environment deploys once the deploy workflow writes the first image tag.\n")
 }
 
-// printPreviews tells where Preview Environments appear and how to get
-// one, when the Application has them.
 func printPreviews(out io.Writer, res platformrepo.Result) {
 	if res.PreviewAddress == "" {
 		return
@@ -977,10 +900,8 @@ func printPreviews(out io.Writer, res platformrepo.Result) {
 	fmt.Fprintf(out, "            within 3 minutes of the label, once the deploy workflow has pushed the pull request's image; removed when it closes or loses the label\n")
 }
 
-// printDomains reports, for each custom domain, which branch the chart
-// takes (the wildcard certificate or a per-host one from
-// platform.httpIssuer) and whether DNS is automatic, then lists the CNAME
-// records left to create by hand for the domains that are not.
+// printDomains reports how each custom domain gets its certificate and DNS,
+// and lists the CNAME records left to create by hand.
 func printDomains(out io.Writer, res platformrepo.Result) {
 	if len(res.Domains) == 0 {
 		return

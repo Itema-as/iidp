@@ -8,7 +8,7 @@ import (
 	"github.com/Itema-as/iidp/internal/platformstate"
 )
 
-// Each row of the spec's loudness table, and the notes that only report
+// Each row of feed.go's loudness table, and the notes that only report
 // something finished, from the change of one Environment or component.
 func TestLoudnessTable(t *testing.T) {
 	healthy := &platformstate.Condition{State: platformstate.Healthy}
