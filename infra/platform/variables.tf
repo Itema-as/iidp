@@ -10,7 +10,7 @@ variable "server_name" {
 }
 
 variable "server_type" {
-  description = "Machine size. CPX22 (2 vCPU, 4 GB) is the agreed Phase 1 size; CPX32 is the first step up."
+  description = "Machine size. CPX22 (2 vCPU, 4 GB) is the default; CPX32 is the first step up."
   type        = string
   default     = "cpx22"
 }
@@ -37,13 +37,11 @@ variable "ssh_public_key" {
   }
 }
 
-# Software pinned by cloud-init. These are baked into the user data at first
-# boot; a later change is applied in place by re-running iidp-bootstrap on
-# the node with the new value (see infra/README.md), never by recreating
-# the server.
+# Software pinned by cloud-init at first boot. A later change is applied in
+# place by re-running iidp-bootstrap on the node (see infra/README.md).
 
 variable "k3s_version" {
-  description = "k3s release to install, in the form vX.Y.Z+k3sN. Default is the k3s stable channel as of 2026-09-21."
+  description = "k3s release to install, in the form vX.Y.Z+k3sN. Default is a k3s stable-channel release."
   type        = string
   default     = "v1.36.4+k3s1"
 
@@ -54,7 +52,7 @@ variable "k3s_version" {
 }
 
 variable "argocd_chart_version" {
-  description = "argo-cd Helm chart version cloud-init renders with helm template and applies; the argocd bootstrap Application then manages ArgoCD with the same chart and version. Must match bootstrap/versions.yaml argocd.chart. Default is the newest stable release as of 2026-09-21."
+  description = "argo-cd Helm chart version cloud-init renders with helm template and applies; the argocd bootstrap Application then manages ArgoCD with the same chart and version. Must match bootstrap/versions.yaml argocd.chart. Default is a stable release."
   type        = string
   default     = "10.9.2"
 
@@ -65,7 +63,7 @@ variable "argocd_chart_version" {
 }
 
 variable "helm_version" {
-  description = "Helm release cloud-init downloads (linux amd64) to render the argo-cd chart, in the form vX.Y.Z. Must match bootstrap/versions.yaml helm.version. Default is the newest stable v3 release as of 2026-09-21."
+  description = "Helm release cloud-init downloads (linux amd64) to render the argo-cd chart, in the form vX.Y.Z. Must match bootstrap/versions.yaml helm.version. Default is a stable v3 release."
   type        = string
   default     = "v3.22.0"
 
@@ -100,15 +98,10 @@ variable "platform_repo_bootstrap_path" {
   default     = "bootstrap"
 }
 
-# ArgoCD's credential for the Platform repository. The same org GitHub App
-# the Deploy gate commits deploys as (contents: write, which implies the
-# read ArgoCD needs) doubles as this credential: cloud-init writes it into
-# an ArgoCD repository Secret (docs/implementation-notes/
-# 41-argocd-platform-repo-credential.md) so the root Application can
-# reconcile the private Platform repository from first boot with nobody
-# touching the cluster, and the Deploy gate mounts the same Secret
-# (docs/implementation-notes/60-deploy-gate.md). No default: every
-# Platform has its own App.
+# ArgoCD's and the Deploy gate's credential for the private Platform
+# repository: the org GitHub App the Deploy gate commits as. cloud-init
+# writes it into an ArgoCD repository Secret, so the root Application can
+# reconcile from first boot. No default: every Platform has its own App.
 
 variable "platform_repo_github_app_id" {
   description = "Id of the org GitHub App (bootstrap wizard stage \"GitHub App for the Deploy gate and ArgoCD\") that authenticates ArgoCD and the Deploy gate to the Platform repository. Matches platform.yaml's githubApp.id in the Platform repository."
@@ -141,19 +134,11 @@ variable "platform_repo_github_app_private_key" {
   }
 }
 
-# The node's credential for pulling Applications' private images from GHCR
-# (ADR-0005). ghcr.io accepts only a classic personal access token for
-# pulls from outside Actions, never a GitHub App token, so this is one
-# classic token with only the read:packages scope. cloud-init writes both
-# values into k3s's /etc/rancher/k3s/registries.yaml (local.registries_yaml
-# in bootstrap.tf) before k3s first starts, and into the Secret
-# argocd/ghcr-pull-token (local.ghcr_pull_secret_yaml), the Deploy gate's
-# copy, with which it checks that an image tag exists (#61). Like the App
-# key above, a change here never reaches a running node through tofu
-# apply alone: see "Adding or rotating the GHCR pull token" in
-# infra/README.md. No default: the
-# token belongs to one GitHub account (the Platform admin's at first, a
-# machine user's after #56).
+# The node's credential for pulling private images from GHCR. ghcr.io
+# accepts only a classic personal access token for pulls from outside
+# Actions, never a GitHub App token. A change here never reaches a running
+# node through tofu apply alone: see "Adding or rotating the GHCR pull
+# token" in infra/README.md.
 
 variable "ghcr_pull_username" {
   description = "GitHub login of the account that owns ghcr_pull_token, sent to ghcr.io as the basic-auth username. The bootstrap wizard reads it from the token itself (GET /user)."

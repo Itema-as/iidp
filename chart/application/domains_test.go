@@ -7,13 +7,9 @@ import (
 	"testing"
 )
 
-// Custom domains and secrets. A custom domain is one more host an
-// Environment answers on. A host directly under the Platform base domain is
-// covered by the wildcard certificate, which is Traefik's default, so it
-// joins the Platform address on the same Ingress with no certificate of its
-// own. Any other host needs its own certificate from cert-manager's HTTP-01
-// ClusterIssuer, so it goes on a second Ingress carrying the issuer
-// annotation, with one TLS secret per host.
+// A custom domain directly under the base domain joins the Platform Ingress
+// under the wildcard certificate; any other gets its own certificate on a
+// second Ingress.
 
 // ingressHosts returns the hosts of an Ingress's rules, in order.
 func ingressHosts(t *testing.T, ing object) []string {
@@ -197,9 +193,8 @@ func TestSecretsAreMountedAsEnvFromByName(t *testing.T) {
 		t.Errorf("envFrom secretRefs = %v, want %v", refs, want)
 	}
 
-	// Plain env is still there beside them, and the chart renders no
-	// Secret of its own: the SOPS-encrypted Secrets sit next to the values
-	// file in the Platform repository.
+	// Plain env is still there beside them, and the chart renders no Secret of
+	// its own.
 	if vars := envVars(t, c); vars["NODE_ENV"] != "production" || vars["PORT"] != "3000" {
 		t.Errorf("env = %v, want NODE_ENV and PORT beside the secrets", vars)
 	}
@@ -237,10 +232,8 @@ func TestRenderingRefusesBadDomains(t *testing.T) {
 	}
 }
 
-// The Static site, custom domain and secrets fixtures render objects the
-// Web service fixtures of chart_test.go do not (a second Ingress, envFrom,
-// a port-80 container), so they are validated against the Kubernetes
-// schemas too.
+// These fixtures render objects the Web service fixtures do not (a second
+// Ingress, envFrom), so they are validated too.
 func TestStaticSiteDomainAndSecretFixturesPassKubeconform(t *testing.T) {
 	requireTool(t, "kubeconform")
 	version := kubernetesVersion(t)

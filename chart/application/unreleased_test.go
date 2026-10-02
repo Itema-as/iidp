@@ -11,11 +11,8 @@ import (
 	valuesrender "github.com/Itema-as/iidp/internal/render"
 )
 
-// An Environment the deploy workflow has not written an image into yet
-// (image.tag: "", what the CLI writes) renders nothing, so ArgoCD shows it
-// Synced and Healthy instead of a comparison error; the first tag renders
-// the whole Environment. See
-// docs/implementation-notes/47-unreleased-environment.md.
+// An Environment without an image renders nothing, so ArgoCD shows it Synced
+// and Healthy instead of a comparison error.
 
 // fixtures lists the testdata files, split into those rendered successfully
 // and the refuse-* ones rendering must fail on.
@@ -68,11 +65,7 @@ func refusal(out string) string {
 }
 
 func TestUnreleasedEnvironmentRendersNothing(t *testing.T) {
-	// Every Capability that brings objects of its own is on in this
-	// fixture: Postgres with a migration (the Cluster, ObjectStore,
-	// ScheduledBackup, migration Job and the final-backup PreDelete hook
-	// with its RBAC), a wildcard and a foreign custom domain (both
-	// Ingresses) and a Secret.
+	// Every Capability that brings objects of its own is on in this fixture.
 	for _, namespace := range []string{"", "shop-prod"} {
 		t.Run("namespace="+namespace, func(t *testing.T) {
 			var args []string
@@ -125,10 +118,8 @@ func TestUnreleasedEnvironmentIsStillRefusedForBrokenValues(t *testing.T) {
 }
 
 func TestEveryTemplateHonoursTheReleasedGate(t *testing.T) {
-	// The rendered tests above only see the templates a fixture switches
-	// on. This one names a new template that forgets the gate, before an
-	// Environment without an image renders it into a comparison error, or
-	// worse, a lone object.
+	// The rendered tests above only see the templates a fixture switches on.
+	// This one catches a new template that forgets the gate.
 	templates, err := filepath.Glob(filepath.Join("templates", "*.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -164,11 +155,9 @@ var releasedObjects = []string{
 }
 
 func TestReleasingAnEnvironmentRendersIt(t *testing.T) {
-	// The prod values iidp app create --staging --postgres --domain writes
-	// (internal/platformrepo's writeEnvironment builds the same
-	// render.Environment), then the edit iidp ci set-image makes on the
-	// first v* tag. Rendering the CLI's own output, rather than a fixture,
-	// keeps the two sides of the contract from drifting apart.
+	// The prod values iidp app create --staging --postgres --domain writes, then
+	// the edit iidp ci set-image makes on the first v* tag. Rendering the CLI's
+	// own output keeps the two sides of the contract from drifting apart.
 	created, err := valuesrender.Values(valuesrender.Environment{
 		Application:           "shop",
 		Environment:           "prod",
@@ -220,9 +209,8 @@ func TestReleasingAnEnvironmentRendersIt(t *testing.T) {
 }
 
 func TestAddedStagingEnvironmentIsUnreleasedUntilItsFirstImage(t *testing.T) {
-	// iidp app add-capability --staging copies a released prod's values
-	// with the tag reset to "": staging has no image until the next push to
-	// main, and must render nothing until then, not prod's image.
+	// iidp app add-capability --staging copies a released prod's values with
+	// the tag reset to "": staging must render nothing until its first image.
 	prod, err := valuesrender.Values(valuesrender.Environment{
 		Application:     "shop",
 		Environment:     "prod",

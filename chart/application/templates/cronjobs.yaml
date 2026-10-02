@@ -16,14 +16,10 @@ spec:
   # time from 02:00 to 02:59 is skipped on the last Sunday of March and
   # runs twice on the last Sunday of October: put nightly work outside it.
   timeZone: Europe/Oslo
-  # A run still going when the next is due makes that next one skip; the
-  # two never overlap.
   concurrencyPolicy: Forbid
-  # A run that cannot start within five minutes of its time (the node was
-  # down, or a previous run was still going) is skipped, not made up late:
-  # the next time on the schedule runs as usual. It also bounds how many
-  # missed times the controller counts, so a long outage never trips its
-  # "too many missed start times" limit.
+  # A run that cannot start within five minutes of its time is skipped, not
+  # made up late. It also bounds how many missed times the controller counts,
+  # so a long outage never trips its "too many missed start times" limit.
   startingDeadlineSeconds: 300
   # The last successful run and the last three failed ones are kept, with
   # their Pods and logs, for iidp app status and kubectl logs.
@@ -38,11 +34,9 @@ spec:
         iidp.itema.no/environment: {{ include "application.environment" $ }}
         iidp.itema.no/task: {{ .name | quote }}
     spec:
-      # One attempt: a failed run is reported and the next time on the
-      # schedule runs it again; retrying at once could repeat whatever
-      # the failed run already did.
+      # One attempt: retrying at once could repeat whatever the failed run
+      # already did.
       backoffLimit: 0
-      # A run that takes longer than an hour is stopped and fails.
       activeDeadlineSeconds: 3600
       template:
         metadata:
@@ -83,7 +77,6 @@ spec:
               {{- end }}
               resources:
                 {{- include "application.tasks.resources" $ | nindent 16 }}
-              # The Application's own image, so the Application's own answer.
               securityContext:
                 {{- include "application.securityContext" $ | nindent 16 }}
 {{- end }}

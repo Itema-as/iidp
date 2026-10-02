@@ -1,7 +1,5 @@
-// Package bootstrap_test renders the app-of-apps with helm template, the
-// way ArgoCD does, and asserts on the component Applications the Platform
-// would receive: which ones exist, that every version is the pinned one,
-// and that platform.yaml values land where they should.
+// Package bootstrap_test renders the app-of-apps with helm template, the way
+// ArgoCD does, and checks the component Applications it produces.
 package bootstrap_test
 
 import (
@@ -20,8 +18,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// fixture is the Platform repository the kind harness serves; its
-// platform.yaml is the values file here too, so both tests see one Platform.
+// fixture is the kind harness's platform.yaml, so both test suites see one
+// Platform.
 const fixture = "../test/e2e/fixtures/platform-repo/platform.yaml"
 
 type object = map[string]any
@@ -48,11 +46,8 @@ func TestRendersOneApplicationPerComponent(t *testing.T) {
 	}
 }
 
-// TestEveryApplicationRetriesForeverAgainstTheNewestRevision: the bootstrap
-// relies on unlimited retries while components arrive in any order, and a
-// retry pinned to the revision that failed never picks up the fix pushed
+// A retry pinned to the revision that failed never picks up a fix pushed
 // after it, because ArgoCD starts no new automated sync while one runs.
-// retry.refresh moves each retry on to the newest revision.
 func TestEveryApplicationRetriesForeverAgainstTheNewestRevision(t *testing.T) {
 	apps := renderApplications(t, "--values", fixture)
 	if len(apps) == 0 {
@@ -135,8 +130,7 @@ func TestPlatformValuesReachTheComponents(t *testing.T) {
 	if got := get[bool](t, argocd, "configs", "params", "server.insecure"); !got {
 		t.Errorf("argocd server.insecure not set; Traefik terminates TLS")
 	}
-	// Preview Environments are ApplicationSets (#95): the controller runs,
-	// with a small request.
+	// Preview Environments are ApplicationSets.
 	if got := get[int](t, argocd, "applicationSet", "replicas"); got != 1 {
 		t.Errorf("argocd applicationSet.replicas = %d, want 1", got)
 	}
@@ -211,8 +205,8 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	}
 
 	values := get[object](t, chartSource, "helm", "valuesObject")
-	// The fixture's cloudflareZone, so a custom domain inside it can be
-	// protected too (#76). TestOauth2ProxyCookieDomain covers the rest.
+	// The fixture's cloudflareZone. TestOauth2ProxyCookieDomain covers the
+	// rest.
 	if got := get[string](t, values, "extraArgs", "cookie-domain"); got != ".example.test" {
 		t.Errorf("cookie-domain = %q, want .example.test", got)
 	}
@@ -222,14 +216,11 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	if got := get[string](t, values, "extraArgs", "redirect-url"); got != "https://auth.app.example.test/oauth2/callback" {
 		t.Errorf("redirect-url = %q", got)
 	}
-	// The session cookie carries no OAuth tokens, only who signed in and
-	// their groups, so it stays small enough for an nginx Static site's
-	// 8 KB header limit (#96).
+	// Keeps the cookie under an nginx Static site's 8 KB header limit.
 	if got := get[string](t, values, "extraArgs", "session-cookie-minimal"); got != "true" {
 		t.Errorf("session-cookie-minimal = %q, want true", got)
 	}
-	// An unauthenticated browser goes straight to Entra ID, never to
-	// oauth2-proxy's own sign-in page (docs/implementation-notes/77-login-redirect.md).
+	// An unauthenticated browser goes straight to Entra ID.
 	if got := get[string](t, values, "extraArgs", "skip-provider-button"); got != "true" {
 		t.Errorf("skip-provider-button = %q, want true", got)
 	}
@@ -246,12 +237,8 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 	}
 }
 
-// The login cookie and the redirect allowlist cover cloudflareZone, or
-// baseDomain on a Platform without one; the callback stays on
-// auth.<baseDomain> either way, so the Entra app registration never
-// changes. The cookie is not oauth2-proxy's default name, so a browser
-// still holding the old .<baseDomain> cookie never sends two of the same
-// name (docs/implementation-notes/76-login-in-zone-domains.md).
+// The callback stays on auth.<baseDomain> whatever the cookie domain, so the
+// Entra app registration never changes.
 func TestOauth2ProxyCookieDomain(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -289,9 +276,9 @@ func TestOauth2ProxyCookieDomain(t *testing.T) {
 	}
 }
 
-// The Itema login middleware: ForwardAuth checks oauth2-proxy's root
-// address, whose answer to an unauthenticated browser is its own redirect
-// to Entra ID, not /oauth2/auth's bare 401.
+// ForwardAuth checks oauth2-proxy's root address, whose answer to an
+// unauthenticated browser is a redirect to Entra ID, not /oauth2/auth's bare
+// 401.
 func TestLoginMiddlewares(t *testing.T) {
 	data, err := os.ReadFile("components/oauth2-proxy-login/middleware.yaml")
 	if err != nil {
@@ -317,9 +304,6 @@ func TestLoginMiddlewares(t *testing.T) {
 	}
 }
 
-// The Deploy gate's Application follows the bootstrap pin like platform-tls
-// and hands the component the Platform's values, including the org id it
-// pins and the bootstrap revision its image tag comes from.
 func TestDeployGateFollowsTheBootstrapAndThePlatformValues(t *testing.T) {
 	apps := renderApplications(t, "--values", "values.yaml", "--set", "baseDomain=app.example.test", "--set", "cloudflareZone=example.test",
 		"--set", "bootstrap.repoURL=https://example.test/iidp.git",
@@ -334,7 +318,8 @@ func TestDeployGateFollowsTheBootstrapAndThePlatformValues(t *testing.T) {
 			t.Errorf("deploy-gate source %s = %q, want %q", path, got, want)
 		}
 	}
-	// In argocd, next to the Secret holding the App's key.
+	// In argocd, where cloud-init writes the Secret holding the GitHub App's
+	// key, which the gate mounts.
 	if got := get[string](t, gate, "spec", "destination", "namespace"); got != "argocd" {
 		t.Errorf("deploy-gate namespace = %q, want argocd", got)
 	}
@@ -362,8 +347,6 @@ func TestDeployGateFollowsTheBootstrapAndThePlatformValues(t *testing.T) {
 	}
 }
 
-// The kind fixture's platform.yaml swaps GitHub for the harness's
-// stand-ins; those overrides must reach the component.
 func TestDeployGateTakesTheFixturesStandIns(t *testing.T) {
 	values := get[object](t, renderApplications(t, "--values", fixture)["deploy-gate"], "spec", "source", "helm", "valuesObject")
 	if got := get[string](t, values, "oidc", "issuer"); !strings.Contains(got, "iidp-e2e.svc.cluster.local") {
@@ -383,8 +366,6 @@ func TestDeployGateComponentRendersTheGate(t *testing.T) {
 		t.Fatalf("no Deployment/iidp-deploy-gate in %v", keys(objects))
 	}
 	pod := get[object](t, deployment, "spec", "template", "spec")
-	// The token is for iidp app status's reads, which
-	// TestDeployGateReadsTheClusterWithListOnly bounds.
 	if got := get[string](t, pod, "serviceAccountName"); got != "iidp-deploy-gate" {
 		t.Errorf("serviceAccountName = %q, want the gate's own read-only service account", got)
 	}
@@ -474,13 +455,8 @@ func TestDeployGateComponentRendersTheGate(t *testing.T) {
 	}
 }
 
-// The gate's service account reads for iidp app status and nothing else:
-// no verb beyond get, list and watch (in fact only list), only the five
-// kinds status reads, the ArgoCD Applications only in the gate's own
-// namespace, and bound to no one but the gate
-// (docs/implementation-notes/94-app-status.md). Its two writes, the ArgoCD
-// refresh and the Deploy Events, are Roles of their own
-// (TestDeployGateOnlyWritesTheRefreshAndEventsInArgoCD).
+// Only the five kinds iidp app status reads, the ArgoCD Applications only in
+// the gate's own namespace, and bound to no one but the gate.
 func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
 	objects := parseObjects(t, helmTemplate(t, "components/deploy-gate",
 		"--namespace", "argocd", "--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
@@ -556,13 +532,8 @@ func TestDeployGateReadsTheClusterWithListOnly(t *testing.T) {
 	}
 }
 
-// The gate's two writes in the cluster, and nothing else beyond list: the
-// refresh it asks ArgoCD for after a Deploy or Promote commit (patch on
-// ArgoCD Applications, docs/implementation-notes/114-argocd-refresh.md),
-// and an Event for each Deploy or Promote it accepts or refuses (create on
-// events.k8s.io events, docs/implementation-notes/117-deploy-events.md).
-// Each is a Role of its own in the gate's namespace, argocd, bound to the
-// gate's service account alone.
+// Patch on ArgoCD Applications and create on events.k8s.io events, each a
+// Role of its own in argocd bound to the gate alone.
 func TestDeployGateOnlyWritesTheRefreshAndEventsInArgoCD(t *testing.T) {
 	objects := parseObjects(t, helmTemplate(t, "components/deploy-gate",
 		"--namespace", "argocd", "--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
@@ -648,9 +619,6 @@ func TestDeployGateImageTagCanBePinnedButNotGuessed(t *testing.T) {
 	}
 }
 
-// Argus is on by default, follows the bootstrap pin like the gate, and
-// runs in a namespace of its own. argus.enabled: false renders nothing of
-// it: no Application, so no Deployment, RBAC, Ingress or DNS record.
 func TestArgusIsOnByDefaultAndOffRendersNothing(t *testing.T) {
 	args := []string{"--values", "values.yaml", "--set", "baseDomain=app.example.test", "--set", "cloudflareZone=example.test",
 		"--set", "bootstrap.repoURL=https://example.test/iidp.git", "--set", "bootstrap.targetRevision=v9.9.9"}
@@ -675,7 +643,6 @@ func TestArgusIsOnByDefaultAndOffRendersNothing(t *testing.T) {
 		get[string](t, values, "image", "repository") != "ghcr.io/itema-as/iidp-argus" {
 		t.Errorf("argus values = %v", values)
 	}
-	// Where the detail card links out to, from platform.yaml's own fields.
 	links := get[object](t, values, "links")
 	if fmt.Sprint(links) != "map[argocdURL:https://argocd.app.itma.no bootstrapRepository:https://example.test/iidp.git grafanaURL: platformRepository:https://github.com/Itema-as/iidp-platform.git]" {
 		t.Errorf("argus links = %v", links)
@@ -720,8 +687,6 @@ func TestArgusComponentRendersArgus(t *testing.T) {
 	if got := container["image"]; got != "ghcr.io/itema-as/iidp-argus:1.2.3" {
 		t.Errorf("image = %v, want the bootstrap release's version", got)
 	}
-	// The resource figures of #101: 48 Mi requested, a 96 Mi limit, 10m of
-	// CPU and no CPU limit; and the Go runtime aiming at the request.
 	resources := get[object](t, container, "resources")
 	if got := fmt.Sprint(resources); got != "map[limits:map[memory:96Mi] requests:map[cpu:10m memory:48Mi]]" {
 		t.Errorf("resources = %s, want requests cpu 10m and memory 48Mi, a memory limit of 96Mi and no CPU limit", got)
@@ -747,9 +712,7 @@ func TestArgusComponentRendersArgus(t *testing.T) {
 		t.Errorf("container securityContext = %v", container["securityContext"])
 	}
 
-	// argus.<baseDomain>, behind the Itema login middleware the bootstrap
-	// installs (components/oauth2-proxy-login/middleware.yaml), which
-	// Traefik names <namespace>-<name>@kubernetescrd.
+	// Traefik names the middleware <namespace>-<name>@kubernetescrd.
 	ingress := objects["Ingress/iidp-argus"]
 	rule := get[[]any](t, ingress, "spec", "rules")[0].(object)
 	if got := get[string](t, rule, "host"); got != "argus.app.example.test" {
@@ -769,9 +732,8 @@ func TestArgusComponentRendersArgus(t *testing.T) {
 	}
 }
 
-// Argus reads with get, list and watch only, on exactly the kinds it
-// watches, and nothing else: no Secrets, ConfigMaps, pods/log or
-// non-resource URLs, no narrowing by name, and bound to no one but Argus.
+// Exactly the kinds Argus watches, no narrowing by name, and bound to no one
+// but Argus.
 func TestArgusReadsTheClusterWithGetListWatchOnly(t *testing.T) {
 	objects := parseObjects(t, helmTemplate(t, "components/argus", "--namespace", "argus",
 		"--set", "baseDomain=app.example.test", "--set", "bootstrapRevision=v1.2.3"))
@@ -876,8 +838,7 @@ func TestTLSComponentRendersTheWildcardIntoTraefiksNamespace(t *testing.T) {
 	if _, ok := objects["ClusterIssuer/letsencrypt"]; !ok {
 		t.Errorf("no ClusterIssuer/letsencrypt in %v", keys(objects))
 	}
-	// The application chart's platform.httpIssuer default; a custom domain
-	// off Cloudflare gets its certificate through it.
+	// The application chart's platform.httpIssuer default.
 	http01, ok := objects["ClusterIssuer/letsencrypt-http01"]
 	if !ok {
 		t.Fatalf("no ClusterIssuer/letsencrypt-http01 in %v", keys(objects))
@@ -886,8 +847,7 @@ func TestTLSComponentRendersTheWildcardIntoTraefiksNamespace(t *testing.T) {
 	if got := get[string](t, solver, "ingressClassName"); got != "traefik" {
 		t.Errorf("letsencrypt-http01 solver ingressClassName = %q, want traefik", got)
 	}
-	// The solver's Service is created in the Application's namespace, where
-	// the guardrails refuse NodePort, cert-manager's default.
+	// The guardrails refuse NodePort, cert-manager's default.
 	if got := get[string](t, solver, "serviceType"); got != "ClusterIP" {
 		t.Errorf("letsencrypt-http01 solver serviceType = %q, want ClusterIP", got)
 	}
@@ -900,8 +860,7 @@ func TestTLSComponentRendersTheWildcardIntoTraefiksNamespace(t *testing.T) {
 	}
 }
 
-// renderApplications renders the bootstrap and returns its Applications by
-// name.
+// renderApplications returns the bootstrap's Applications by name.
 func renderApplications(t *testing.T, args ...string) map[string]object {
 	t.Helper()
 	apps := map[string]object{}
@@ -971,8 +930,7 @@ func readYAML(t *testing.T, path string) object {
 	return obj
 }
 
-// get walks nested maps and returns the leaf as T, failing when the path
-// is missing or has another type.
+// get walks nested maps and returns the leaf as T.
 func get[T any](t *testing.T, obj object, path ...string) T {
 	t.Helper()
 	var current any = obj
@@ -1003,8 +961,8 @@ func keys(objects map[string]object) []string {
 	return out
 }
 
-// requireHelm skips when helm is missing, like the application chart's
-// tests; CI sets IIDP_REQUIRE_CHART_TOOLS so that a missing helm fails.
+// requireHelm skips when helm is missing, unless IIDP_REQUIRE_CHART_TOOLS
+// is set.
 func requireHelm(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {
@@ -1015,10 +973,8 @@ func requireHelm(t *testing.T) {
 	}
 }
 
-// TestVersionsAgreeWithCloudInit keeps the places that must name the same
-// ArgoCD chart, Helm release and k3s release in step: cloud-init installs
-// from infra/platform/variables.tf, the harness and this chart from
-// versions.yaml.
+// TestVersionsAgreeWithCloudInit checks that infra/platform/variables.tf,
+// which cloud-init installs from, names the same versions as versions.yaml.
 func TestVersionsAgreeWithCloudInit(t *testing.T) {
 	versions := readYAML(t, "versions.yaml")
 	variables, err := os.ReadFile("../infra/platform/variables.tf")

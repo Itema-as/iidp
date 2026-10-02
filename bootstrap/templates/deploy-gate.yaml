@@ -1,14 +1,7 @@
-# The Deploy gate: the one way an Application repository's CI deploys and
-# promotes (docs/adr/0005-private-application-repositories-on-github-free.md).
-# Rendered from bootstrap/components/deploy-gate in this repository at the
-# same revision as this chart, served at https://deploy.<baseDomain>. It
-# runs in the argocd namespace because that is where the iidp-deploy App's
-# key already is: the Secret platform-repo-github-app cloud-init writes for
-# ArgoCD, which the gate mounts
-# (docs/implementation-notes/60-deploy-gate.md). It also mounts
-# ghcr-pull-token, the GHCR pull token cloud-init writes next to it, to
-# check that an image tag exists
-# (docs/implementation-notes/61-image-check.md).
+# The Deploy gate, through which an Application repository's CI deploys and
+# promotes. It runs in the argocd namespace because it mounts two Secrets
+# cloud-init writes there: platform-repo-github-app (the iidp-deploy App's
+# key) and ghcr-pull-token (to check that an image tag exists).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

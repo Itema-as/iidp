@@ -1,11 +1,5 @@
 {{- if .Values.argus.enabled }}
-# Argus, the live view of the Platform (cmd/iidp-argus), served at
-# https://argus.<baseDomain> behind Itema login. Rendered from
-# bootstrap/components/argus in this repository at the same revision as
-# this chart, into a namespace of its own. With argus.enabled false nothing
-# is rendered: no Deployment, RBAC, Ingress, or the DNS record external-dns
-# would make from the Ingress
-# (docs/implementation-notes/118-argus-backend.md).
+# Argus, the live view of the Platform, behind Itema login.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

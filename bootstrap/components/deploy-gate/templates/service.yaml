@@ -13,9 +13,8 @@ spec:
       targetPort: http
       protocol: TCP
 ---
-# https://deploy.<baseDomain>: TLS with no secret of its own, so Traefik
-# serves the default store's wildcard certificate (platform-tls), the same
-# way ArgoCD's and the Itema login's Ingresses do.
+# TLS with no secret of its own: Traefik serves the default store's wildcard
+# certificate.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

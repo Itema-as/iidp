@@ -85,12 +85,10 @@ resource "hcloud_server" "node" {
     platform = "iidp"
   }
 
-  # A changed user_data would replace the server, and replacing the server
-  # destroys every local volume (each Application's Postgres data lives on
-  # this disk) and the age key. Version bumps are therefore applied in place
-  # by re-running iidp-bootstrap on the node (see infra/README.md); the
-  # variables stay the record of what should be running. A deliberate
-  # rebuild is `tofu apply -replace=hcloud_server.node`.
+  # A changed user_data would replace the server, destroying every local
+  # volume (each Application's Postgres data) and the age key. Version bumps
+  # are applied in place by re-running iidp-bootstrap on the node (see
+  # infra/README.md).
   lifecycle {
     ignore_changes = [user_data]
   }

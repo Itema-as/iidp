@@ -1,12 +1,5 @@
-# The guardrails on Application namespaces: four ValidatingAdmissionPolicies
-# and their bindings (image origin, container limits, Service types,
-# Ingress hosts), evaluated by the API server itself, so nothing runs on the
-# node for them. Rendered from bootstrap/components/guardrails in this
-# repository at the same revision as this chart. The objects are
-# cluster-scoped; the destination namespace only satisfies ArgoCD. The
-# other half of the guardrails, Pod Security, is the namespace labels every
-# Environment's ArgoCD Application carries (docs/platform-repository.md).
-# See README.md, "Guardrails".
+# The ValidatingAdmissionPolicies guarding Application namespaces. They are
+# cluster-scoped; the destination namespace only satisfies ArgoCD.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

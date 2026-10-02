@@ -1,8 +1,6 @@
 {{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
-# external-dns: A records for every Ingress host in the Cloudflare zone,
-# pointing at the address Traefik publishes (the node's public IP). sync
-# policy with TXT ownership means it creates, updates and deletes only
-# records it created itself; existing records in the zone are never touched.
+# The sync policy with TXT ownership creates, updates and deletes only records
+# external-dns created itself; other records in the zone are never touched.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

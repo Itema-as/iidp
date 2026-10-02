@@ -1,34 +1,22 @@
 #!/usr/bin/env bash
 #
 # Bootstrap wizard for the Platform admin. Walks a human through the
-# one-time human steps of setting up the iidp Platform (Hetzner, Cloudflare,
-# Grafana Cloud, a GitHub App, the node's GHCR pull token, two Entra app
-# registrations), then runs OpenTofu and writes the Platform repository's
-# bootstrap files.
-#
-# Run from a clone of this repository, with the Platform repository cloned
-# somewhere else (default ../iidp-platform, override with --platform-repo).
-# See infra/README.md ("Bootstrap wizard") for the human-facing walkthrough
-# and docs/implementation-notes/05-bootstrap-wizard.md for why this script
-# is shaped the way it is.
+# one-time steps of setting up the iidp Platform, then runs OpenTofu and
+# writes the Platform repository's bootstrap files. See infra/README.md
+# ("Bootstrap wizard").
 #
 # Every step is idempotent: it detects a result that already exists (a
 # tfvars value, a platform.yaml field, an encrypted secret), shows it
 # (masked when secret) and offers to keep it instead of asking again.
 #
-# --dry-run prints every step and every command this script would run,
-# touching no network, no disk outside itself and no terminal device, and
-# is this script's smoke test.
+# --dry-run prints every step and command without touching the network, the
+# disk or the terminal.
 #
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Bash version. macOS ships bash 3.2, which has neither namerefs (used by
-# the Entra helper to hand three values back to its caller) nor reliable
-# associative-array support. Rather than write the whole wizard against
-# bash 3.2, this requires bash >= 4.3 and says so plainly: install one with
-# `brew install bash` on macOS (it will not replace /bin/bash) and invoke
-# this script with it explicitly if it is not first on PATH.
+# Bash version. macOS ships bash 3.2, which has no namerefs, so this
+# requires bash >= 4.3.
 # ---------------------------------------------------------------------------
 _bash_too_old=0
 if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
@@ -77,11 +65,9 @@ stage() {
   printf '\n%s%s▸ Stage %s/%s · %s%s\n' "$BOLD" "$BLUE" "$_STAGE_INDEX" "$TOTAL_STAGES" "$1" "$RESET" >&2
 }
 
-# All human-facing output below goes to stderr, on purpose: several of these
-# functions (latest_release_tag, wait_for_age_key, tfvar_get, ...) are called
-# inside command substitutions for their actual return value, and anything
-# they print to stdout would otherwise be captured into that value along
-# with it. Only genuine return values are ever written to stdout.
+# All human-facing output goes to stderr: several functions are called inside
+# command substitutions for their return value, which anything printed to
+# stdout would end up in.
 say()  { printf '  %s\n' "$1" >&2; }
 step() { printf '  %s•%s %s\n' "$BLUE" "$RESET" "$1" >&2; }
 note() { printf '  %s%s%s\n' "$DIM" "$1" "$RESET" >&2; }
@@ -133,9 +119,7 @@ IIDP_WIZARD_FAKE="${IIDP_WIZARD_FAKE:-0}"
 # Repository root of this iidp clone, from the script's own location, so it
 # works regardless of the caller's working directory.
 IIDP_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Where infra/platform/terraform.tfvars lives: a plain global like
-# PLATFORM_REPO, above, so test/wizard/run.sh can point it at a scratch
-# directory instead of this clone's own infra/platform.
+# A plain global so test/wizard/run.sh can point it at a scratch directory.
 INFRA_PLATFORM_DIR="$IIDP_REPO_ROOT/infra/platform"
 
 echo "[iidp-wizard] running under bash ${BASH_VERSION}" >&2
@@ -288,13 +272,8 @@ tfvar_set() { # tfvar_set FILE KEY VALUE
 }
 
 # tfvar_get_multiline / tfvar_set_multiline: the same upsert as tfvar_get/
-# tfvar_set, but for a value that cannot be a single quoted line -- the
-# GitHub App private key PEM, in particular. Written as an HCL heredoc
-# (`key = <<IIDP_KEY_EOT ... IIDP_KEY_EOT`), valid in a .tfvars file the
-# same as in a .tf file. terraform.tfvars is already git-ignored (see
-# infra/platform/.gitignore and the repository root's), so the heredoc
-# form keeps the key out of git the same way the rest of the file already
-# is, with no second file to lose track of.
+# tfvar_set, for a value that cannot be a single quoted line (the GitHub App
+# private key PEM). Written as an HCL heredoc, valid in a .tfvars file.
 
 tfvar_get_multiline() { # tfvar_get_multiline FILE KEY
   local file="$1" key="$2"
@@ -323,10 +302,7 @@ tfvar_set_multiline() { # tfvar_set_multiline FILE KEY VALUE
   touch "$file"
   marker="IIDP_$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')_EOT"
   tmp=$(mktemp "${TMPDIR:-/tmp}/iidp-wizard.XXXXXX")
-  # Drops any previous value for this key, whether it was a plain
-  # "key = ..." line (tfvar_set) or an earlier heredoc block of its own
-  # (tfvar_set_multiline), so re-running either helper for the same key is
-  # a clean upsert either way.
+  # Drops any previous value for this key, a plain line or a heredoc block.
   awk -v key="$key" -v marker="$marker" '
     BEGIN { skipping = 0 }
     skipping { if ($0 == marker) { skipping = 0 }; next }
@@ -471,8 +447,8 @@ _fake_http() {
       ;;
     https://*.grafana.net*)
       # Like the real Grafana Cloud gateway, the path is checked before the
-      # credentials: a bare host answers 405 (what Alloy got), any other
-      # wrong path 404. Instance ids are numbers; the token must match.
+      # credentials: a bare host answers 405, any other wrong path 404.
+      # Instance ids are numbers; the token must match.
       local rest="${url#*://}" path="/" creds=""
       [[ "$rest" == */* ]] && path="/${rest#*/}"
       case "$path" in
@@ -717,10 +693,7 @@ az_available() {
 
 # az_create_entra_app NAME REDIRECT_URI OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET [GROUP_CLAIMS]
 # Uses namerefs (bash >= 4.3) to hand three values back to the caller.
-# GROUP_CLAIMS, when given, is the registration's groupMembershipClaims
-# (SecurityGroup for oauth2-proxy: its ID tokens then carry the groups
-# claim that sign-in groups are checked against,
-# docs/implementation-notes/92-sign-in-groups.md).
+# GROUP_CLAIMS, when given, is the registration's groupMembershipClaims.
 az_create_entra_app() {
   local name="$1" redirect_uri="$2" group_claims="${6:-}"
   # shellcheck disable=SC2034  # namerefs: written here, read through the caller's own variable names
@@ -868,14 +841,9 @@ PLATFORM_TFVARS="$IIDP_REPO_ROOT/infra/platform/terraform.tfvars"
 HCLOUD_TOKEN="" OBJECT_STORAGE_ACCESS_KEY="" OBJECT_STORAGE_SECRET_KEY="" SSH_PUBLIC_KEY_PATH=""
 HETZNER_TOKEN=""
 OBJECT_STORAGE_LOCATION="" OBJECT_STORAGE_ENDPOINT=""
-# Whether stage_hetzner collected different Object Storage keys than what
-# was already in STATE_TFVARS this run: write_backups_credentials uses this
-# to decide whether bootstrap/templates/backups-credentials.enc.yaml needs
-# re-encrypting, the same "kept means untouched" idempotency the four
-# bootstrap/sops secrets already follow -- there is no way to regenerate
-# and diff a document whose plaintext the wizard cannot read back
-# (docs/implementation-notes/05-bootstrap-wizard.md, "Idempotency: whole-file
-# rewrite, not patching").
+# Whether stage_hetzner collected different Object Storage keys this run, so
+# write_backups_credentials knows to re-encrypt. The wizard cannot read an
+# encrypted secret back to compare it.
 OBJECT_STORAGE_KEYS_CHANGED=0
 
 stage_hetzner() {
@@ -918,14 +886,8 @@ stage_hetzner() {
     OBJECT_STORAGE_KEYS_CHANGED=1
   fi
 
-  # infra/state-bucket's own location variable (default hel1) is where the
-  # buckets, including backupsBucket, actually live; the S3 endpoint every
-  # Environment's ObjectStore needs is a fixed shape of that same location
-  # (infra/state-bucket/terraform.tfvars.example, infra/README.md), so it is
-  # derived here rather than asked for outright -- with a prompt to
-  # override it, since a Platform admin who already knows the endpoint
-  # differs (a non-default Hetzner region naming scheme, say) must still be
-  # able to say so.
+  # The S3 endpoint is derived from the buckets' location, with a prompt to
+  # override it.
   local existing_location
   existing_location=$(tfvar_get "$STATE_TFVARS" location || echo hel1)
   ask OBJECT_STORAGE_LOCATION "Hetzner Object Storage location (fsn1, nbg1 or hel1):" "$existing_location"
@@ -1033,8 +995,8 @@ stage_grafana() {
   GRAFANA_LOKI_URL=$(grafana_push_url loki "$given")
   [[ "$GRAFANA_LOKI_URL" != "$given" ]] && log_choice "Loki push URL: $GRAFANA_LOKI_URL"
 
-  # Encrypted, these can only be replaced by re-running the whole wizard
-  # (the age private key lives only in the cluster), so prove them first.
+  # Once encrypted these cannot be read back to find a mistake (the age
+  # private key lives only in the cluster), so prove them first.
   verify_grafana_push prometheus "$GRAFANA_PROM_URL" "$GRAFANA_PROM_USER" "$GRAFANA_ACCESS_TOKEN"
   verify_grafana_push loki "$GRAFANA_LOKI_URL" "$GRAFANA_LOKI_USER" "$GRAFANA_ACCESS_TOKEN"
 }
@@ -1138,7 +1100,7 @@ tfvars_write_github_app() {
     pem_content="$(cat "$pem_path")"
   fi
   tfvar_set_multiline "$file" platform_repo_github_app_private_key "$pem_content"
-  log_choice "ArgoCD reads the Platform repository with the same App's credential (infra/README.md, docs/implementation-notes/41-argocd-platform-repo-credential.md)"
+  log_choice "ArgoCD reads the Platform repository with the same App's credential (infra/README.md)"
 }
 
 stage_github_app() {
@@ -1159,7 +1121,7 @@ stage_github_app() {
     fi
 
     say "ArgoCD also needs this App's private key, to read the Platform repository."
-    say "(No PEM found in $tfvars -- either this is its first run since #41, or the key was never saved there.)"
+    say "(No PEM found in $tfvars: the key was never saved there.)"
     ask_path PEM_PATH "Path to the App's downloaded private key .pem file:"
     require_pem_file PEM_PATH
     tfvars_write_github_app "$tfvars" "$GITHUB_APP_ID" "$GITHUB_APP_INSTALLATION_ID" "$PEM_PATH"
@@ -1172,8 +1134,7 @@ stage_github_app() {
   ask GITHUB_ORG "GitHub org to create the App under:" "$GITHUB_ORG"
 
   # Created by hand from printed steps: the REST API cannot create a GitHub
-  # App, and the manifest flow only works as a browser form POST, which the
-  # wizard no longer opens (docs/implementation-notes/47-wizard-prompts.md).
+  # App, and the manifest flow only works as a browser form POST.
   local platform_repo_url platform_repo_name
   platform_repo_url=$(strip_git_suffix "$(normalize_git_url "$origin")")
   platform_repo_name=$(github_owner_of "$origin"); platform_repo_name="${platform_repo_name#*/}"
@@ -1189,11 +1150,9 @@ stage_github_app() {
   ask GITHUB_APP_ID "App ID shown on the settings page:"
   step "On the same page, Private keys > Generate a private key. The .pem file downloads."
   ask_path PEM_PATH "Path to the downloaded private key .pem file:"
-  # All repositories, not the Platform repository alone: ArgoCD's Pull
-  # Request generator lists the pull requests of every Application
-  # repository with this App for Preview Environments, and the CLI creates
-  # Application repositories later that an installation on selected
-  # repositories would not include (docs/implementation-notes/95-preview-environments.md).
+  # All repositories: ArgoCD's Pull Request generator reads every Application
+  # repository with this App, and an installation on selected repositories
+  # would miss the ones the CLI creates later.
   step "Install it on every repository of ${GITHUB_ORG}, from Install App in the App's left sidebar:"
   print_url "https://github.com/organizations/${GITHUB_ORG}/settings/apps/iidp-deploy/installations"
   step "Install next to ${GITHUB_ORG} > All repositories > Install. ArgoCD and the Deploy gate use it on ${platform_repo_name}, and ArgoCD reads the pull requests of every Application repository with it, for Preview Environments."
@@ -1203,8 +1162,7 @@ stage_github_app() {
   require_pem_file PEM_PATH
 
   # The key goes to the node only, never to an org Actions secret: the
-  # Deploy gate and ArgoCD both read it from the Secret cloud-init writes
-  # (docs/implementation-notes/60-deploy-gate.md).
+  # Deploy gate and ArgoCD both read it from the Secret cloud-init writes.
   tfvars_write_github_app "$tfvars" "$GITHUB_APP_ID" "$GITHUB_APP_INSTALLATION_ID" "$PEM_PATH"
 }
 
@@ -1216,13 +1174,9 @@ GHCR_PULL_TOKEN="" GHCR_PULL_USERNAME=""
 
 # verify_ghcr_pull_token TOKEN -- dies unless TOKEN is a classic personal
 # access token that GitHub accepts and that has read:packages, and sets
-# GHCR_PULL_USERNAME to its owner's login (ghcr.io's basic-auth username).
-# ghcr.io takes only a classic token for pulls from outside Actions. A
-# classic token reports its scopes in the X-OAuth-Scopes header of any
-# authenticated API response; fine-grained and GitHub App tokens get no
-# such header. GET /user answers with both the scopes and the login, and
-# changes nothing. Scopes beyond read:packages are warned about, since the
-# token sits in plaintext on the node.
+# GHCR_PULL_USERNAME to its owner's login. Only a classic token reports its
+# scopes in X-OAuth-Scopes, and ghcr.io takes only a classic token for pulls
+# from outside Actions.
 verify_ghcr_pull_token() {
   local token="$1" scopes scope has_read=0
   local -a extra=() _scopes=()
@@ -1269,7 +1223,7 @@ verify_ghcr_pull_token() {
 stage_ghcr() {
   stage "GHCR pull token"
   local tfvars="$INFRA_PLATFORM_DIR/terraform.tfvars" existing
-  say "Applications' images are private in GHCR (ADR-0005). The node pulls them with one"
+  say "Applications' images are private in GHCR. The node pulls them with one"
   say "classic personal access token that can only read packages; ghcr.io refuses GitHub App"
   say "and fine-grained tokens for pulls. OpenTofu hands it to cloud-init, which writes it into"
   say "k3s's registries.yaml before k3s first starts."
@@ -1279,7 +1233,7 @@ stage_ghcr() {
     GHCR_PULL_TOKEN="$existing"
     note "keeping the existing token; checking GitHub still accepts it"
   else
-    say "Signed in to GitHub as yourself (the Platform admin; #56 moves this to a machine user),"
+    say "Signed in to GitHub as yourself (the Platform admin),"
     say "create a classic token:"
     print_url "https://github.com/settings/tokens/new?scopes=read:packages&description=iidp%20node%20GHCR%20pull"
     step "That is Settings > Developer settings > Personal access tokens > Tokens (classic) > Generate new token (classic)."
@@ -1307,12 +1261,10 @@ ARGOCD_URL="" ARGOCD_ADMIN_GROUP=""
 OAUTH2_PROXY_HOST=""
 
 # entra_register_app NAME REDIRECT_URI DEFAULT_TENANT OUT_TENANT OUT_CLIENT_ID OUT_CLIENT_SECRET [GROUP_CLAIMS]
-# Creates the app registration via az_create_entra_app when az is available
-# and logged in, otherwise prints what to create by hand and asks for the
-# three resulting values, refusing them unless Entra issues a token for
-# them (an encrypted secret can't be fixed later). OUT_* are namerefs (bash >= 4.3), same convention
-# as az_create_entra_app itself, which this wraps. GROUP_CLAIMS is passed on
-# to it: the registration's groupMembershipClaims, when it needs one.
+# Creates the app registration with az when it is available and logged in,
+# otherwise prints what to create by hand and asks for the three values,
+# refusing them unless Entra issues a token for them (an encrypted secret
+# can't be fixed later). OUT_* are namerefs.
 entra_register_app() {
   local name="$1" redirect_uri="$2" default_tenant="$3" group_claims="${7:-}"
   # shellcheck disable=SC2034  # namerefs: written here, read through the caller's own variable names
@@ -1337,8 +1289,8 @@ entra_register_app() {
     ask reg_client_id "Client id:"
     step "Certificates & secrets lists each secret's Value and its Secret ID: copy the Value (shown only right after creating it)."
     ask_secret reg_client_secret "Client secret (the Value):"
-    # The Secret ID is a GUID; a secret Value never is. Pasting the ID is
-    # what broke ArgoCD's first real Entra login (AADSTS7000215).
+    # The Secret ID is a GUID; a secret Value never is. Entra refuses an ID
+    # pasted as the secret with AADSTS7000215.
     if is_guid "$reg_client_secret"; then
       die "that's the Secret ID; paste the Value. The Value is shown only right after creating the secret: if it's hidden now, create a new secret. Nothing has been encrypted."
     fi
@@ -1381,23 +1333,16 @@ stage_entra() {
     return 0
   fi
 
-  # SecurityGroup: the groups claim in its ID tokens is what sign-in
-  # groups (login.groups, allowed_groups) are checked against; without it
-  # a group-restricted Application refuses everyone
-  # (docs/implementation-notes/92-sign-in-groups.md).
+  # SecurityGroup: the groups claim in its ID tokens is what sign-in groups
+  # are checked against; without it a group-restricted Application refuses
+  # everyone.
   say "oauth2-proxy (Itema login) needs its own registration."
   entra_register_app "iidp-oauth2-proxy" "$oauth2_proxy_redirect" "$ENTRA_ARGOCD_TENANT" \
     ENTRA_OAUTH2_PROXY_TENANT ENTRA_OAUTH2_PROXY_CLIENT_ID ENTRA_OAUTH2_PROXY_CLIENT_SECRET SecurityGroup
 
-  # The cookie-signing secret oauth2-proxy needs: exactly 32 bytes, as a
-  # plain string, not base64-encoded. Confirmed against the running proxy
-  # in kind: it rejects a 44-character base64 encoding of 32 random bytes
-  # with "cookie_secret must be 16, 24, or 32 bytes ... but is 44 bytes",
-  # so a value that only decodes to 32 bytes is not enough here -- the
-  # container reads the raw string given (an env var from a stringData
-  # Secret key is never base64-decoded again), so the string itself must
-  # be 32 characters. Generated fresh every time this registration is
-  # (re-)done, never asked for, never logged.
+  # oauth2-proxy's cookie-signing secret must itself be 32 characters: it
+  # reads the raw string from the environment and rejects a base64 encoding
+  # of 32 bytes ("cookie_secret must be 16, 24, or 32 bytes ... but is 44").
   if [[ "$DRY_RUN" == "1" ]]; then
     ENTRA_OAUTH2_PROXY_COOKIE_SECRET="dry-run-cookie-secret-32-bytes.."
   else
@@ -1617,10 +1562,8 @@ EOF
 }
 
 # write_bootstrap_applications writes the Application that discovers every
-# Environment: the CLI writes applications/<name>/<environment>/application.yaml,
-# and nothing else makes ArgoCD notice those, since the root Application only
-# syncs bootstrap/ (bootstrap/README.md, "applications.yaml"). The first real
-# Platform lacked it, and no Application it created ever appeared.
+# Environment the CLI writes under applications/; the root Application only
+# syncs bootstrap/.
 write_bootstrap_applications() {
   local file="$PLATFORM_REPO/bootstrap/applications.yaml"
   local platform_url="$1"
@@ -1700,12 +1643,10 @@ EOF
   ok "wrote $dir/kustomization.yaml and $dir/ksops.yaml"
 }
 
-# write_secret FILE NAME NAMESPACE EXTRA_LABEL_LINE STRINGDATA_LINES
-# NAMESPACE empty omits the namespace line entirely: a Secret meant to be
-# copied into more than one Environment's namespace (backups-credentials,
-# below) must carry none, so the encrypted document is valid wherever it is
-# copied -- the ArgoCD Application's own spec.destination.namespace applies
-# instead (docs/implementation-notes/42-backups-credentials.md).
+# write_secret_plaintext FILE NAME NAMESPACE EXTRA_LABEL_LINE STRINGDATA_LINES [EXTRA_ANNOTATION_LINES]
+# NAMESPACE empty omits the namespace line: a Secret copied into more than
+# one Environment's namespace (backups-credentials) must carry none, so the
+# encrypted document is valid wherever it is copied.
 write_secret_plaintext() {
   local file="$1" name="$2" namespace="$3" extra_labels="$4" stringdata="$5" extra_annotations="${6:-}"
   mkdir -p "$(dirname "$file")"
@@ -1732,16 +1673,9 @@ write_secret_plaintext() {
   } > "$file"
 }
 
-# write_backups_credentials writes and sops-encrypts
-# bootstrap/templates/backups-credentials.enc.yaml: a Secret named backups-credentials,
-# no namespace, stringData ACCESS_KEY_ID/ACCESS_SECRET_KEY from the Hetzner
-# stage's Object Storage keys -- the file iidp app create/add-capability
-# --postgres copies byte for byte into every Environment with Postgres
-# (docs/implementation-notes/42-backups-credentials.md). Idempotent: kept
-# untouched when the Object Storage keys were kept too (nothing in
-# stage_hetzner changed OBJECT_STORAGE_KEYS_CHANGED), the same as the other
-# bootstrap secrets that cannot be regenerated and diffed because the
-# wizard cannot read their plaintext back.
+# write_backups_credentials writes and sops-encrypts the backups-credentials
+# Secret the CLI copies byte for byte into every Environment with Postgres.
+# Kept untouched when the Object Storage keys were kept.
 write_backups_credentials() {
   local file="$PLATFORM_REPO/bootstrap/templates/backups-credentials.enc.yaml"
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -1752,12 +1686,9 @@ write_backups_credentials() {
     note "keeping existing bootstrap/templates/backups-credentials.enc.yaml (Object Storage keys unchanged)"
     return 0
   fi
-  # sync-wave -2, the same wave iidp secret set gives every Secret it
-  # writes (internal/render/secret.go): CloudNativePG's ScheduledBackup is
-  # immediate, so it takes a base backup the moment the Cluster is ready,
-  # and a Secret landing in the Cluster's own wave loses that race -- the
-  # first backup of every new Environment then fails permanently, since a
-  # failed Backup is never retried and the next one is a day away.
+  # sync-wave -2, before the Cluster: the ScheduledBackup takes its first
+  # backup the moment the Cluster is ready, and a failed Backup is never
+  # retried, so a Secret landing in the Cluster's own wave loses that race.
   write_secret_plaintext "$file" backups-credentials "" "" \
     "  ACCESS_KEY_ID: $(yaml_str "${OBJECT_STORAGE_ACCESS_KEY}")
   ACCESS_SECRET_KEY: $(yaml_str "${OBJECT_STORAGE_SECRET_KEY}")" \
@@ -1846,9 +1777,7 @@ git_commit_if_changed() { # git_commit_if_changed "message" PATH...
 
 # ask_platform_settings asks for the four settings write_platform_yaml
 # records, each defaulting to what platform.yaml already holds, so a re-run
-# that accepts every default writes them back unchanged. A re-run once
-# offered the built-in defaults instead, and pressing Enter at acme.email
-# silently replaced the admin's address with platform@<zone>.
+# that accepts every default writes them back unchanged.
 ask_platform_settings() {
   local platform_yaml="$PLATFORM_REPO/platform.yaml" current
   current=$(platform_yaml_get "$platform_yaml" acme.email || true)

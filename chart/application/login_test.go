@@ -14,14 +14,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The Itema login Capability: every Ingress of an Environment with
-// login.enabled gets the Traefik ForwardAuth middleware annotation for the
-// bootstrap's shared oauth2-proxy, the Platform address's and the HTTP-01
-// one's alike, and an Environment without it never carries it. A custom
-// domain outside platform.loginCookieDomain (baseDomain when empty) is
-// refused: the oauth2-proxy cookie would never reach it
-// (docs/implementation-notes/76-login-in-zone-domains.md).
-
 const loginMiddlewareAnnotation = "oauth2-proxy-itema-login-auth@kubernetescrd"
 
 func TestLoginAddsTheForwardAuthMiddlewareAnnotation(t *testing.T) {
@@ -33,9 +25,7 @@ func TestLoginAddsTheForwardAuthMiddlewareAnnotation(t *testing.T) {
 }
 
 // Custom domains inside the login cookie domain are protected on whichever
-// Ingress they land: the wildcard-covered one on the Platform Ingress, the
-// rest (x.itma.no, a deeper name under the base domain, the zone apex) on
-// the HTTP-01 one, which keeps its issuer annotation.
+// Ingress they land, and the HTTP-01 one keeps its issuer annotation.
 func TestLoginProtectsCustomDomainsInsideTheCookieDomain(t *testing.T) {
 	objects := render(t, "login-custom-domains.yaml")
 	for _, tc := range []struct {
@@ -60,9 +50,7 @@ func TestLoginProtectsCustomDomainsInsideTheCookieDomain(t *testing.T) {
 	}
 }
 
-// Without platform.loginCookieDomain the cookie domain is the base domain,
-// as it is on a Platform without a cloudflareZone: a host under it is
-// allowed, one only inside the zone is not.
+// Without platform.loginCookieDomain the cookie domain is the base domain.
 func TestLoginCookieDomainDefaultsToTheBaseDomain(t *testing.T) {
 	objects := render(t, "login-custom-domains.yaml", "--set", "platform.loginCookieDomain=", "--set", "domains={butikk.app.itma.no,test.shop.app.itma.no}")
 	for _, name := range []string{"Ingress/shop", "Ingress/shop-http01"} {
@@ -81,10 +69,8 @@ func TestLoginCookieDomainDefaultsToTheBaseDomain(t *testing.T) {
 	}
 }
 
-// Every middleware the annotation names is one the bootstrap defines in
-// the oauth2-proxy namespace. Traefik refuses a router whose middleware
-// does not exist, so a name out of step with the bootstrap would take the
-// Application off the air rather than leave it unprotected.
+// Traefik refuses a router whose middleware does not exist, so a name out of
+// step with the bootstrap would take the Application off the air.
 func TestLoginMiddlewaresExistInTheBootstrap(t *testing.T) {
 	data, err := os.ReadFile("../../bootstrap/components/oauth2-proxy-login/middleware.yaml")
 	if err != nil {
@@ -116,7 +102,6 @@ func TestLoginDisabledByDefaultLeavesNoMiddlewareAnnotation(t *testing.T) {
 	}
 }
 
-// The HTTP-01 Ingress carries the middleware only with login.enabled.
 func TestLoginDisabledLeavesTheHTTP01IngressWithoutMiddleware(t *testing.T) {
 	ing := mustObject(t, render(t, "custom-domains-mixed.yaml"), "Ingress/shop-staging-http01")
 	annotations := get[map[string]any](t, ing, "metadata", "annotations")
@@ -163,13 +148,6 @@ func TestLoginFixturesPassKubeconform(t *testing.T) {
 		})
 	}
 }
-
-// Sign-in groups (#92). Without any, login renders exactly what it did
-// before: no Middleware of the Environment's own, and the shared one named
-// on every Ingress. With groups, the Environment gets its own ForwardAuth
-// Middleware asking the same oauth2-proxy to check allowed_groups, and
-// every Ingress that carries login names it instead
-// (docs/implementation-notes/92-sign-in-groups.md).
 
 const (
 	signInGroupsNamespace  = "shop-staging"
@@ -220,8 +198,7 @@ func TestLoginGroupsRenderTheEnvironmentsOwnMiddleware(t *testing.T) {
 	if got := get[string](t, mw, "metadata", "annotations", "argocd.argoproj.io/sync-wave"); got != "-1" {
 		t.Errorf("sync-wave = %s, want -1, before the Ingresses that name it", got)
 	}
-	// Every Ingress that carries login names it: the Platform address's
-	// (with the wildcard-covered custom domain) and the HTTP-01 one.
+	// Every Ingress that carries login names it, the HTTP-01 one included.
 	for _, name := range []string{"Ingress/shop-staging", "Ingress/shop-staging-http01"} {
 		annotations := get[map[string]any](t, mustObject(t, objects, name), "metadata", "annotations")
 		if got := annotations["traefik.ingress.kubernetes.io/router.middlewares"]; got != signInGroupsAnnotation {
@@ -230,10 +207,8 @@ func TestLoginGroupsRenderTheEnvironmentsOwnMiddleware(t *testing.T) {
 	}
 }
 
-// The Environment's Middleware is the bootstrap's shared itema-login-auth
-// with allowed_groups added to its address, and nothing else changed: the
-// same oauth2-proxy root address, so an unauthenticated browser is still
-// redirected to Entra ID, and the same headers passed on.
+// The Environment's Middleware is the shared one with allowed_groups added
+// to its address and nothing else changed.
 func TestLoginGroupsMiddlewareIsTheSharedOneWithAllowedGroups(t *testing.T) {
 	data, err := os.ReadFile("../../bootstrap/components/oauth2-proxy-login/middleware.yaml")
 	if err != nil {
@@ -293,8 +268,7 @@ func TestLoginGroupsRefused(t *testing.T) {
 	}
 }
 
-// The Middleware is a Traefik CRD, so kubeconform needs its schema, from
-// the same catalogue the Postgres objects' come from.
+// The Middleware is a Traefik CRD, so kubeconform needs its schema.
 func TestLoginGroupsFixturePassesKubeconformWithTheCRDSchemas(t *testing.T) {
 	requireTool(t, "kubeconform")
 	version := kubernetesVersion(t)
@@ -309,7 +283,6 @@ func TestLoginGroupsFixturePassesKubeconformWithTheCRDSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kubeconform: %v\n%s", err, out)
 	}
-	// Six since #90 added the iidp-domains ConfigMap.
 	if !strings.Contains(string(out), "Valid: 6") {
 		t.Errorf("kubeconform did not validate all six objects, the Middleware included: %s", out)
 	}

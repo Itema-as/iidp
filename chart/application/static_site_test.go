@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// A Static site is built into an nginx image by CI and deployed through the
-// same chart as a Web service. nginx takes no PORT, so the chart fixes the
-// port and skips the injected variable; everything else renders exactly as
-// for a Web service. Every container runs as non-root (#110), so nginx is
-// the unprivileged one and listens on 8080.
+// A Static site is an unprivileged nginx image deployed through the same
+// chart as a Web service. nginx takes no PORT, so the chart fixes the port at
+// 8080 and skips the variable; everything else renders as for a Web service.
 
 func TestStaticSiteServesOnPort8080WithoutPORT(t *testing.T) {
 	objects := render(t, "static-site.yaml")

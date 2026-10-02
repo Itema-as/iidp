@@ -1,7 +1,6 @@
 {{/*
-validationActions, checked: only Deny, Warn and Audit, at least one, and
-never Deny with Warn, which the API server refuses as well
-(ValidatingAdmissionPolicyBinding.spec.validationActions).
+validationActions, checked here so a mistake fails rendering rather than
+the API server's admission of the binding.
 */}}
 {{- define "guardrails.validationActions" -}}
 {{- $actions := .Values.validationActions | default list -}}
@@ -20,8 +19,7 @@ never Deny with Warn, which the API server refuses as well
 {{- end -}}
 
 {{/*
-The binding of one policy: the same actions and the same Application
-namespaces for all four. Takes a list of the root context and the policy
+The binding of one policy. Takes a list of the root context and the policy
 name.
 */}}
 {{- define "guardrails.binding" -}}
@@ -36,10 +34,7 @@ metadata:
 spec:
   policyName: {{ $name }}
   validationActions: {{ include "guardrails.validationActions" $root }}
-  # Application namespaces only. The CLI labels every Environment's
-  # namespace through its ArgoCD Application; Platform namespaces
-  # (argocd, kube-system, cnpg-system, ...) carry no such label and are
-  # never checked.
+  # Application namespaces only; Platform namespaces are never checked.
   matchResources:
     namespaceSelector:
       matchExpressions:
@@ -50,7 +45,7 @@ spec:
 {{/*
 The allowed image list as a CEL list literal. Entries are checked to be
 plain image-reference characters, so nothing in them can break out of the
-string literal they are rendered into.
+string literal.
 */}}
 {{- define "guardrails.allowedImagesCEL" -}}
 {{- $entries := list -}}
@@ -68,10 +63,9 @@ string literal they are rendered into.
 {{- end -}}
 
 {{/*
-The Pod's containers and init containers, for the two policies about
-containers. Only Pods are matched: every container of every workload runs
-in one, so a Pod is where nothing escapes, and one resource kind keeps the
-expressions type-checked against one schema.
+Only Pods are matched for the container policies: every container of every
+workload runs in one, and one resource kind keeps the expressions
+type-checked against one schema.
 */}}
 {{- define "guardrails.podRules" -}}
 resourceRules:

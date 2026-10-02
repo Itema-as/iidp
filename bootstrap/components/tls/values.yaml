@@ -1,5 +1,5 @@
-# Set by the platform-tls Application in bootstrap/templates from the
-# Platform repository's platform.yaml; the defaults are placeholders.
+# Set by the platform-tls Application in the bootstrap; the defaults are
+# placeholders.
 
 # The wildcard certificate covers *.<baseDomain> and <baseDomain>.
 baseDomain: app.itma.no

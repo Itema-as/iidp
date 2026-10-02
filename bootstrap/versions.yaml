@@ -1,29 +1,16 @@
-# Every version the Platform bootstrap pins, in one place. The templates read
-# this file with .Files.Get; the kind harness (test/e2e) reads it to build a
-# cluster that matches the node. Sources were checked on 2026-09-21; see
-# docs/implementation-notes/04-bootstrap.md for why each version was chosen.
-#
-# Bumping a chart version here is a bootstrap release: the Platform
-# repository pins a revision of this directory (see README.md), so the change
-# reaches the Platform when that pin moves.
+# Every version the Platform bootstrap pins. The templates read this file,
+# and so does the kind harness (test/e2e) to build a cluster that matches the
+# node. A change reaches the Platform when its bootstrap pin moves.
 
 argocd:
-  # The argo-cd Helm chart. cloud-init installs ArgoCD by rendering this
-  # chart with helm template and applying the output server-side; the
-  # argocd bootstrap Application then manages it with the same chart and
-  # version, so the takeover only ever patches what is already running
-  # (docs/implementation-notes/04-bootstrap.md, "Installing from the chart,
-  # not the upstream manifests"). Must match argocd_chart_version in
-  # infra/platform/variables.tf; the harness renders exactly this.
+  # cloud-init installs ArgoCD from this chart and the argocd Application
+  # takes over with the same version. Must match argocd_chart_version in
+  # infra/platform/variables.tf.
   chart: 10.9.2
   repository: https://argoproj.github.io/argo-helm
 
-# The Helm release cloud-init downloads to render the argo-cd chart above
-# before ArgoCD exists to do anything (infra/platform/cloud-init/user-data
-# .yaml.tftpl); the kind harness instead uses whatever helm is already on
-# the machine's PATH. sha256 is the published checksum of the linux amd64
-# release tarball (https://get.helm.sh/helm-<version>-linux-amd64.tar.gz
-# .sha256sum), verified before install.
+# The Helm release cloud-init downloads to render the argo-cd chart above.
+# sha256 is the published checksum of the linux amd64 tarball.
 helm:
   version: v3.22.0
   sha256:
@@ -40,19 +27,13 @@ externalDNS:
 cloudnativePG:
   chart: 0.29.0
   repository: https://cloudnative-pg.github.io/charts
-  # The Barman Cloud plugin (CNPG-I) that ships base backups and WAL to
-  # Object Storage; the application chart's Postgres Capability relies on it.
+  # The Barman Cloud plugin that ships base backups and WAL to Object Storage.
   barmanCloudPluginChart: 0.8.0
 
-# Grafana's k8s-monitoring chart deploys Alloy (plus kube-state-metrics and
-# node-exporter) with the collection config Grafana Cloud expects.
 k8sMonitoring:
   chart: 4.5.2
   repository: https://grafana.github.io/helm-charts
 
-# oauth2-proxy: the Itema login Capability's one shared ForwardAuth provider
-# for the whole Platform base domain. Newest chart release from
-# https://oauth2-proxy.github.io/manifests/index.yaml on 2026-09-21.
 oauth2Proxy:
   chart: 10.7.0
   # The oauth2-proxy binary the chart installs at this chart version.
@@ -60,14 +41,13 @@ oauth2Proxy:
   repository: https://oauth2-proxy.github.io/manifests
 
 # KSOPS is a kustomize plugin, not a chart: the image ships the ksops binary
-# and a matching kustomize, installed into argocd-repo-server by an init
-# container.
+# and a matching kustomize, which an init container installs into the repo
+# server.
 ksops:
   image: viaductoss/ksops:v4.5.1
 
 # What the node runs, so the kind harness can mimic it. k3s bundles its own
-# build of the Traefik chart (manifests/traefik.yaml in the k3s release
-# names it; k3s-charts publishes it) and pins the Traefik image separately;
+# build of the Traefik chart and pins the Traefik image separately;
 # helm-controller is the k3s component that reads the HelmChartConfig the
 # bootstrap writes.
 k3s:

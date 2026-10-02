@@ -6,14 +6,9 @@
 hcloud_token   = "..."
 ssh_public_key = "ssh-ed25519 AAAA... admin@example"
 
-# ArgoCD's and the Deploy gate's credential for the (private) Platform
-# repository: the org GitHub App the bootstrap wizard's "GitHub App for the
-# Deploy gate and ArgoCD" stage creates (id and installation id also recorded in the Platform
-# repository's platform.yaml). No default -- every Platform has its own
-# App -- and the private key is the App's downloaded PEM, so this file
-# must stay out of git (it already is: infra/platform/.gitignore and the
-# repository root's .gitignore both ignore *.tfvars, keeping only
-# terraform.tfvars.example tracked).
+# ArgoCD's and the Deploy gate's credential for the private Platform
+# repository: the org GitHub App the bootstrap wizard creates. The private
+# key is the App's downloaded PEM, so terraform.tfvars must stay out of git.
 platform_repo_github_app_id              = 123456
 platform_repo_github_app_installation_id = 78901234
 platform_repo_github_app_private_key     = <<EOT
@@ -22,13 +17,10 @@ platform_repo_github_app_private_key     = <<EOT
 -----END RSA PRIVATE KEY-----
 EOT
 
-# The node's credential for pulling Applications' private images from GHCR
-# (ADR-0005): a classic personal access token with only the read:packages
-# scope, and the GitHub login that owns it. The bootstrap wizard's "GHCR
-# pull token" stage checks the token and writes both. cloud-init puts them
-# in /etc/rancher/k3s/registries.yaml at first boot, and in the Deploy
-# gate's Secret argocd/ghcr-pull-token; on a running node,
-# see infra/README.md, "Adding or rotating the GHCR pull token".
+# The node's credential for pulling private images from GHCR: a classic
+# personal access token with only the read:packages scope, and the GitHub
+# login that owns it. On a running node, see infra/README.md, "Adding or
+# rotating the GHCR pull token".
 ghcr_pull_username = "platform-admin-login"
 ghcr_pull_token    = "ghp_..."
 

@@ -1,31 +1,23 @@
 # Values for one Environment of one Application. The CLI writes this file
-# into the Platform repository; developers do not edit it by hand.
-#
-# Every convention (probes, sizes, labels, ingress shape) lives in the
-# templates, not here. See README.md for the full table.
+# into the Platform repository. Conventions (probes, sizes, labels) live in
+# the templates, not here.
 
 application:
   # The Application's name: lowercase, DNS-safe, unique on the Platform.
   # Required.
   name: ""
 
-# The Environment this values file describes: prod, staging, or
-# pr-<number> for a Preview Environment, which the Application's previews
-# ApplicationSet sets over staging's values file.
+# prod, staging, or pr-<number> for a Preview Environment.
 environment: prod
 
 platform:
   # The Platform base domain. Platform addresses are <name>.<baseDomain>
   # for prod and <name>-staging.<baseDomain> for staging. Required.
   baseDomain: ""
-  # The cert-manager ClusterIssuer that issues a certificate over HTTP-01
-  # for a custom domain the Platform's wildcard does not cover. Created by
-  # the bootstrap.
+  # The ClusterIssuer for custom domains the wildcard does not cover.
   httpIssuer: letsencrypt-http01
-  # The domain the Itema login cookie is set for, without the leading dot:
-  # platform.yaml's cloudflareZone, or baseDomain on a Platform without
-  # one (the bootstrap's oauth2-proxy uses the same rule). With
-  # login.enabled, every custom domain must be inside it. Empty means
+  # The domain the Itema login cookie is set for, without the leading dot.
+  # With login.enabled, every custom domain must be inside it. Empty means
   # baseDomain.
   loginCookieDomain: ""
   # The Object Storage bucket every Application database is backed up to.
@@ -39,59 +31,47 @@ platform:
   # exist in the namespace the Environment is installed into.
   backupsCredentialsSecret: backups-credentials
 
-# What the Application fundamentally is: web-service (a container listening
-# on port) or static-site (an nginx image built by CI, listening on 8080).
-# Either runs as a non-root user with a numeric UID: the chart requires it
-# and drops every capability (README.md, "Security context").
+# web-service (a container listening on port) or static-site (an nginx
+# image listening on 8080). Either must run as a non-root user with a
+# numeric UID.
 kind: web-service
 
 image:
   # Required, for example ghcr.io/itema-as/shop.
   repository: ""
-  # The CI-written image tag (a commit SHA or a version). Empty means the
-  # Environment has not received its first image yet: the chart then
-  # renders nothing at all (no workload, no database, no hooks), which
-  # ArgoCD shows as Synced and Healthy, and the first tag the deploy
-  # workflow writes renders the whole Environment. The rest of the file is
-  # still validated either way.
+  # The CI-written image tag. Empty means the Environment has not received
+  # its first image yet, and the chart renders nothing (the rest of the file
+  # is still validated).
   tag: ""
 
-# small, medium or large. The CPU and memory each size gets is fixed in the
-# chart; see _helpers.tpl and README.md.
+# small, medium or large.
 size: small
 
-# The port a Web service listens on. It is injected as PORT and is the port
-# the Service and the probes use. A Static site ignores it and listens on
-# 8080.
+# The port a Web service listens on, injected as PORT. A Static site ignores
+# it and listens on 8080.
 port: 3000
 
 probe:
-  # The path the readiness and liveness probes request on port.
+  # The path the readiness and liveness probes request.
   path: /
 
 # Plain environment variables, name to value. Secrets do not go here, and
 # neither does DATABASE_URL, which the Postgres Capability injects.
 env: {}
 
-# Names of Kubernetes Secrets in the Environment's namespace whose keys are
-# all exposed to the container, and to the migration Job, as environment
-# variables. The CLI writes them SOPS-encrypted next to this file; the
-# chart never renders a Secret.
+# Names of Secrets in the Environment's namespace whose keys are all exposed
+# to the container, and to the migration Job, as environment variables.
 secrets: []
 
-# Custom domains, one hostname each, served in addition to the Platform
-# address. A host directly under platform.baseDomain is covered by the
-# Platform's wildcard certificate; any other host gets its own certificate
-# from platform.httpIssuer. DNS is not the chart's business: external-dns
-# creates records in the one zone it manages (platform.yaml's
-# cloudflareZone), and anything else, another Cloudflare zone included,
-# needs a CNAME to the Platform address.
+# Custom domains served in addition to the Platform address. A host
+# directly under platform.baseDomain is covered by the wildcard certificate;
+# any other gets its own from platform.httpIssuer. Outside the Platform's
+# Cloudflare zone a host needs a CNAME to the Platform address.
 domains: []
 
 postgres:
-  # The Postgres Capability: a single-instance database of this Environment's
-  # own, DATABASE_URL injected into the container, continuous backups to the
-  # Platform's backups bucket.
+  # A single-instance database of this Environment's own, with DATABASE_URL
+  # injected and continuous backups.
   enabled: false
   # A shell command run from the Application image, with DATABASE_URL set,
   # before every rollout; a failing command stops the rollout. Empty means
@@ -100,46 +80,31 @@ postgres:
   # How long backups and WAL are kept in the bucket: a number of days (d),
   # weeks (w) or months (m).
   backupRetention: 30d
-  # Seconds the ArgoCD PreDelete hook Job waits for the final Backup it
-  # takes on Environment deletion to reach phase completed before it fails
-  # (and, since the hook is not Healthy, blocks the deletion). 1800 (30
-  # minutes) is generous for a small Application's database and still
-  # bounded; a large database (or a slow bucket) may need it raised.
+  # Seconds the final Backup on Environment deletion may take before the
+  # hook fails, which blocks the deletion. A large database may need more.
   finalBackupTimeout: 1800
-  # false turns every backup off: no WAL archiving, no daily base backup and
-  # no final backup on delete, so no PreDelete hook to wait for. Preview
-  # Environments set it: their database starts empty and goes with the pull
-  # request. platform.backupsBucket and objectStorageEndpoint are then not
-  # needed.
+  # false turns every backup off, the final one included. Preview
+  # Environments set it. platform.backupsBucket and objectStorageEndpoint are
+  # then not needed.
   backups: true
 
-# Scheduled tasks, for a Web service only: each is a CronJob named
-# <name>[-staging]-<task name> that runs command with sh -c on schedule
-# (five cron fields, Europe/Oslo time), in a one-off container from the
-# Application's image with its env, secrets and DATABASE_URL, at the small
-# size. Written by the Deploy gate from the deployed commit's iidp.yaml;
-# a deploy without tasks removes the key. Each entry:
+# Scheduled tasks, for a Web service only: each is a CronJob that runs
+# command with sh -c on schedule (five cron fields, Europe/Oslo time) from
+# the Application's image with its env and secrets. Written by the Deploy
+# gate from the deployed commit's iidp.yaml. Each entry:
 #   - name: nightly-cleanup
 #     schedule: "0 3 * * *"
 #     command: node scripts/cleanup.js
 tasks: []
 
-# false renders no CronJob for tasks, whatever tasks holds. Preview
-# Environments set it, since they share staging's values but run no tasks.
+# false renders no CronJob for tasks. Preview Environments set it, since
+# they share staging's values but run no tasks.
 runTasks: true
 
 login:
-  # The Itema login Capability: every Ingress of the Environment gets the
-  # Traefik ForwardAuth middleware annotation for the bootstrap's shared
-  # oauth2-proxy, so an Entra ID sign-in is required to reach the Platform
-  # address and every custom domain. Fails rendering when a custom domain
-  # is outside platform.loginCookieDomain, because the oauth2-proxy cookie
-  # would never reach it.
+  # Require an Entra ID sign-in on the Platform address and every custom
+  # domain.
   enabled: false
-  # Sign-in groups: Entra ID group object ids (GUIDs). Empty lets every
-  # Itema user in. With groups, the Environment gets a ForwardAuth
-  # Middleware of its own that asks the same oauth2-proxy to check them
-  # (allowed_groups), and every Ingress names it instead of the shared
-  # one: a signed-in user outside every group gets a 403. Needs
-  # enabled: true.
+  # Entra ID group object ids (GUIDs). Empty lets every Itema user in;
+  # otherwise a signed-in user outside every group gets a 403.
   groups: []

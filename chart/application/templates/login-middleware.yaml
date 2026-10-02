@@ -2,17 +2,9 @@
 {{- $groups := include "application.login.groups" . -}}
 {{- if and (include "application.released" .) .Values.login.enabled $groups }}
 {{- /*
-The Environment's own ForwardAuth Middleware, for sign-in groups. It is the
-bootstrap's shared itema-login-auth (bootstrap/components/oauth2-proxy-login/
-middleware.yaml) with allowed_groups added to the address: the same
-oauth2-proxy, the same root address, so an unauthenticated browser still
-gets oauth2-proxy's 302 to Entra ID. oauth2-proxy's proxy handler checks
-allowed_groups from its own request's query once the session is valid, and
-answers a signed-in user in none of the groups with a plain 403, which
-Traefik returns to the browser as it is: no redirect, so no loop. Traefik
-builds the request to oauth2-proxy from address as it is, query included.
-docs/implementation-notes/92-sign-in-groups.md has the source both were
-checked against.
+The bootstrap's shared itema-login-auth Middleware with allowed_groups added
+to the address. oauth2-proxy checks it once the session is valid and answers
+a user in none of the groups with a plain 403: no redirect, so no loop.
 */}}
 apiVersion: traefik.io/v1alpha1
 kind: Middleware

@@ -1,13 +1,8 @@
 name: e2e
 
-# The kind end-to-end test: bootstraps the Platform components from a
-# fixture Platform repository on a kind cluster (test/e2e). Runs only when
-# the bootstrap, the chart, the harness or the Deploy gate change, and on
-# every release tag. The paths filter does not apply to tag pushes, which is
-# what makes tags always run it. The Deploy gate's paths are its own code,
-# which the harness builds from source, the packages it writes the Platform
-# repository with, and the one it reads the cluster with for iidp app
-# status.
+# The kind end-to-end test (test/e2e). The paths filter does not apply to
+# tag pushes, so every release tag runs it. The Deploy gate's paths include
+# the packages it uses, since the harness builds it from source.
 on:
   pull_request:
     paths:
@@ -99,11 +94,10 @@ jobs:
         with:
           version: v0.33.0
           install_only: true
-      # The images the node would otherwise pull from Docker Hub and ECR
-      # Public, whose anonymous rate limits the shared runner addresses
-      # exhaust (test/e2e/images.go, #128). The primary key never matches,
-      # so the newest cache is restored; the test pulls whatever is missing
-      # and leaves the directory holding exactly the images it needed.
+      # Caches the images the kind node would otherwise pull from Docker Hub
+      # and ECR Public, whose anonymous rate limits the shared runners keep
+      # hitting. The primary key never matches, so the newest cache is
+      # restored and the test pulls only what is missing.
       - name: Restore the image cache
         id: image-cache
         uses: actions/cache/restore@v6

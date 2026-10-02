@@ -1,37 +1,18 @@
-# The Itema login Capability's Traefik middleware. The chart annotates every
-# Ingress of a protected Environment with
-# traefik.ingress.kubernetes.io/router.middlewares naming it
-# (chart/application/templates/_helpers.tpl, application.login.annotation);
-# its name and this namespace must match exactly.
+# The Itema login Capability's Traefik middleware. The application chart
+# annotates every Ingress of a protected Environment with its name and
+# namespace, so both must match exactly.
 #
-# itema-login-auth is the documented "ForwardAuth with Static Upstreams"
-# shape (oauth2-proxy's "Configuration > Integrations > Traefik"): every
-# request is checked against oauth2-proxy's root address, the proxy path,
-# whose alpha-config static upstream answers 200 once the session cookie is
-# valid. Without one, oauth2-proxy runs with skip-provider-button
-# (oauth2-proxy.yaml), so it answers a browser with its own 302 to Entra ID:
-# Location, the CSRF cookie, and a state carrying the original URL, which
-# it builds from the X-Forwarded-Proto/-Host/-Uri headers ForwardAuth adds
-# (reverse-proxy mode). Traefik returns a non-2xx auth response to the
-# client as it is, headers included. A request that accepts only JSON gets
-# a 401 instead, since a redirect is no use to it.
+# This is oauth2-proxy's "ForwardAuth with Static Upstreams" shape: every
+# request is checked against oauth2-proxy's root address, whose static
+# upstream answers 200 once the session cookie is valid. Without a session,
+# oauth2-proxy answers a browser with its own 302 to Entra ID, and Traefik
+# returns a non-2xx auth response to the client as it is. A request that
+# accepts only JSON gets a 401 instead.
 #
-# authResponseHeaders copies the headers injectResponseHeaders adds
-# (oauth2-proxy.yaml) onto the request Traefik forwards to the protected
-# Application once oauth2-proxy answers 200; X-Auth-Request-Email is the
-# header carrying the signed-in user's email address.
-#
-# docs/implementation-notes/77-login-redirect.md has why this replaced the
-# /oauth2/auth plus errors-middleware shape, and when the errors
-# middleware was removed.
-#
-# An Environment with sign-in groups (login.groups) gets its own copy of
-# this Middleware from the application chart (templates/login-middleware.
-# yaml), with ?allowed_groups=<ids> on the address; oauth2-proxy's root
-# address checks it once the session is valid and answers a 403 outside
-# the groups. chart/application/login_test.go requires that copy to match
-# this spec apart from the query, so change both together
-# (docs/implementation-notes/92-sign-in-groups.md).
+# An Environment with sign-in groups gets its own copy of this Middleware
+# from the application chart, with ?allowed_groups=<ids> on the address.
+# chart/application/login_test.go requires that copy to match this spec apart
+# from the query, so change both together.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:

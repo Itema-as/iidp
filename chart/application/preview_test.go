@@ -16,17 +16,14 @@ import (
 	valuesrender "github.com/Itema-as/iidp/internal/render"
 )
 
-// Preview Environments (#95): the ApplicationSet the CLI writes
-// (internal/render.PreviewApplicationSet), instantiated for one pull
-// request the way ArgoCD's Pull Request generator does, and the chart
-// rendered from the Application that comes out, the way ArgoCD renders a
-// multi-source Helm Application: staging's values file, then the
-// template's valuesObject over it.
+// Preview Environments: the ApplicationSet the CLI writes, instantiated for
+// one pull request the way ArgoCD's Pull Request generator does, and the
+// chart rendered from the Application that comes out: staging's values file,
+// then the template's valuesObject over it.
 
-// pullRequest is the generator's parameters for one pull request, as the
-// ApplicationSet controller at the argo-cd version the bootstrap pins
-// builds them (applicationset/generators/pull_request.go): the number as a
-// string, the head SHA in full and cut short.
+// pullRequest is the generator's parameters for one pull request, as ArgoCD's
+// ApplicationSet controller builds them (applicationset/generators/
+// pull_request.go).
 var pullRequest = map[string]any{
 	"number":           "42",
 	"branch":           "feature/checkout",
@@ -39,10 +36,10 @@ var pullRequest = map[string]any{
 	"author":           "a-developer",
 }
 
-// instantiate applies params to every string, and every map key, of the
-// ApplicationSet's template with Go's text/template and missingkey=error,
-// as ArgoCD's goTemplate rendering does
-// (applicationset/utils/utils.go, deeplyReplace; valuesObject included).
+// instantiate applies params to every string and map key of the
+// ApplicationSet's template with text/template and missingkey=error, as
+// ArgoCD's goTemplate rendering does (applicationset/utils/utils.go,
+// deeplyReplace).
 func instantiate(t *testing.T, node any, params map[string]any) any {
 	t.Helper()
 	apply := func(s string) string {
@@ -76,10 +73,10 @@ func instantiate(t *testing.T, node any, params map[string]any) any {
 	}
 }
 
-// previewFixture writes what the Platform repository holds for a staging
-// Environment with every Capability a preview must honour or override,
-// through the CLI's and the Deploy gate's own writers, and returns the
-// staging values file's path and the previews ApplicationSet.
+// previewFixture writes a staging Environment with every Capability a preview
+// must honour or override, through the CLI's and the Deploy gate's own
+// writers, and returns the staging values file's path and the previews
+// ApplicationSet.
 func previewFixture(t *testing.T) (stagingValues string, applicationSet map[string]any) {
 	t.Helper()
 	staging := valuesrender.Environment{
@@ -144,11 +141,9 @@ func previewFixture(t *testing.T) (stagingValues string, applicationSet map[stri
 	return stagingValues, applicationSet
 }
 
-// renderPreview instantiates the ApplicationSet's template for
-// pullRequest and renders the chart from the Application: the chart
-// source's values files (staging's, read from stagingValues) and then its
-// valuesObject, into the Application's destination namespace. It returns
-// the Application and the rendered manifests.
+// renderPreview instantiates the ApplicationSet's template for pullRequest
+// and renders the chart the way ArgoCD renders a multi-source Helm
+// Application. It returns the Application and the rendered manifests.
 func renderPreview(t *testing.T) (application map[string]any, manifests string) {
 	t.Helper()
 	stagingValues, set := previewFixture(t)
@@ -195,9 +190,9 @@ func TestAPreviewIsItsOwnEnvironmentOfThePullRequest(t *testing.T) {
 	if got := get[map[string]any](t, application, "metadata", "labels"); got["iidp.itema.no/application"] != "shop" || got["iidp.itema.no/environment"] != "pr-42" {
 		t.Errorf("Application labels = %v", got)
 	}
-	// The same namespace labels as every Environment's, so the guardrails
-	// bind to it, and ArgoCD's tracking annotation, so the namespace goes
-	// with the Application.
+	// The same namespace labels as every Environment's, so the guardrails bind
+	// to it, and ArgoCD's tracking annotation, so the namespace goes with the
+	// Application.
 	metadata := get[map[string]any](t, application, "spec", "syncPolicy", "managedNamespaceMetadata")
 	labels := get[map[string]any](t, metadata, "labels")
 	for key, want := range valuesrender.NamespaceLabels("shop", "pr-42") {
@@ -320,9 +315,8 @@ func TestAPreviewPassesKubeconformWithTheCRDSchemas(t *testing.T) {
 	t.Logf("kubeconform: %s", strings.TrimSpace(string(out)))
 }
 
-// postgres.backups: false, on its own: the database is there and migrated,
-// and nothing backs it up or waits to on deletion, so neither the bucket
-// nor the endpoint is needed.
+// postgres.backups: false on its own needs neither the bucket nor the
+// endpoint.
 func TestPostgresWithoutBackupsRendersTheDatabaseAlone(t *testing.T) {
 	objects := render(t, "preview-postgres.yaml", "--namespace", "shop-pr-7")
 	for _, key := range []string{"Cluster/shop-pr-7-db", "Job/shop-pr-7-migrate", "Deployment/shop-pr-7", "Ingress/shop-pr-7"} {

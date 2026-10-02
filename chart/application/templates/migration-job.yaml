@@ -8,26 +8,19 @@ metadata:
     {{- include "application.labels" . | nindent 4 }}
     app.kubernetes.io/component: migration
   annotations:
-    # A Sync-phase hook one wave after the database and one before the
-    # Application's objects: ArgoCD waits for the Cluster to be healthy,
-    # runs the Job, and applies the Deployment only when it succeeds, so a
-    # failed migration stops the rollout. A PreSync hook would run before
-    # the Cluster exists on an Environment's first sync and never start.
-    # The previous run's Job is deleted before the next is created.
+    # A Sync hook between the database and the Application's objects, so a
+    # failed migration stops the rollout. A PreSync hook would run before the
+    # Cluster exists on an Environment's first sync and never start.
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/sync-wave: "-1"
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   # One attempt: a migration that failed once must not be retried blindly.
   backoffLimit: 0
-  # A Job whose Pod never starts (Unschedulable, or its image never pulled)
-  # never fails, so ArgoCD would wait on the hook, and keep the sync
-  # running, for ever. A running sync holds up the Environment's deletion,
-  # which is how a closed pull request's Preview Environment got stuck
-  # (#131). The deadline counts from the Job's start, time its Pod spends
-  # Pending included, and fails the Job, which fails the sync. 30 minutes
-  # leaves a preview's first sync room to wait for its image to be built.
-  # Not a value: nothing so far has asked for a longer migration.
+  # A Job whose Pod never starts never fails, so ArgoCD would keep the sync
+  # running for ever, which holds up the Environment's deletion. The deadline
+  # counts Pending time too. 30 minutes leaves a preview's first sync room to
+  # wait for its image to be built.
   activeDeadlineSeconds: 1800
   template:
     metadata:
@@ -53,8 +46,7 @@ spec:
             {{- end }}
             {{- include "application.postgres.databaseURLEnv" . | nindent 12 }}
           {{- with .Values.secrets }}
-          # The same named Secrets the Application gets, so a migration tool
-          # sees the environment the Application runs with.
+          # The same named Secrets the Application gets.
           envFrom:
             {{- range . }}
             - secretRef:
@@ -63,7 +55,6 @@ spec:
           {{- end }}
           resources:
             {{- include "application.resources" . | nindent 12 }}
-          # The Application's own image, so the Application's own answer.
           securityContext:
             {{- include "application.securityContext" . | nindent 12 }}
 {{- end }}

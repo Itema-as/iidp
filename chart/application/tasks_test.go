@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// Scheduled tasks: one CronJob per entry of tasks, for a Web service
-// (docs/implementation-notes/91-scheduled-tasks.md).
-
 // taskContainer returns the single container of a CronJob's Pod template.
 func taskContainer(t *testing.T, cronJob object) map[string]any {
 	t.Helper()

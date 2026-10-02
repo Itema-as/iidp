@@ -1,5 +1,6 @@
-# GoReleaser configuration for the iidp CLI. Run by .github/workflows/release.yaml
-# on every v* tag. Verify locally with:
+# GoReleaser configuration for the iidp CLI and the Deploy gate's and Argus's
+# images. Run by .github/workflows/release.yaml on every v* tag. Verify
+# locally with:
 #   goreleaser check
 #   goreleaser build --snapshot --clean --single-target
 version: 2
@@ -24,8 +25,7 @@ builds:
       - -s -w -X github.com/Itema-as/iidp/internal/version.Version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-  # The Deploy gate (cmd/iidp-deploy-gate), shipped only as the image below,
-  # never in an archive: the Platform node is linux/amd64.
+  # Shipped only as an image, never in an archive.
   - id: iidp-deploy-gate
     main: ./cmd/iidp-deploy-gate
     binary: iidp-deploy-gate
@@ -41,7 +41,7 @@ builds:
       - -s -w -X github.com/Itema-as/iidp/internal/version.Version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-  # Argus (cmd/iidp-argus), shipped only as its image, like the gate.
+  # Shipped only as an image, like the gate.
   - id: iidp-argus
     main: ./cmd/iidp-argus
     binary: iidp-argus
@@ -57,16 +57,11 @@ builds:
       - -s -w -X github.com/Itema-as/iidp/internal/version.Version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-# The Deploy gate's image, ghcr.io/itema-as/iidp-deploy-gate:<version>, the
-# tag the bootstrap chart derives from the bootstrap revision it is pinned
-# to (bootstrap/templates/deploy-gate.yaml). Built from
-# cmd/iidp-deploy-gate/Dockerfile, the same file the kind harness builds
-# from. Only linux/amd64: the node is, and one platform needs no emulation
-# for the Dockerfile's RUN. Publishing needs the release job logged in to
-# GHCR with packages: write, which the release workflow sets up together
-# with IIDP_PUBLISH_DEPLOY_GATE=true; without that variable the image is
-# skipped, so a release never fails on a push it has no credential for
-# (docs/implementation-notes/60-deploy-gate.md).
+# The image tags are the version the bootstrap chart derives from its pinned
+# revision. Only linux/amd64: the node is, and one platform needs no
+# emulation for the Dockerfile's RUN. Without IIDP_PUBLISH_DEPLOY_GATE=true,
+# which the release workflow sets once logged in to GHCR, the image is
+# skipped, so a release never fails on a push it has no credential for.
 dockers_v2:
   - id: iidp-deploy-gate
     ids:
@@ -88,11 +83,7 @@ dockers_v2:
       - "--provenance=false"
     disable: '{{ ne (index .Env "IIDP_PUBLISH_DEPLOY_GATE") "true" }}'
 
-  # Argus's image, ghcr.io/itema-as/iidp-argus:<version>, the tag the
-  # bootstrap chart derives from the bootstrap revision it is pinned to
-  # (bootstrap/templates/argus.yaml). Built and published like the gate's,
-  # under IIDP_PUBLISH_ARGUS, which the release workflow sets
-  # (docs/implementation-notes/118-argus-backend.md).
+  # Published like the gate's, under IIDP_PUBLISH_ARGUS.
   - id: iidp-argus
     ids:
       - iidp-argus

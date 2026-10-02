@@ -1,15 +1,9 @@
 package platform_test
 
-// Tests for issue #59: cloud-init writes k3s's registries.yaml, the node's
-// GHCR pull credential, before k3s starts. And for #61: it also writes the
-// Deploy gate's copy of the token, a Secret manifest iidp-bootstrap applies.
-//
-// Two renders of the same template. renderTemplate below substitutes the
-// template's ${name} values in Go and runs everywhere, CI's Go job
-// included (it has no tofu). TestOpenTofuRendersRegistriesYAML renders it
-// through OpenTofu itself, bootstrap.tf's yamlencode and base64encode
-// included, and skips when tofu is not on PATH. Both parse the whole
-// rendered cloud-config and check the same things.
+// Two renders of the same template. renderTemplate substitutes the
+// template's ${name} values in Go and runs everywhere, CI's Go job included.
+// TestOpenTofuRendersRegistriesYAML renders it through OpenTofu itself and
+// skips when tofu is not on PATH. Both check the same things.
 
 import (
 	"encoding/base64"
@@ -25,11 +19,9 @@ import (
 
 const registriesPath = "/etc/rancher/k3s/registries.yaml"
 
-// renderTemplate does the part of templatefile() this template uses: every
-// ${name} becomes vars[name], and $${ becomes a literal ${. It fails the
-// test on a template directive (%{), on a ${...} that is not a plain name,
-// and on a name vars does not have, so a template that outgrows this
-// stand-in fails loudly instead of rendering wrong.
+// renderTemplate does the part of templatefile() this template uses. It
+// fails on anything else, so a template that outgrows this stand-in fails
+// loudly instead of rendering wrong.
 func renderTemplate(t *testing.T, tmpl string, vars map[string]string) string {
 	t.Helper()
 	if strings.Contains(tmpl, "%{") {
@@ -64,12 +56,9 @@ type cloudConfig struct {
 	Runcmd [][]string `yaml:"runcmd"`
 }
 
-// assertRegistriesYAML checks what the issue asks of a rendered
-// cloud-config: registries.yaml is written by write_files (which cloud-init
-// runs before runcmd, and runcmd is what installs and starts k3s), mode
-// 600, root-owned, not deferred, and holds the given credentials for
-// ghcr.io in the shape the k3s documentation gives
-// (configs.<registry>.auth.username/password).
+// assertRegistriesYAML checks that registries.yaml is written by write_files
+// (before runcmd starts k3s), root-only, not deferred, and holds the given
+// credentials for ghcr.io.
 func assertRegistriesYAML(t *testing.T, rendered, wantUser, wantToken string) {
 	t.Helper()
 	var cfg cloudConfig
@@ -138,8 +127,7 @@ func assertRegistriesYAML(t *testing.T, rendered, wantUser, wantToken string) {
 		t.Fatalf("write_files has %d entries for %s, want 1", found, registriesPath)
 	}
 
-	// The token must reach the node only through that file, never through
-	// the bootstrap script, whose output is teed to a log.
+	// Never through the bootstrap script, whose output is teed to a log.
 	script := strings.SplitN(rendered, "/usr/local/sbin/iidp-bootstrap", 2)
 	if len(script) == 2 && strings.Contains(script[1], wantToken) {
 		t.Error("the token appears in the iidp-bootstrap script")
@@ -148,11 +136,9 @@ func assertRegistriesYAML(t *testing.T, rendered, wantUser, wantToken string) {
 
 const gatePullSecretPath = "/etc/iidp/ghcr-pull-token.yaml"
 
-// assertGatePullSecret checks the Deploy gate's copy of the token (#61):
-// cloud-init writes the manifest of Secret argocd/ghcr-pull-token, with
-// the given username and token under the keys the gate's chart mounts, to
-// a root-only file, and iidp-bootstrap applies that file before the root
-// Application, so the gate finds the Secret when ArgoCD first installs it.
+// assertGatePullSecret checks the Deploy gate's copy of the token: a
+// root-only manifest of Secret argocd/ghcr-pull-token, applied before the
+// root Application so the gate finds it when ArgoCD first installs it.
 func assertGatePullSecret(t *testing.T, rendered, wantUser, wantToken string) {
 	t.Helper()
 	var cfg cloudConfig
@@ -228,13 +214,9 @@ func TestCloudInitWritesRegistriesYAMLBeforeK3sStarts(t *testing.T) {
 	assertAuditLog(t, rendered)
 }
 
-// TestOpenTofuRendersRegistriesYAML renders the real user data: bootstrap.tf,
-// variables.tf and the template, copied into a scratch root with no
-// provider and no backend, applied with local state against fixture
-// variables, and read back as an output. This covers what the Go render
-// cannot: bootstrap.tf's yamlencode and base64encode, and the variables'
-// validation. Skipped when tofu is not installed (CI's Go job); set
-// IIDP_REQUIRE_TOFU=1 to fail instead.
+// TestOpenTofuRendersRegistriesYAML renders the real user data through
+// OpenTofu, covering bootstrap.tf's yamlencode and base64encode and the
+// variables' validation. Skipped without tofu unless IIDP_REQUIRE_TOFU=1.
 func TestOpenTofuRendersRegistriesYAML(t *testing.T) {
 	tofu, err := exec.LookPath("tofu")
 	if err != nil {

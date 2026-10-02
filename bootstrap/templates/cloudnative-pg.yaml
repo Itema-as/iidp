@@ -1,6 +1,4 @@
 {{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
-# The CloudNativePG operator. Application databases are Cluster resources
-# rendered by the application chart; this only installs the operator.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

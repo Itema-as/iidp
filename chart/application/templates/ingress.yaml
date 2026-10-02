@@ -8,22 +8,16 @@ metadata:
   labels:
     {{- include "application.labels" . | nindent 4 }}
   annotations:
-    # Only the TLS entrypoint. Redirecting plain HTTP to HTTPS is an
-    # entrypoint setting on the Platform's Traefik, not a per-Application one.
+    # Plain HTTP is redirected to HTTPS by the Platform's Traefik.
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
     {{- with include "application.login.annotation" . }}
-    # The Itema login Capability (application.login.annotation).
     {{- . | nindent 4 }}
     {{- end }}
 spec:
   ingressClassName: traefik
   tls:
-    # No secretName: the Platform's wildcard certificate is Traefik's default
-    # certificate (the bootstrap's TLSStore), served for every host that
-    # names no certificate of its own. Custom domains directly under the
-    # base domain are covered by it too. Hosts that are not go on the
-    # ingress-http01.yaml Ingress with certificates of their own.
+    # No secretName: Traefik serves its default, the wildcard certificate.
     - hosts:
         - {{ include "application.host" . }}
         {{- range $domains.wildcard }}

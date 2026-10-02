@@ -72,14 +72,10 @@ jobs:
           IIDP_REQUIRE_CHART_TOOLS: "1"
         run: go test -v ./chart/...
 
-  # Renders each built-in Create template with cmd/renderfixture, builds its
-  # Dockerfile, and runs it the way the Platform does (#90, #110): the
-  # application chart, in a kind namespace that enforces Pod Security's
-  # restricted level. test/templates/run-restricted.sh
-  # fails on any admission warning, a Pod that does not become Ready, a
-  # container running as root, or anything but a 200 on / at the template's
-  # port (3000 for Next.js, 8080 for the unprivileged nginx of Vite React).
-  # "other" is excluded: its stub Dockerfile is not meant to build.
+  # Builds each built-in Create template and runs it the way the Platform
+  # does: through the application chart, in a kind namespace that enforces
+  # Pod Security's restricted level. "other" is excluded: its stub Dockerfile
+  # is not meant to build.
   templates:
     name: Templates
     runs-on: ubuntu-latest
@@ -119,10 +115,8 @@ jobs:
           version: "~> v2"
           args: check
 
-  # shellcheck and bash ship on the runner image; test/wizard/run.sh runs the
-  # wizard's wrapper functions with IIDP_WIZARD_FAKE=1 (no network, no real
-  # tofu/gh/sops/az/ssh calls) and the full script with --dry-run, so this
-  # needs no Hetzner, Cloudflare, GitHub App or Entra credentials.
+  # test/wizard/run.sh fakes every network and tool call, so this needs no
+  # credentials.
   wizard:
     name: Wizard
     runs-on: ubuntu-latest
