@@ -1,7 +1,6 @@
 // @ts-check
-// The stage: the renderer with its glow, the HTML labels' renderer, the
-// perspective camera with OrbitControls (left-drag rotates, right-drag
-// pans, scroll zooms), and the camera rig the automatic camera flies.
+// The renderer with its glow, the HTML labels' renderer, the camera with
+// OrbitControls, and the rig the automatic camera flies.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';

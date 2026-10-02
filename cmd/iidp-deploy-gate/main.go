@@ -1,13 +1,6 @@
-// Command iidp-deploy-gate is the Deploy gate: the service on the Platform
-// through which an Application repository's CI deploys and promotes
-// (internal/deploygate), and whose service also answers iidp app status,
-// reading the cluster as the pod's service account
-// (internal/platformstate). As the same service account, it asks ArgoCD to
-// refresh an Environment's ArgoCD Application after each Deploy or
-// Promote commit, and records each Deploy it accepts or refuses as a
-// Kubernetes Event. The bootstrap chart runs it
-// (bootstrap/components/deploy-gate); it is configured entirely from the
-// environment:
+// Command iidp-deploy-gate is the Deploy gate: the service through which an
+// Application repository's CI deploys and promotes, and which answers iidp
+// app status. It is configured entirely from the environment:
 //
 //	IIDP_GATE_AUDIENCE       the gate's own URL, https://deploy.<baseDomain>: the
 //	                         audience every OIDC token must carry (required)
@@ -19,7 +12,7 @@
 //	IIDP_GATE_GHCR_DIR       the directory holding the GHCR pull token's username
 //	                         and token files, which the gate checks private
 //	                         images with (required)
-//	IIDP_GATE_OIDC_ISSUER   the token issuer (default GitHub Actions')
+//	IIDP_GATE_OIDC_ISSUER    the token issuer (default GitHub Actions')
 //	IIDP_GATE_OIDC_JWKS_URL  where the issuer's keys are (default
 //	                         <issuer>/.well-known/jwks)
 //	IIDP_GATE_PLATFORM_REPO  the Platform repository's git URL (default
@@ -105,11 +98,6 @@ func run(log *slog.Logger) error {
 	if _, err := gate.Images.Credential(); err != nil {
 		return err
 	}
-	// The read endpoint for iidp app status reads the cluster as the pod's
-	// service account, a deploy asks ArgoCD to refresh as it, and deploys
-	// are recorded as Events with it. Without one, deploys still work, but
-	// wait for ArgoCD's poll and go unrecorded, and status calls are
-	// answered 503.
 	if cluster, err := platformstate.InCluster(); err != nil {
 		log.Warn("iidp app status is unavailable, deploys wait for ArgoCD's poll and are not recorded as Events: the gate cannot reach the cluster", "error", err.Error())
 	} else {
@@ -144,7 +132,8 @@ func run(log *slog.Logger) error {
 	if err := server.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	// The last answers' Events, each bounded by its own timeout.
+	// Events are recorded after their call is answered, so some may still be
+	// on their way. Each has its own timeout, so this cannot hang.
 	gate.WaitForEvents()
 	return nil
 }

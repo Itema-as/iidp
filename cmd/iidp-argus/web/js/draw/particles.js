@@ -1,7 +1,5 @@
 // @ts-check
-// The particle network's buffers: soft round particles with a colour,
-// alpha and size each, and lines between them with a colour and alpha at
-// each end. Both add light. They are refilled from scratch every frame,
+// The particle network's buffers. They are refilled from scratch every frame,
 // so a change of state never needs a rebuild.
 
 import * as THREE from 'three';

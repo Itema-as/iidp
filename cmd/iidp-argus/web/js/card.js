@@ -1,8 +1,6 @@
 // @ts-check
-// What the detail card shows (#113, panel B): for an Environment, a
-// Platform component and the Platform core, the peek's three key facts,
-// everything "All details" adds, and the read-only links. It never shows
-// logs, environment variables, or anything that acts.
+// What the detail card shows. It never shows logs, environment variables, or
+// anything that acts.
 
 import { notesAbout, toneOf } from './feed.js';
 import { currentDeploy, hopStrip } from './deploys.js';

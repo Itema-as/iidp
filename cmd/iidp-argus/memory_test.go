@@ -21,22 +21,12 @@ import (
 	"github.com/Itema-as/iidp/internal/argus"
 )
 
-// TestMemoryWithThirtyEnvironments measures what Argus holds for a
-// synthetic Platform of 15 Applications with prod and staging each: 30
-// Environments with their Deployments, pods, Jobs, CronJobs, Postgres,
-// certificates, Ingresses and Events, the Platform components' own
-// workloads in argocd and kube-system, and the node. Every object is as
-// fat as the API server's: managedFields, full pod specs, ArgoCD's
-// resource list and history.
-//
-// The real dynamic client reads them over HTTP from apiServer, which
-// serves pre-encoded JSON the way the API server does: list, watch, and
-// the streaming watch-list client-go 0.36 tries first. It reports the heap
-// Argus's informers and model hold once synced, the highest the heap went
-// on the way, and the same for the informers without transforms. The
-// implementation note records the figures
-// (docs/implementation-notes/118-argus-backend.md). It only runs with
-// IIDP_ARGUS_MEASURE=1.
+// TestMemoryWithThirtyEnvironments measures the heap Argus holds for a
+// synthetic Platform of 15 Applications with prod and staging each, every
+// object as fat as the API server's, once synced and at its peak, with and
+// without transforms. The real dynamic client reads them over HTTP from
+// apiServer, including the streaming watch-list client-go tries first. It only
+// runs with IIDP_ARGUS_MEASURE=1.
 func TestMemoryWithThirtyEnvironments(t *testing.T) {
 	if os.Getenv("IIDP_ARGUS_MEASURE") != "1" {
 		t.Skip("set IIDP_ARGUS_MEASURE=1 to measure")

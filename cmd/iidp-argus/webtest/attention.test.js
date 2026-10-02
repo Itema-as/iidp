@@ -1,6 +1,5 @@
-// The automatic camera's rules (#103, #106), run on a clock the tests
-// move. Run with: node --test cmd/iidp-argus/webtest (Node 22.12 or later;
-// not part of CI, which runs no Node).
+// Run with: node --test cmd/iidp-argus/webtest (Node 22.12 or later). CI does
+// not run these tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAttention, chipText, IDLE, LINGER, FLIGHT } from '../web/js/attention.js';

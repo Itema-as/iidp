@@ -1,8 +1,7 @@
 // @ts-check
-// The automatic camera's rules (#103, with #106's loudness): what it
-// should look at, and when it must hold still. This module decides; the
-// drawing flies. Every function takes the time, so the rules can be run
-// without a clock or a browser.
+// The automatic camera's rules. This module decides; the drawing flies.
+// Every function takes the time, so the rules run without a clock or a
+// browser.
 
 import { placeKey } from './feed.js';
 

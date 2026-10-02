@@ -1,4 +1,3 @@
-// The feed, and what the map's corner shows of it (#103).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addNote, ageText, mapFeed, notesSince, placeKey, trim, FEED_SIZE } from '../web/js/feed.js';

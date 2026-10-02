@@ -1,11 +1,8 @@
 <!doctype html>
 <!--
-  Argus (#115, #119): the Platform, live, drawn as a particle network from
-  the stream at /events. Everything the page loads comes from Argus itself:
-  the modules in js/, and three.js r170 vendored in vendor/three
-  (vendor/three/README.md). The server allows nothing else
-  (internal/argus/server.go, ContentSecurityPolicy); the import map below
-  is allowed by its hash.
+  Everything the page loads comes from Argus itself: the modules in js/ and
+  three.js in vendor/three. The server's Content-Security-Policy allows
+  nothing else, and allows the import map below by its hash.
 -->
 <html lang="en">
 <head>

@@ -23,8 +23,7 @@ import (
 // TestDemo serves Argus's page from the real store and server, fed with a
 // synthetic Platform instead of informers, and changes that Platform on a
 // script, so that the page can be looked at in a browser without a
-// cluster (docs/implementation-notes/119-argus-frontend.md). It runs only
-// when asked:
+// cluster. It runs only when asked:
 //
 //	IIDP_ARGUS_DEMO=127.0.0.1:8090 go test ./cmd/iidp-argus -run TestDemo -timeout 0
 //
@@ -49,11 +48,14 @@ import (
 //	/demo/degrade?env=               crash-looping, and back
 //	/demo/arrive?app=                a new Application, then its first Deploy
 //	/demo/remove?env=                an Environment leaving
-//	/demo/burst                      three places at once
+//	/demo/burst                      several Environments change at once
 //	/demo/cluster                    the API server stops answering, and back
-//	/demo/expire                     every other request answers as oauth2-proxy
-//	                                 does once the Itema login session has
-//	                                 expired, a 302 to the sign-in page, and back
+//	/demo/expire                     every request but /demo/'s answers as
+//	                                 oauth2-proxy does once the Itema login
+//	                                 session has expired, with a 302 to the
+//	                                 sign-in page, and back
+//
+// Each call to one marked "and back" undoes the previous one.
 func TestDemo(t *testing.T) {
 	addr := os.Getenv("IIDP_ARGUS_DEMO")
 	if addr == "" {
@@ -414,7 +416,7 @@ func (d *demo) pod(e *demoEnv, suffix, tag string, ready bool, waiting string) {
 
 func (d *demo) status(e *demoEnv) object { return e.argo["status"].(object) }
 
-// everyState is a Platform showing every state the spec lists.
+// everyState is a Platform showing every state.
 func (d *demo) everyState() {
 	d.environment("shop", "prod", envOpts{tag: "2.4.0", postgres: true, login: true})
 	d.environment("shop", "staging", envOpts{tag: "2.5.0", postgres: true, login: true})
@@ -722,7 +724,6 @@ func (d *demo) tour(ctx context.Context) {
 		d.mu.Lock()
 		d.put(workloadPod("kube-system", "traefik-0", "traefik", "rancher/mirrored-library-traefik:3.3.6", true, ""))
 		d.mu.Unlock()
-		// Every third round, Argus loses the cluster for 45 s.
 		if round%3 == 0 {
 			d.store.SetReachable(false)
 			if !wait(45 * time.Second) {

@@ -1,8 +1,4 @@
 // @ts-check
-// What sits on the map besides the drawing (#103): the chip that says
-// what the automatic camera is doing and switches it, the feed in the
-// corner, the edge markers for loud changes off screen, the banner for a
-// lost cluster or stream, and, with ?fps=1, a frame-rate meter.
 
 import { h } from './dom.js';
 import { mapFeed, notesSince, toneOf } from '../feed.js';
@@ -137,6 +133,8 @@ export function createEdges(el, onGo) {
       for (const i of items) {
         let x = i.ndcX;
         let y = i.ndcY;
+        // A place behind the camera projects mirrored: flip it, and push it
+        // off screen so it gets a marker.
         if (!i.front) {
           x = -x * 10;
           y = -y * 10;

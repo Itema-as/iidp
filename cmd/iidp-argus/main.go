@@ -1,24 +1,22 @@
-// Command iidp-argus is Argus, the live view of the Platform (#115): it
-// watches the cluster with client-go's dynamic informers, interprets what
-// it sees with internal/platformstate (the same rules as iidp app
-// status), and streams the resulting domain objects to browsers over
-// server-sent events (internal/argus). It never writes to the cluster: its
-// ClusterRole grants get, list and watch only
-// (bootstrap/components/argus).
+// Command iidp-argus is Argus, the live view of the Platform: it watches the
+// cluster with client-go's dynamic informers, interprets what it sees with
+// internal/platformstate, and streams the result to browsers over server-sent
+// events. It only reads the cluster.
 //
-// It is the only binary in this repository that links client-go, and
-// only with the dynamic client: no typed clientsets, and no ArgoCD or
-// CloudNativePG modules (docs/implementation-notes/118-argus-backend.md).
+// It is the only binary here that links client-go, and only the dynamic
+// client: no typed clientsets, and no ArgoCD or CloudNativePG modules.
 //
-// The bootstrap chart runs it (bootstrap/components/argus) as the pod's
-// service account. It is configured from the environment:
+// It is configured from the environment:
 //
 //	IIDP_ARGUS_LISTEN               the listen address (default :8080)
-//	IIDP_ARGUS_ARGOCD_URL           where the detail card links out to
-//	IIDP_ARGUS_GRAFANA_URL          (argus.Platform); each may be empty,
-//	IIDP_ARGUS_PLATFORM_REPOSITORY  and the card then leaves that link
-//	IIDP_ARGUS_BOOTSTRAP_REPOSITORY out
-//	IIDP_ARGUS_BOOTSTRAP_REVISION
+//	IIDP_ARGUS_ARGOCD_URL           ArgoCD's address
+//	IIDP_ARGUS_GRAFANA_URL          Grafana's address
+//	IIDP_ARGUS_PLATFORM_REPOSITORY  the Platform repository's address
+//	IIDP_ARGUS_BOOTSTRAP_REPOSITORY the bootstrap chart's repository
+//	IIDP_ARGUS_BOOTSTRAP_REVISION   the bootstrap revision the Platform pins
+//
+// All but the listen address are only where the detail card links out to
+// (argus.Platform). Each may be empty, and the card then leaves that link out.
 package main
 
 import (
@@ -124,8 +122,7 @@ func run(log *slog.Logger) error {
 		return err
 	case <-ctx.Done():
 	}
-	// Streams end with the server; their browsers reconnect to the next
-	// Argus.
+	// Streams end with the server; their browsers reconnect to the next Argus.
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -135,10 +132,9 @@ func run(log *slog.Logger) error {
 }
 
 // probe asks the API server's /readyz every probeEvery and tells the store
-// whether it answered: informers keep their last state and retry quietly
-// while the API server is away, so this is what says the picture is no
-// longer live. /readyz is open to every authenticated caller
-// (system:public-info-viewer), so it needs no grant of Argus's own.
+// whether it answered: informers keep their last state and retry quietly while
+// the API server is away, so this is what says the picture is no longer live.
+// /readyz is open to every authenticated caller (system:public-info-viewer).
 func probe(ctx context.Context, client *http.Client, host string, store *argus.Store, log *slog.Logger) {
 	url := strings.TrimSuffix(host, "/") + "/readyz"
 	ticker := time.NewTicker(probeEvery)

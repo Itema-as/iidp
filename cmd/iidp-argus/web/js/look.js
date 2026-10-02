@@ -1,10 +1,6 @@
 // @ts-check
-// How each object reads (#100, #115 "States"): which of the drawing's looks
-// it takes, and the tag it wears. Loud looks have a shape as well as a
-// colour, so that they can be told apart without colour: a stuck cloud
-// freezes behind a hard ring, a Degraded one breaks its links apart, an
-// Unknown one collapses to a dotted outline, and their tags carry a mark
-// as well as a word.
+// Loud looks have a shape as well as a colour, and their tags a mark as well
+// as a word, so that they can be told apart without colour.
 
 /** @typedef {import('./types.js').Environment} Environment */
 /** @typedef {import('./types.js').Component} Component */
@@ -30,10 +26,9 @@ export const TAGS = {
 };
 
 /**
- * An Environment's look. The order is the spec's: an Unreleased plot, then
- * Leaving, then stuck, then Degraded, then Arriving, then Unknown, then a
- * change under way. A lost cluster makes every Condition Unknown (#100);
- * the drawing greys the whole scene for it, so it is not repeated here.
+ * An Environment's look: the first state that applies wins. A lost cluster
+ * makes every Condition Unknown, but the drawing greys the whole scene for
+ * that, so it is not shown here.
  * @param {Environment} env
  * @param {{newApp?: boolean, preview?: boolean}} [context] newApp: the
  *   whole Application is arriving; preview: a Preview Environment, whose

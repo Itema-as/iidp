@@ -1,4 +1,3 @@
-// Where things sit (#102), and labels that do not pile up (#115).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appLayout, componentPlaces, distance, orbitRadius, ringOf } from '../web/js/layout.js';

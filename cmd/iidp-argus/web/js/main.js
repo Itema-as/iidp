@@ -1,7 +1,6 @@
 // @ts-check
-// Argus's page (#119): the stream feeds the model; the model, the
-// automatic camera's rules and the pointer feed the drawing, the card and
-// what sits on the map.
+// The stream feeds the model; the model, the automatic camera's rules and the
+// pointer feed the drawing, the card and what sits on the map.
 
 import { createModel } from './model.js';
 import { connect } from './stream.js';
@@ -21,8 +20,6 @@ const glowParam = parseFloat(params.get('glow') ?? '');
 const glow = Number.isFinite(glowParam) ? Math.min(Math.max(glowParam, 0), 4) : 1;
 
 const model = createModel();
-// The automatic camera is on by default, and starts off for someone who
-// prefers reduced motion (#119).
 const attention = createAttention({ enabled: !reduced });
 
 /** @type {import('./draw/drawing.js').Drawing} */
@@ -98,7 +95,6 @@ function pin(target) {
   drawing.camera.show(target);
 }
 
-// The stream.
 connect({
   url: 'events',
   onState: (state) => model.setConnection(state, performance.now()),

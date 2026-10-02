@@ -1,6 +1,4 @@
 // @ts-check
-// The feed (#103 "The feed on the map", #101): the notes the stream sends,
-// kept as the server keeps them, and what the map's corner shows of them.
 
 /** @typedef {import('./types.js').Note} Note */
 /** @typedef {import('./types.js').Place} Place */
@@ -57,7 +55,8 @@ export function ageText(ms) {
 /**
  * What the dot says: loud red, normal cyan, quiet amber, and grey for a
  * note that only reports something finished or from before Argus started.
- * The seam gets its own mark.
+ * The seam, the note that separates the notes from before Argus started
+ * from those since, gets its own mark.
  * @param {Note} n
  * @returns {'loud' | 'normal' | 'quiet' | 'resolved' | 'seam'}
  */

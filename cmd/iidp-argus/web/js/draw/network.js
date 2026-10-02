@@ -1,10 +1,10 @@
 // @ts-check
-// The particle network (#97's drawing decision, #115 "The drawing"): the
-// Platform as a dense core with its components round it, each Application
-// on its orbit with one filament to the core, each Environment a cloud of
-// linked particles with its Capabilities on it, and Deploys travelling
-// the filaments as beads. Everything is drawn again every frame from the
-// model and the times it holds, so a redraw never restarts an animation.
+// The Platform as a particle network: ArgoCD as a dense core with the other
+// components on a ring round it, each Application a hub on its orbit with one
+// filament to the core, each Environment a cloud of linked particles round its
+// hub, and Deploys travelling as beads. Everything is drawn again every frame
+// from the model and the times it holds, so a redraw never restarts an
+// animation.
 
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
@@ -105,7 +105,7 @@ function ringTexture() {
  */
 
 /**
- * The particle network behind the drawing's seam: frame(t, view) draws
+ * The particle network behind drawing.js: frame(t, view) draws
  * one frame, where(key) says where an Application (or the Platform) is,
  * placeOf(target) where a thing is, and pick(x, y) what is under a point
  * of the screen.
