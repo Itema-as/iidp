@@ -1,23 +1,17 @@
-# Values for shop's prod Environment. Written by the CLI on the Platform; in
-# the fixture, hand-written to exercise the same chart values shape:
-# Postgres on, a migration that proves DATABASE_URL is set and the database
-# reachable, and the Object Storage values the chart requires with it.
+# Hand-written in the shape the CLI writes.
 application:
   name: shop
 environment: prod
 platform:
   baseDomain: app.example.test
-  # The bucket and endpoint the chart requires with postgres.enabled. Neither
-  # exists in kind: see docs/implementation-notes/09-e2e-fixture-application.md
-  # for how the fixture copes with backups that cannot succeed.
+  # Required with postgres.enabled; neither exists in kind, so prod's
+  # backups never succeed.
   backupsBucket: iidp-backups
   objectStorageEndpoint: https://objectstorage.invalid
 kind: web-service
 image:
-  # The unprivileged nginx: runs as a non-root user, as the Platform
-  # requires, answers HTTP 200 on / out of the box, and its Alpine base
-  # carries the busybox nc the migration command uses to check Postgres is
-  # reachable.
+  # Runs as non-root, answers 200 on /, and its Alpine base has the
+  # busybox nc the migration command uses.
   repository: docker.io/nginxinc/nginx-unprivileged
   tag: "1.30-alpine"
 size: small
@@ -28,8 +22,7 @@ probe:
 env: {}
 postgres:
   enabled: true
-  # Trivial but real: fails if DATABASE_URL is unset, and fails if the
-  # CloudNativePG read-write Service (shop-db-rw, from the chart's naming
-  # convention) is not accepting connections on 5432.
+  # Fails unless DATABASE_URL is set and the database's read-write Service
+  # accepts connections.
   migrationCommand: >-
     test -n "$DATABASE_URL" && nc -z -w 5 shop-db-rw 5432 && echo "migrated: DATABASE_URL set, shop-db-rw:5432 reachable"

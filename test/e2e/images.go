@@ -14,14 +14,11 @@ import (
 	"time"
 )
 
-// Images from rate-limited registries (docs/implementation-notes/
-// 128-e2e-image-cache.md). GitHub-hosted runners share their addresses, so
-// Docker Hub's and ECR Public's anonymous pull limits are spent by strangers
-// too, and a refused pull fails the whole run: ArgoCD's Redis from ECR
-// Public did, three times in two days (#128). PreloadImages pulls each of
-// these once on the machine running the test, retrying a refusal, keeps the
-// archive in a directory CI caches between runs, and loads it into the
-// node, so the node finds the image already present instead of pulling it.
+// GitHub-hosted runners share their addresses, so Docker Hub's and ECR
+// Public's anonymous pull limits are spent by strangers too, and a refused
+// pull fails the whole run. PreloadImages pulls such images on the host with
+// retries, keeps the archives in a directory CI caches, and loads them into
+// the node so it never pulls them itself.
 
 // ImageCacheEnv names the directory PreloadImages keeps its archives in.
 // CI sets it and caches the directory; unset, the archives go to a
@@ -42,10 +39,8 @@ var rateLimitedRegistries = map[string]bool{
 }
 
 // RegistryImages lists the images from rate-limited registries that the
-// Platform components pull in kind: those the rendered argo-cd and Traefik
-// charts name, the KSOPS init container's, and Alloy's, all at the versions
-// bootstrap/versions.yaml pins. Reading them from the charts means a
-// version bump needs no edit here.
+// Platform components pull in kind. They are read from the pinned charts, so
+// a version bump needs no edit here.
 func (c *Cluster) RegistryImages(ctx context.Context) ([]string, error) {
 	argocd, err := c.argoCDManifest(ctx)
 	if err != nil {
@@ -75,11 +70,9 @@ const alloyRepository = "docker.io/grafana/alloy"
 
 var alloyPinnedTag = regexp.MustCompile(`define "collector\.alloy\.pinnedImageTag" -}}\s*([^{\s]+)\s*{{`)
 
-// alloyImage is the Alloy image the Alloy Operator runs the monitoring
-// collectors with. The operator, not the rendered k8s-monitoring chart,
-// names it, so it is read from the tag the chart pins for the operator
-// (collector.alloy.pinnedImageTag, in
-// templates/collectors/_collector_version.tpl).
+// alloyImage is the image the Alloy Operator runs the collectors with. The
+// operator names it, not the rendered chart, so the tag is read from the
+// chart's collector.alloy.pinnedImageTag template.
 func (c *Cluster) alloyImage(ctx context.Context) (string, error) {
 	m := c.Versions.K8sMonitoring
 	dir, err := os.MkdirTemp("", "iidp-e2e-k8s-monitoring-*")
@@ -124,9 +117,9 @@ func manifestImages(manifest string) []string {
 	return images
 }
 
-// registry returns the registry host of an image reference, the way
-// containerd resolves it: a first path component with a dot or a colon, or
-// localhost, is a host; anything else is on Docker Hub.
+// registry returns the registry host of an image reference as containerd
+// resolves it: a first path component with a dot or colon, or localhost, is
+// a host; anything else is Docker Hub.
 func registry(image string) string {
 	first, _, found := strings.Cut(image, "/")
 	if !found || (!strings.ContainsAny(first, ".:") && first != "localhost") {
@@ -138,13 +131,10 @@ func registry(image string) string {
 	return first
 }
 
-// imageCache is the directory the image archives are kept in: the one
-// ImageCacheEnv names, or a temporary one Close removes.
 type imageCache struct {
 	dir       string
 	temporary bool
-	// used are the archives this run needed, the kind node image's
-	// included; finish keeps only these.
+	// used are the archives this run needed; finish keeps only these.
 	used []string
 }
 
@@ -156,14 +146,12 @@ func openImageCache() (*imageCache, error) {
 	return &imageCache{dir: dir, temporary: true}, err
 }
 
-// archive is the path of the named archive, recorded as used.
 func (ic *imageCache) archive(name string) string {
 	ic.used = append(ic.used, name)
 	return filepath.Join(ic.dir, name)
 }
 
-// finish removes the archives this run did not use and writes the index
-// listing those it did.
+// finish removes the archives this run did not use and writes the index.
 func (ic *imageCache) finish() error {
 	used := map[string]bool{}
 	for _, name := range ic.used {
@@ -188,10 +176,9 @@ func (ic *imageCache) remove() {
 	}
 }
 
-// PreloadImages loads each image into the node from the image cache, or
-// pulls it on this machine first, retrying a refused pull, and saves it to
-// the cache. Then it leaves the cache holding only the images this run
-// used, the kind node image's included, and writes its index.
+// PreloadImages loads each image into the node from the image cache,
+// pulling and caching it first when missing, then prunes the cache to what
+// this run used.
 func (c *Cluster) PreloadImages(ctx context.Context, images []string) error {
 	arch, err := c.nodeArch(ctx)
 	if err != nil {
@@ -225,9 +212,6 @@ func (c *Cluster) preloadImage(ctx context.Context, image, arch, archive string)
 	return nil
 }
 
-// pullAndSave pulls image for linux/arch, retrying a refused pull, and
-// saves it to archive under the name saveAs, tagging it first when that
-// differs.
 func (c *Cluster) pullAndSave(ctx context.Context, image, saveAs, arch, archive string) error {
 	attempts, err := retryPull(ctx, pullBackoff, func() (string, error) {
 		return c.run(ctx, c.Provider, "pull", "--platform", "linux/"+arch, image)
@@ -246,9 +230,8 @@ func (c *Cluster) pullAndSave(ctx context.Context, image, saveAs, arch, archive 
 	return c.save(ctx, saveAs, arch, archive)
 }
 
-// save writes image, already in the container engine, to archive. docker
-// save writes every platform of a multi-platform image unless told one, and
-// fails on those it did not pull; podman save only ever has the one.
+// save writes image to archive. docker save writes every platform of a
+// multi-platform image unless told one, and fails on those it did not pull.
 func (c *Cluster) save(ctx context.Context, image, arch, archive string) error {
 	args := []string{"save", "-o", archive + ".partial"}
 	if c.Provider == "docker" {
@@ -261,14 +244,11 @@ func (c *Cluster) save(ctx context.Context, image, arch, archive string) error {
 	return os.Rename(archive+".partial", archive)
 }
 
-// ensureNodeImage makes the pinned kind node image available to the
-// container engine without a registry pull when the cache has it, and
-// returns the name to create the cluster from. kind pulls the node image
-// from Docker Hub unless `docker inspect --type=image <name>` finds it, and
-// after save and load Docker's classic image store no longer resolves a
-// reference by digest. So the image is pulled by the pinned digest, tagged
-// with a local name carrying that digest, and cached and handed to kind
-// under that name.
+// ensureNodeImage makes the pinned kind node image available, from the
+// cache when it can, and returns the name to create the cluster from. kind
+// pulls unless `docker inspect` finds the image, and after save and load
+// Docker's classic store no longer resolves a digest reference, so the image
+// is handed to kind under a local tag carrying the digest.
 func (c *Cluster) ensureNodeImage(ctx context.Context) (string, error) {
 	pinned := c.Versions.Kind.NodeImage
 	local := localNodeImage(pinned)
@@ -276,8 +256,6 @@ func (c *Cluster) ensureNodeImage(ctx context.Context) (string, error) {
 	present := func() bool {
 		return exec.CommandContext(ctx, c.Provider, "image", "inspect", local).Run() == nil
 	}
-	// Only a machine that keeps images between runs, such as a laptop,
-	// has it already; a CI runner starts empty.
 	if present() {
 		c.Log("image cache: %s is already in %s", local, c.Provider)
 		return local, nil
@@ -294,9 +272,8 @@ func (c *Cluster) ensureNodeImage(ctx context.Context) (string, error) {
 	return local, c.pullAndSave(ctx, pinned, local, runtime.GOARCH, archive)
 }
 
-// localNodeImage is the local name ensureNodeImage gives the kind node
-// image: the pinned digest's first 16 hex digits when there is one, else
-// the tag, so a new pin gets a new name.
+// localNodeImage names the node image after the pinned digest (or tag), so
+// a new pin gets a new name.
 func localNodeImage(pinned string) string {
 	id := pinned
 	if _, digest, ok := strings.Cut(pinned, "@sha256:"); ok && len(digest) >= 16 {
@@ -307,15 +284,13 @@ func localNodeImage(pinned string) string {
 	return "iidp-e2e.local/kind-node:" + id
 }
 
-// pullBackoff is how long retryPull waits before each retry: about four
-// minutes in all, long enough for a per-second or per-minute limit to
+// pullBackoff totals about four minutes: enough for a per-minute limit to
 // clear, well inside the job's timeout.
 var pullBackoff = []time.Duration{10 * time.Second, 20 * time.Second, 40 * time.Second, 80 * time.Second, 80 * time.Second}
 
-// retryPull calls pull until it succeeds, waiting backoff[i] before retry
-// i+1 when the failure looks transient (transientPullError), and returns
-// the number of attempts made. A failure that does not, such as a tag that
-// does not exist, is returned at once.
+// retryPull retries pull while its failures look transient and returns the
+// number of attempts made. Any other failure, such as a missing tag, is
+// returned at once.
 func retryPull(ctx context.Context, backoff []time.Duration, pull func() (string, error), onRetry func(attempt int, wait time.Duration, out string)) (int, error) {
 	for attempt := 1; ; attempt++ {
 		out, err := pull()
@@ -335,21 +310,16 @@ func retryPull(ctx context.Context, backoff []time.Duration, pull func() (string
 
 var transientPull = regexp.MustCompile(`(?i)\b(429|too ?many ?requests|toomanyrequests|50[0-4]|internal server error|bad gateway|service unavailable|gateway timeout|timeout|timed out|connection reset|connection refused|unexpected EOF|temporary failure)\b`)
 
-// transientPullError reports whether a failed pull's output reads like a
-// refusal or an outage that a later attempt can get past: a rate limit
-// (HTTP 429), a server error (5xx) or a network failure.
 func transientPullError(out string) bool {
 	return transientPull.MatchString(out)
 }
 
-// archiveName is the image's archive file name in the cache: the reference
-// with its separators replaced, and the platform, since the archive holds
-// only the node's.
+// archiveName includes the platform, since the archive holds only the
+// node's.
 func archiveName(image, arch string) string {
 	return strings.NewReplacer("/", "_", ":", "_", "@", "_").Replace(image) + "_linux-" + arch + ".tar"
 }
 
-// nodeArch is the kind node's CPU architecture, as Go and OCI name it.
 func (c *Cluster) nodeArch(ctx context.Context) (string, error) {
 	arch, err := c.Kubectl(ctx, "get", "nodes", "-o", "jsonpath={.items[0].status.nodeInfo.architecture}")
 	arch = strings.TrimSpace(arch)
@@ -360,9 +330,8 @@ func (c *Cluster) nodeArch(ctx context.Context) (string, error) {
 }
 
 // LogImageSources logs, from the kubelet's events, which images the node
-// pulled from a registry and which it found already present. Events of a
-// namespace that has since been deleted are gone with it. Best-effort, like
-// the other diagnostics: it never fails the test.
+// pulled and which it found already present. Events of deleted namespaces
+// are gone. Best-effort: it never fails the test.
 func (c *Cluster) LogImageSources(ctx context.Context) {
 	out, err := c.Kubectl(ctx, "get", "events", "-A", "--field-selector=reason=Pulled", "-o", "json")
 	if err != nil {
@@ -393,7 +362,6 @@ func (c *Cluster) LogImageSources(ctx context.Context) {
 	c.Log("images the node found already present:\n  %s", strings.Join(sortedKeys(present), "\n  "))
 }
 
-// quoted returns the first double-quoted string in s, or "".
 func quoted(s string) string {
 	start := strings.IndexByte(s, '"')
 	if start < 0 {

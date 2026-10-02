@@ -1,8 +1,5 @@
-# The kind harness's stand-in for GitHub (main.go in this directory). The
-# harness cross-compiles the binary into <TARGETPLATFORM>/fakegithub, the
-# same layout as the Deploy gate's own image (cmd/iidp-deploy-gate), and
-# builds from the Alpine base the git server already pulled. Never
-# published.
+# The kind harness's stand-in for GitHub. The harness cross-compiles the
+# binary into <TARGETPLATFORM>/fakegithub, as for the Deploy gate's image.
 FROM docker.io/library/alpine:3.22
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/fakegithub /usr/local/bin/fakegithub

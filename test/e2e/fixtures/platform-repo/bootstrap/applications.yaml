@@ -1,13 +1,6 @@
-# Discovers every Environment's ArgoCD Application under applications/: the
-# CLI writes applications/<name>/<environment>/application.yaml, and each
-# Application's Preview Environments as the ApplicationSet
-# applications/<name>/previews/applicationset.yaml (see
-# docs/platform-repository.md in the iidp repository), and nothing else made
-# ArgoCD pick those up. Not part of the iidp bootstrap chart, like
-# platform-components.yaml and platform-secrets.yaml above: every Platform
-# repository carries this file once, next to them, written by
-# scripts/bootstrap-wizard.sh (write_bootstrap_applications). The wizard
-# tests fail if this fixture gains a top-level file the wizard does not write.
+# Discovers every Environment's Application and every previews
+# ApplicationSet the CLI writes under applications/. Like the other files
+# here it is written by the bootstrap wizard, not the bootstrap chart.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

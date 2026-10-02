@@ -1,8 +1,5 @@
-# In the kind fixture this is exactly what the CLI writes for notes
-# (TestFixturePreviewsAreTheCLIsApplicationSet keeps it so): its sources are
-# staging's, the chart from this repository included, and api is
-# platform.yaml's githubAPI, the harness's fake GitHub, which serves
-# notes's pull requests (test/e2e/testdata/fakegithub).
+# Exactly what the CLI writes for notes, which
+# TestFixturePreviewsAreTheCLIsApplicationSet checks.
 # The Preview Environments of notes: one Environment for each open pull request labelled preview on Itema-as/notes, removed with its namespace and database when the pull request closes or loses the label.
 # Written by iidp; do not edit by hand.
 apiVersion: argoproj.io/v1alpha1

@@ -1,7 +1,6 @@
-// Package release_test runs the release workflow's major-tag step
-// (.github/workflows/release.yaml, job major-tag) against throwaway git
-// repositories, the way GitHub Actions would: in a checkout of the release
-// tag, with origin being the repository to push to.
+// Package release_test runs the release workflow's major-tag step against
+// throwaway git repositories, in a checkout of the release tag as GitHub
+// Actions would.
 package release_test
 
 import (

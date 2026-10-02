@@ -4,9 +4,7 @@
 # for people to read, and goes stale on a rename.
 # Written by iidp (iidp app create, iidp app bind); do not edit by hand.
 #
-# In the kind fixture the ids are the harness's own: TestBootstrap's
-# testDeployGate signs tokens carrying repository_id 700000001 and
-# Itema-as's org id.
+# testDeployGate signs tokens carrying these ids.
 repository: Itema-as/brochure
 repositoryId: 700000001
 repositoryOwnerId: 1230559

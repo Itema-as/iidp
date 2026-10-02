@@ -1,29 +1,18 @@
-// Command fakegithub stands in for GitHub inside the kind harness, for the
-// Deploy gate (docs/implementation-notes/60-deploy-gate.md): kind has no
-// route to GitHub, and a real GitHub Actions OIDC token can only come from
-// a real workflow run. It serves
+// Command fakegithub stands in for GitHub inside the kind harness, which has
+// no route to GitHub and no real GitHub Actions OIDC tokens. It serves:
 //
-//   - the OIDC issuer's key set, GET /.well-known/jwks, from the file
-//     JWKS_FILE: the public half of the key the test signs its tokens
-//     with, so the gate verifies them exactly as it verifies GitHub's;
-//   - under /api, the three GitHub REST calls the gate makes: an
-//     installation token (checking the App JWT against the public key in
-//     APP_PUBLIC_KEY_FILE), the App's slug, and its bot account's id;
-//   - under /api/v3, where GitHub Enterprise has its API, the two calls
-//     ArgoCD's Pull Request generator makes for Preview Environments
-//     (#95) with the same App: an installation token, and a repository's
-//     open pull requests. The generator is pointed here by the fixture
-//     platform.yaml's githubAPI, as it would be at a GitHub Enterprise;
-//   - GET /api/repositories/{id}, the one call a status call makes with a
-//     developer's own token (docs/implementation-notes/94-app-status.md);
-//   - PUT /e2e/pulls/{owner}/{repo}, which only the test calls (through a
-//     port-forward): the repository's pull requests from then on, open
-//     and closed, which is how the test opens, labels and closes them.
+//   - GET /.well-known/jwks: the key set the test signs its tokens with;
+//   - under /api, the GitHub REST calls the Deploy gate makes, checking the
+//     GitHub App's JWT against APP_PUBLIC_KEY_FILE;
+//   - under /api/v3, GitHub Enterprise's API path, the calls ArgoCD's Pull
+//     Request generator makes;
+//   - GET /api/repositories/{id}, which the Deploy gate's status endpoint
+//     calls with a developer's token to check they may read the repository;
+//   - PUT /e2e/pulls/{owner}/{repo}, which the test calls to set the pull
+//     requests.
 //
-// test/e2e/deploygate.go builds it, loads it into the cluster and runs it;
-// it is never published. It sits under testdata so that the pattern
-// ./test/e2e/... the e2e workflow runs still matches one package, whose
-// output go test then streams as the run goes instead of buffering it.
+// It sits under testdata so that ./test/e2e/... matches a single package,
+// whose output go test streams instead of buffering.
 package main
 
 import (
@@ -56,10 +45,8 @@ const (
 	DeveloperToken = "e2e-developer-token"
 )
 
-// readableRepositories are the repository ids DeveloperToken may read,
-// with their full names: the fixture's bindings of shop and notes (whose
-// Preview Environment the status test lists). brochure's is not among
-// them, so its status is refused.
+// readableRepositories are the repository ids DeveloperToken may read:
+// shop's and notes's, but not brochure's.
 var readableRepositories = map[string]string{
 	"700000002": "Itema-as/shop",
 	"700000003": "Itema-as/notes",
@@ -140,10 +127,7 @@ func main() {
 		pulls.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	})
-	// The status endpoint's access check, made with the developer's own
-	// token: DeveloperToken can read readableRepositories (shop's and
-	// notes's) and nothing else, which GitHub answers with 404; any other
-	// token is not a token GitHub knows.
+	// GitHub answers 404 for a repository the token cannot read.
 	mux.HandleFunc("GET /api/repositories/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+DeveloperToken {
 			http.Error(w, `{"message": "Bad credentials"}`, http.StatusUnauthorized)
@@ -163,8 +147,9 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", logRequests(mux)))
 }
 
-// pullRequest is a pull request in the shape GitHub's REST API lists it,
-// with every field ArgoCD's generator reads (it dereferences each one).
+// pullRequest has every field ArgoCD's Pull Request generator reads. The
+// generator dereferences each one without a nil check, so none may be left
+// out.
 type pullRequest struct {
 	Number int     `json:"number"`
 	Title  string  `json:"title"`
@@ -188,7 +173,6 @@ type user struct {
 	Login string `json:"login"`
 }
 
-// pulls holds every repository's pull requests, as the test last set them.
 var pulls = struct {
 	sync.Mutex
 	byRepo map[string][]pullRequest
@@ -221,8 +205,7 @@ func readPublicKey(path string) (*rsa.PublicKey, error) {
 	return rsaKey, nil
 }
 
-// verifyAppJWT checks the request is signed by the App's private key, the
-// way GitHub does.
+// verifyAppJWT checks the request is signed by the App's private key.
 func verifyAppJWT(r *http.Request, key *rsa.PublicKey) error {
 	jwt, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok {

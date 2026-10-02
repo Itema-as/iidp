@@ -2,9 +2,8 @@
 # repository's platform.yaml as values. The root Application `platform`
 # (applied by cloud-init, or by the kind harness) syncs this file.
 #
-# In the harness both repositories are served by an in-cluster git server;
-# on the Platform they are https://github.com/Itema-as/iidp.git (pinned to a
-# release tag) and https://github.com/Itema-as/iidp-platform.git.
+# On a real Platform the repositories are on GitHub and the bootstrap is
+# pinned to a release tag.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

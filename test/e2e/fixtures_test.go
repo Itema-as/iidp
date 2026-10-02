@@ -14,10 +14,8 @@ import (
 	"github.com/Itema-as/iidp/internal/render"
 )
 
-// The fixture's previews ApplicationSet is exactly what the CLI writes for
-// notes from the fixture's own staging application.yaml, binding and
-// platform.yaml: the kind test proves the CLI's ApplicationSet, not a
-// hand-made one. Runs without the e2e tag, like the test below.
+// The fixture's previews ApplicationSet must be exactly what the CLI writes,
+// so the kind test exercises the CLI's ApplicationSet, not a hand-made one.
 func TestFixturePreviewsAreTheCLIsApplicationSet(t *testing.T) {
 	root := filepath.Join("fixtures", "platform-repo")
 	cfg, err := platformrepo.LoadConfig(root)
@@ -53,11 +51,9 @@ func TestFixturePreviewsAreTheCLIsApplicationSet(t *testing.T) {
 	}
 }
 
-// The fixture Platform repository's Environments are hand-written in the
-// shape the CLI writes; their namespace labels, which the guardrails
-// select Application namespaces by (#90), must be exactly the CLI's, or
-// the kind test proves the guardrails against namespaces the Platform
-// never has. Runs without the e2e tag, so a drift fails go test ./....
+// The hand-written fixture Environments' namespace labels, which the
+// guardrails select on, must be exactly the CLI's, or the kind test proves
+// the guardrails against namespaces the Platform never has.
 func TestFixtureNamespacesCarryTheCLIsLabels(t *testing.T) {
 	matches, err := filepath.Glob(filepath.Join("fixtures", "platform-repo", "applications", "*", "*", "application.yaml"))
 	if err != nil {

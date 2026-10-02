@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 #
-# Tests for infra/tofu-env.sh, the file infra/README.md has the admin source
-# before any `tofu` command in infra/platform. Run from anywhere:
+# Tests for infra/tofu-env.sh. Run from anywhere:
 #
 #   bash test/tofu-env/run.sh
 #
-# Each case sources the script in a fresh shell process, the way an admin's
-# new terminal would, under bash and (when installed) zsh, the macOS login
-# shell. The fixtures are never named terraform.tfvars: the script is
-# pointed at them with IIDP_STATE_TFVARS, the same override it documents.
+# Each case sources the script in a fresh shell process, under bash and
+# (when installed) zsh, the macOS login shell. The fixtures are passed with
+# IIDP_STATE_TFVARS.
 set -uo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,7 +72,8 @@ WORK="$(scratch_dir)"
 ERR_FILE="$WORK/stderr"
 
 # The format the bootstrap wizard's tfvar_set writes (one key = "value" per
-# line), with the other keys it writes into the same file around them.
+# line), with the other keys it writes into the same file around them. The
+# access key is there twice to show that the script takes the last line.
 cat > "$WORK/wizard.tfvars" <<'EOF'
 object_storage_access_key = "OLDACCESSKEY"
 object_storage_access_key = "AKIAFIXTURE0123"
@@ -97,8 +96,7 @@ for sh in "${SHELLS[@]}"; do
   t_start "$sh: says which file the keys came from"
   err="$(cat "$ERR_FILE")"
   assert_contains "$err" "exported AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from $WORK/wizard.tfvars"
-  # (stdout above is this harness printing the environment; the script's
-  # own output all goes to stderr.)
+  # The script's own output all goes to stderr.
   t_start "$sh: the access key is not printed"
   assert_not_contains "$err" "AKIAFIXTURE0123"
   t_start "$sh: the secret key is not printed"
@@ -129,10 +127,8 @@ for sh in "${SHELLS[@]}"; do
   out="$(STALE_KEYS=1 in_shell "$sh" "$SCRIPT" "$WORK/no-secret.tfvars")"
   assert_eq "$out" "$(printf '%s\n' 1 stale-access stale-secret)"
 
-  # Without IIDP_STATE_TFVARS the file is found next to the script, however
-  # it was sourced: the script is copied into a scratch infra/ directory and
-  # sourced from / by absolute path. The file is left absent, so the path
-  # the script resolved shows in its error without any tfvars file existing.
+  # The tfvars file is left absent, so the path the script resolved shows
+  # in its error.
   t_start "$sh: without IIDP_STATE_TFVARS it reads state-bucket/terraform.tfvars next to itself"
   layout="$(scratch_dir)"
   mkdir -p "$layout/infra/state-bucket"

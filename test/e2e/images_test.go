@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// The refusal #128 is about, as containerd reported it.
+// A real rate-limit refusal, as containerd reported it.
 const ecrRateLimited = `Failed to pull image "ecr-public.aws.com/docker/library/redis:8.6.4-alpine": failed to pull and unpack image: unexpected status from GET request to https://ecr-public.aws.com/v2/docker/library/redis/manifests/sha256:2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763: 429 Too Many Requests`
 
 func TestTransientPullError(t *testing.T) {
@@ -38,8 +38,6 @@ func TestTransientPullError(t *testing.T) {
 	}
 }
 
-// A cold cache survives a rate limit: the pull is retried after each 429,
-// with the backoff given, until it succeeds.
 func TestRetryPullRetriesARateLimit(t *testing.T) {
 	backoff := []time.Duration{time.Millisecond, 2 * time.Millisecond, 3 * time.Millisecond}
 	calls := 0
@@ -123,10 +121,8 @@ func TestManifestImages(t *testing.T) {
 	}
 }
 
-// RegistryImages reads the images from the pinned charts, so a chart bump
-// is followed with no edit to the harness. It fetches the charts from their
-// repositories, so it runs only where IIDP_REQUIRE_CHART_TOOLS is set (the
-// e2e workflow's lint job), not in every go test ./... with helm on PATH.
+// Fetches the charts over the network, so it runs only where
+// IIDP_REQUIRE_CHART_TOOLS is set.
 func TestRegistryImagesFollowThePinnedCharts(t *testing.T) {
 	if os.Getenv("IIDP_REQUIRE_CHART_TOOLS") == "" {
 		t.Skip("fetches charts over the network; set IIDP_REQUIRE_CHART_TOOLS=1 to run")
@@ -159,8 +155,6 @@ func TestRegistryImagesFollowThePinnedCharts(t *testing.T) {
 	}
 }
 
-// The kind node image's local name carries the pinned digest, so moving
-// the pin gives a new name and a new archive.
 func TestLocalNodeImage(t *testing.T) {
 	for pinned, want := range map[string]string{
 		"kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed": "iidp-e2e.local/kind-node:sha256-099e049362a1526b",

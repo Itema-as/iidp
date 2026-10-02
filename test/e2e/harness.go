@@ -1,13 +1,7 @@
 // Package e2e stands up a kind cluster the way the Platform node is
-// bootstrapped: Traefik as k3s ships it, ArgoCD rendered from the pinned
-// argo-cd Helm chart, the age key Secret, and the root Application
-// `platform`, with the Platform repository and this repository's bootstrap
-// served by a git server inside the cluster. No cloud account is involved.
-//
-// TestBootstrap (bootstrap_test.go, build tag e2e) drives it end to end.
-// The Cluster type is exported so a later test can deploy a fixture
-// Application through the same harness and reach Traefik on the host ports
-// it maps.
+// bootstrapped (Traefik as k3s ships it, ArgoCD from the pinned chart, the
+// age key Secret and the root Application), with the repositories served by
+// an in-cluster git server. No cloud account is involved.
 package e2e
 
 import (
@@ -47,52 +41,35 @@ const (
 
 	gitServerImage = "iidp-e2e.local/git-server:dev"
 
-	// objectStorageImage runs the harness's own in-cluster Object Storage
-	// stand-in (InstallObjectStorage), so the final Backup PreDelete hook
-	// (docs/implementation-notes/39-final-backup-predelete-hook.md) can
-	// genuinely complete in kind for the one Environment TestBootstrap
-	// deletes, rather than only being proven to have run. It is Versity's
-	// S3 gateway (versitygw, Apache-2.0) over its posix backend: one Go
-	// binary on Alpine, pinned by release tag and digest, pulled anonymously
-	// from ghcr.io. It replaced MinIO when quay.io/minio/minio and
-	// quay.io/minio/mc stopped serving anonymous pulls on 2026-09-24, as
-	// docker.io/minio/* had before them
-	// (docs/implementation-notes/71-e2e-s3-server.md). Not something either
-	// the chart or a real bootstrap ever installs.
+	// objectStorageImage is the harness-only S3 stand-in, so the chart's
+	// PreDelete hook that takes a final Backup of a deleted Environment's
+	// database can really complete in kind. versitygw rather than MinIO
+	// because MinIO's images no longer allow anonymous pulls.
 	objectStorageImage = "ghcr.io/versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499"
-	// ObjectStorageAccessKey and ObjectStorageSecretKey are the harness's
-	// fixed Object Storage root credentials. Not secret -- this cluster
-	// never leaves the machine running the test. These must match the
-	// plaintext bootstrap/templates/backups-credentials.enc.yaml decrypts to
-	// in the fixture Platform repository (test/e2e/fixtures/platform-repo),
-	// the same values every Environment's copy of that file carries
-	// (docs/implementation-notes/42-backups-credentials.md); the harness no
-	// longer creates the backups-credentials Secret itself.
+	// ObjectStorageAccessKey and ObjectStorageSecretKey are the stand-in's
+	// root credentials (not secret: the cluster never leaves the machine).
+	// They must match what the fixture's backups-credentials.enc.yaml files
+	// decrypt to.
 	ObjectStorageAccessKey = "iidpe2e"
 	ObjectStorageSecretKey = "iidpe2epassword"
-	// ObjectStorageBucket is the bucket InstallObjectStorage creates,
-	// matching the fixture Platform repository's platform.backupsBucket.
-	// The stand-in answers at
-	// http://object-storage.<GitServerNamespace>.svc.cluster.local:7070
-	// (7070 is versitygw's default port), which the fixture's shop-staging
-	// platform.objectStorageEndpoint hardcodes.
+	// ObjectStorageBucket is the bucket InstallObjectStorage creates. It and
+	// the stand-in's address,
+	// http://object-storage.<GitServerNamespace>.svc.cluster.local:7070, are
+	// hardcoded in the fixture Platform repository.
 	ObjectStorageBucket = "iidp-backups"
 
-	// Traefik's entrypoints are NodePorts in kind (there is no ServiceLB);
-	// the kind config maps them to host ports so a test can curl Traefik
-	// with a Host header.
+	// kind has no ServiceLB, so Traefik's entrypoints are NodePorts that the
+	// kind config maps to host ports.
 	traefikWebNodePort       = 30080
 	traefikWebsecureNodePort = 30443
 
-	// auditPolicyPath is where the kind node, and its API server, see the
-	// Platform's audit policy; AuditLogPath is where the API server writes
-	// the audit log, on the node.
 	auditPolicyPath = "/etc/kubernetes/iidp-audit-policy.yaml"
-	AuditLogPath    = "/var/log/kubernetes/audit/audit.log"
+	// AuditLogPath is where the API server writes the audit log, on the
+	// kind node.
+	AuditLogPath = "/var/log/kubernetes/audit/audit.log"
 )
 
-// Versions is the part of bootstrap/versions.yaml the harness needs to
-// mimic the node.
+// Versions is the part of bootstrap/versions.yaml the harness needs.
 type Versions struct {
 	ArgoCD struct {
 		Chart      string `yaml:"chart"`
@@ -150,8 +127,7 @@ func LoadVersions(repoRoot string) (Versions, error) {
 	return v, nil
 }
 
-// RepoRoot finds the repository root (the directory holding go.mod) from
-// the working directory, which go test sets to the package directory.
+// RepoRoot finds the directory holding go.mod above the working directory.
 func RepoRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -171,22 +147,17 @@ func RepoRoot() (string, error) {
 
 // Cluster is one kind cluster prepared like the Platform node.
 type Cluster struct {
-	// Name is the kind cluster name.
-	Name string
-	// Kubeconfig is the file every kubectl and helm call uses.
+	Name       string
 	Kubeconfig string
 	// HTTPPort and HTTPSPort are the host ports mapped to Traefik's web and
 	// websecure entrypoints.
 	HTTPPort  int
 	HTTPSPort int
-	// Provider is the container engine kind runs on and images are built
-	// with: podman when KIND_EXPERIMENTAL_PROVIDER says so, else docker.
+	// Provider is the container engine kind runs on: podman or docker.
 	Provider string
-	// RepoRoot is this repository's root; Versions its bootstrap/versions.yaml.
 	RepoRoot string
 	Versions Versions
-	// Log receives progress lines; tests pass t.Logf.
-	Log func(format string, args ...any)
+	Log      func(format string, args ...any)
 
 	images *imageCache
 }
@@ -258,11 +229,9 @@ func (c *Cluster) Create(ctx context.Context) error {
 			}
 		}
 	}
-	// The API server writes an audit log with the Platform node's own
-	// audit policy (infra/platform/cloud-init/audit-policy.yaml, which
-	// cloud-init gives k3s), so the guardrails' Audit action has somewhere
-	// to go and AuditLog can read it. kubeadm v1beta4 (Kubernetes 1.31 and
-	// later) takes extraArgs as a list of name/value pairs.
+	// The API server audits with the Platform node's own policy, so the
+	// guardrails' Audit action can be observed. kubeadm v1beta4 (Kubernetes
+	// 1.31 and later) takes extraArgs as a list of name/value pairs.
 	config := fmt.Sprintf(`kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -320,25 +289,12 @@ nodes:
 	if err != nil {
 		return fmt.Errorf("kind create cluster: %w\n%s", err, out)
 	}
-	// kind's single node stands in for the whole Platform node plus, on a
-	// hosted CI runner, the CI machine's own overhead; two CoreDNS replicas
-	// (kind's default, for the node it does not have) claim CPU and memory
-	// the Platform components and the fixture Application need instead. One
-	// replica is still enough DNS for a cluster this small.
+	// The whole stack shares a hosted CI runner's 2 vCPUs, so kind's own
+	// CoreDNS and local-path provisioner are cut down to what a single-node
+	// cluster needs, leaving CPU for the fixture Applications.
 	if out, err := c.Kubectl(ctx, "-n", "kube-system", "scale", "deployment/coredns", "--replicas=1"); err != nil {
 		return fmt.Errorf("scale coredns: %w\n%s", err, out)
 	}
-	// kind's own components -- CoreDNS and the local-path provisioner --
-	// request CPU sized for a real cluster's node count, not for sharing a
-	// hosted CI runner's 2 vCPUs with the entire platform stack and both
-	// shop Environments. Neither is the product under test; trimming their
-	// requests to what this single-node, low-traffic cluster actually needs
-	// gives that CPU back to the fixture Applications' own Deployments and
-	// Jobs, which is what a scheduling failure here would otherwise starve
-	// (docs/implementation-notes/39-final-backup-predelete-hook.md). The
-	// static control-plane pods (kube-apiserver, etcd, etc.) are left alone:
-	// they are not Deployments, `kubectl set resources` cannot reach them,
-	// and their requests reflect the control plane's own real needs.
 	if out, err := c.Kubectl(ctx, "-n", "kube-system", "set", "resources", "deployment/coredns", "--requests=cpu=10m"); err != nil {
 		return fmt.Errorf("trim coredns cpu request: %w\n%s", err, out)
 	}
@@ -358,9 +314,8 @@ func (c *Cluster) Delete(ctx context.Context) error {
 	return nil
 }
 
-// Close removes the image cache directory when it is a temporary one
-// (ImageCacheEnv unset). It leaves the cluster alone, so it runs whether or
-// not the cluster is kept.
+// Close removes the image cache directory when it is a temporary one. It
+// leaves the cluster alone.
 func (c *Cluster) Close() {
 	c.images.remove()
 }
@@ -402,8 +357,7 @@ type AuditEvent struct {
 	Annotations map[string]string `json:"annotations"`
 }
 
-// AuditLog reads the API server's audit log off the kind node (Create
-// turns it on with the Platform's audit policy) and returns its events.
+// AuditLog reads the API server's audit log off the kind node.
 func (c *Cluster) AuditLog(ctx context.Context) ([]AuditEvent, error) {
 	cmd := exec.CommandContext(ctx, c.Provider, "exec", c.Name+"-control-plane", "cat", AuditLogPath)
 	var stdout, stderr bytes.Buffer
@@ -429,13 +383,11 @@ func (c *Cluster) Helm(ctx context.Context, args ...string) (string, error) {
 	return c.run(ctx, "helm", args...)
 }
 
-// InstallTraefik installs the Traefik chart k3s bundles (its own build of
-// the upstream chart, from k3s-charts), with the values k3s and the
-// bootstrap's HelmChartConfig set: the image k3s pins, the HTTP to HTTPS redirect on the web entrypoint, and (kind
-// has no ServiceLB) NodePorts plus the node IP published on Ingress status
-// so ArgoCD sees the Ingress as healthy and external-dns has an address to
-// read. It also installs the HelmChartConfig CRD from k3s's helm-controller
-// so the bootstrap's HelmChartConfig applies; nothing in kind acts on it.
+// InstallTraefik installs the Traefik chart k3s bundles with the values k3s
+// and the bootstrap's HelmChartConfig set, plus NodePorts and the node IP on
+// Ingress status in place of the ServiceLB kind lacks. It also installs the
+// HelmChartConfig CRD so the bootstrap's HelmChartConfig applies, though
+// nothing in kind acts on it.
 func (c *Cluster) InstallTraefik(ctx context.Context) error {
 	nodeIP, err := c.Kubectl(ctx, "get", "nodes", "-o", `jsonpath={.items[0].status.addresses[?(@.type=="InternalIP")].address}`)
 	if err != nil || strings.TrimSpace(nodeIP) == "" {
@@ -463,10 +415,8 @@ func (c *Cluster) InstallTraefik(ctx context.Context) error {
 		// node IP instead.
 		"--set", "providers.kubernetesIngress.publishedService.enabled=false",
 		"--set", "additionalArguments={--providers.kubernetesingress.ingressendpoint.ip="+nodeIP+"}",
-		// The chart's own default CPU request (100m) is generous for a
-		// kind node that also has to schedule the whole platform stack and
-		// both shop Environments on a hosted CI runner's 2 vCPUs; this
-		// harness only needs Traefik to route a handful of test requests.
+		// Below the chart's 100m default, to fit everything on a 2 vCPU
+		// CI runner.
 		"--set", "resources.requests.cpu=20m",
 		"--set", "resources.requests.memory=64Mi",
 		"--wait", "--timeout", "5m")
@@ -480,15 +430,11 @@ func (c *Cluster) InstallTraefik(ctx context.Context) error {
 	return nil
 }
 
-// InstallArgoCD installs ArgoCD exactly as cloud-init does
-// (infra/platform/cloud-init/user-data.yaml.tftpl): rendering the argo-cd
-// chart with helm template (the local helm on PATH, unlike cloud-init which
-// downloads a pinned one) and applying the output server-side, with the
-// minimum values the argocd bootstrap Application's takeover relies on for
-// the objects' shape (fullnameOverride: argocd, crds.install: true), so
-// that Application's first sync only ever patches what is already running
-// (docs/implementation-notes/04-bootstrap.md, "Installing from the chart,
-// not the upstream manifests"). Then waits for ArgoCD to be up.
+// InstallArgoCD installs ArgoCD as cloud-init does: helm template of the
+// argo-cd chart, applied server-side, with fullnameOverride and crds.install
+// set as the bootstrap's argocd Application sets them, so that Application's
+// first sync, when it starts managing the running ArgoCD, only patches what
+// is already there. Then it waits for ArgoCD.
 func (c *Cluster) InstallArgoCD(ctx context.Context) error {
 	a := c.Versions.ArgoCD
 	c.Log("installing ArgoCD by rendering the argo-cd chart %s", a.Chart)
@@ -515,8 +461,6 @@ func (c *Cluster) InstallArgoCD(ctx context.Context) error {
 	return nil
 }
 
-// argoCDManifest renders the argo-cd chart the way InstallArgoCD applies
-// it.
 func (c *Cluster) argoCDManifest(ctx context.Context) (string, error) {
 	a := c.Versions.ArgoCD
 	manifest, err := c.HelmTemplate(ctx, "argocd", "argo-cd",
@@ -529,9 +473,8 @@ func (c *Cluster) argoCDManifest(ctx context.Context) (string, error) {
 	return manifest, nil
 }
 
-// HelmTemplate runs helm template and returns just the rendered manifests
-// (stdout kept separate from stderr), so the result is safe to feed to
-// kubectl apply without helm's own log lines corrupting the YAML.
+// HelmTemplate runs helm template and returns stdout only, so helm's log
+// lines on stderr cannot corrupt the YAML.
 func (c *Cluster) HelmTemplate(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "helm", append([]string{"template"}, args...)...)
 	cmd.Env = c.env()
@@ -544,9 +487,8 @@ func (c *Cluster) HelmTemplate(ctx context.Context, args ...string) (string, err
 	return stdout.String(), nil
 }
 
-// CreateAgeKeySecret creates the Secret argocd/sops-age with the age private
-// key at keyFile under keys.txt, the layout cloud-init produces and KSOPS
-// mounts.
+// CreateAgeKeySecret creates the Secret argocd/sops-age with keyFile under
+// keys.txt, the layout cloud-init produces and KSOPS mounts.
 func (c *Cluster) CreateAgeKeySecret(ctx context.Context, keyFile string) error {
 	out, err := c.Kubectl(ctx, "-n", "argocd", "create", "secret", "generic", "sops-age", "--from-file=keys.txt="+keyFile)
 	if err != nil {
@@ -555,31 +497,15 @@ func (c *Cluster) CreateAgeKeySecret(ctx context.Context, keyFile string) error 
 	return nil
 }
 
-// CreateNamespace creates a namespace, doing nothing if it already exists
-// (kubectl apply is idempotent). Used for namespaces something needs to
-// exist ahead of ArgoCD's own CreateNamespace=true (GitServerNamespace,
-// below); the fixture Application's own Environment namespaces no longer
-// need this -- the backups-credentials Secret they need arrives through
-// their own Application's sops/ source, at the same sync-wave as the
-// Cluster and ObjectStore that reference it, not ahead of it
-// (docs/implementation-notes/42-backups-credentials.md).
+// CreateNamespace creates a namespace, doing nothing if it already exists.
 func (c *Cluster) CreateNamespace(ctx context.Context, name string) error {
 	return c.Apply(ctx, fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n", name))
 }
 
-// InstallObjectStorage deploys a single-Pod S3-compatible server
-// (versitygw, objectStorageImage) in GitServerNamespace, alongside the git
-// server, with ObjectStorageBucket already in it: a harness-only
-// component, installed by neither the chart nor a real bootstrap, that
-// lets the final Backup PreDelete hook's Backup genuinely reach phase
-// completed in kind for the one Environment TestBootstrap deletes
-// (docs/implementation-notes/39-final-backup-predelete-hook.md,
-// docs/implementation-notes/71-e2e-s3-server.md).
+// InstallObjectStorage deploys the harness-only S3 stand-in in
+// GitServerNamespace with ObjectStorageBucket already in it.
 func (c *Cluster) InstallObjectStorage(ctx context.Context) error {
 	c.Log("installing the Object Storage stand-in (namespace %s, bucket %s)", GitServerNamespace, ObjectStorageBucket)
-	// GitServerNamespace may not exist yet: ServeGitRepositories creates it
-	// too, but does not have to run before this does, and CreateNamespace
-	// is idempotent either way.
 	if err := c.CreateNamespace(ctx, GitServerNamespace); err != nil {
 		return err
 	}
@@ -593,9 +519,8 @@ func (c *Cluster) InstallObjectStorage(ctx context.Context) error {
 	return nil
 }
 
-// JobSucceeded reports whether the named Job's status.succeeded is at least
-// one. A Job that does not exist yet, or has not completed, reports false
-// with no error, so a caller can poll it.
+// JobSucceeded reports whether the named Job has succeeded. A missing or
+// unfinished Job reports false with no error, so a caller can poll it.
 func (c *Cluster) JobSucceeded(ctx context.Context, namespace, name string) (bool, error) {
 	out, err := c.Kubectl(ctx, "-n", namespace, "get", "job", name, "-o", "jsonpath={.status.succeeded}")
 	if err != nil {
@@ -619,11 +544,10 @@ func (c *Cluster) WaitForJobSucceeded(ctx context.Context, namespace, name strin
 		})
 }
 
-// WaitForJobRunning polls until the named Job runs command (the last
-// argument of its first container's command, the migration Job's sh -c
-// line) and has succeeded, then returns its log. A Sync hook's Job is
-// deleted and recreated on each sync, so the old run is not mistaken for
-// the new one.
+// WaitForJobRunning polls until the named Job, running command as its first
+// container's sh -c line, has succeeded, then returns its log. Matching on
+// command keeps a Sync hook's previous run from being mistaken for the new
+// one.
 func (c *Cluster) WaitForJobRunning(ctx context.Context, namespace, name, command string, timeout time.Duration) (string, error) {
 	var last string
 	err := pollUntil(ctx, timeout, 5*time.Second,
@@ -658,10 +582,8 @@ func (c *Cluster) WaitForJobRunning(ctx context.Context, namespace, name, comman
 	return logs, nil
 }
 
-// WaitForScheduledTaskRun polls until a Job the named Scheduled task's
-// CronJob created (the chart labels it iidp.itema.no/task) has succeeded,
-// and returns that Job's log. A run that failed fails the wait at once,
-// with its log.
+// WaitForScheduledTaskRun polls until a Job of the named Scheduled task has
+// succeeded and returns its log. A failed run fails the wait at once.
 func (c *Cluster) WaitForScheduledTaskRun(ctx context.Context, namespace, task string, timeout time.Duration) (string, error) {
 	var last, succeeded string
 	err := pollUntil(ctx, timeout, 5*time.Second,
@@ -704,14 +626,11 @@ func (c *Cluster) WaitForScheduledTaskRun(ctx context.Context, namespace, task s
 }
 
 // BackupPhases returns every CloudNativePG Backup in namespace with its
-// status.phase (empty until the operator has picked it up). A namespace
-// without Backups, or one that no longer exists, yields an empty map.
+// status.phase. A namespace without Backups, or that is gone, yields an
+// empty map.
 //
-// Polled while the final backup PreDelete hook runs
-// (docs/implementation-notes/39-final-backup-predelete-hook.md): CloudNativePG
-// removes a Backup along with the Cluster it references, and that Cluster is
-// torn down as soon as the hook reports Healthy, so the Backup has to be
-// observed during the deletion rather than looked for after it.
+// CloudNativePG removes a Backup along with its Cluster, so a final backup
+// has to be observed by polling during the deletion, not after it.
 func (c *Cluster) BackupPhases(ctx context.Context, namespace string) (map[string]string, error) {
 	out, err := c.Kubectl(ctx, "-n", namespace, "get", "backups.postgresql.cnpg.io", "-o",
 		`jsonpath={range .items[*]}{.metadata.name}={.status.phase}{"\n"}{end}`)
@@ -739,11 +658,8 @@ func (c *Cluster) ResourceExists(ctx context.Context, kind, namespace, name stri
 	if strings.Contains(out, "NotFound") {
 		return false, nil
 	}
-	// Any other error (a transient API server hiccup, a port-forward
-	// blip) is inconclusive, not proof the resource is gone: report it as
-	// still existing, the same safe-by-default polarity JobSucceeded uses
-	// for its own kubectl errors, so a poll-until-gone caller keeps
-	// polling instead of reporting a false pass.
+	// Any other error is inconclusive: report the resource as still there,
+	// so a poll-until-gone caller keeps polling instead of passing falsely.
 	return true, nil
 }
 
@@ -761,12 +677,8 @@ func (c *Cluster) WaitForResourceGone(ctx context.Context, kind, namespace, name
 		})
 }
 
-// CheckHTTP200 requests "/" on host through Traefik's websecure entrypoint,
-// mapped to HTTPSPort on the host, with the Host header set to host and
-// certificate verification disabled: kind's Traefik falls back to its own
-// default certificate because no cloud DNS-01 issuer can complete inside
-// kind, so there is no certificate to validate against. It retries until
-// timeout.
+// CheckHTTP200 requests "/" on host through Traefik's websecure entrypoint
+// until it answers 200 or timeout elapses.
 func (c *Cluster) CheckHTTP200(ctx context.Context, host string, timeout time.Duration) error {
 	return c.pollGET(ctx, host, "/", timeout, func(resp *http.Response) (ok, retry bool, message string) {
 		if resp.StatusCode != http.StatusOK {
@@ -776,11 +688,9 @@ func (c *Cluster) CheckHTTP200(ctx context.Context, host string, timeout time.Du
 	})
 }
 
-// CheckRolloutServes restarts deployment in namespace and polls "/" on
-// host through Traefik the whole time, the way CheckHTTP200 does, until
-// the rollout has finished and the old Pod has had time to stop. Any
-// answer other than 200, a 502 while Traefik still routes to a stopping
-// Pod in particular, fails it (#75).
+// CheckRolloutServes restarts deployment and polls "/" on host through
+// Traefik until the rollout is done and the old Pod has stopped. Any answer
+// other than 200, such as a 502 from routing to a stopping Pod, fails it.
 func (c *Cluster) CheckRolloutServes(ctx context.Context, namespace, deployment, host string) error {
 	client := &http.Client{
 		Timeout:       5 * time.Second,
@@ -844,36 +754,28 @@ func (c *Cluster) CheckRolloutServes(ctx context.Context, namespace, deployment,
 	return nil
 }
 
-// SignIn is what an unauthenticated browser's request to a login-protected
-// host must be answered with: a redirect straight to the identity
-// provider's authorize endpoint, nothing of oauth2-proxy's own in between
-// (docs/implementation-notes/77-login-redirect.md).
+// SignIn is the redirect an unauthenticated request to a login-protected
+// host must get: straight to the identity provider's authorize endpoint,
+// with no oauth2-proxy page in between.
 type SignIn struct {
-	// LoginURL is the provider's authorize endpoint the Location must lead
-	// to, query aside.
+	// LoginURL is the authorize endpoint the Location must lead to, query
+	// aside.
 	LoginURL string
-	// Callback is the redirect_uri oauth2-proxy must hand the provider: the
-	// Platform's auth address, whichever host the request was for.
+	// Callback is the redirect_uri: the Platform's auth address, whichever
+	// host was requested.
 	Callback string
-	// CookieDomain is the Domain the CSRF cookie must be set for, so the
-	// callback on the auth address can read what the Application's host
-	// set.
+	// CookieDomain is the CSRF cookie's Domain, wide enough for the
+	// callback on the auth address to read it.
 	CookieDomain string
-	// CSRFCookie is the CSRF cookie's name: oauth2-proxy's cookie-name
-	// with _csrf appended.
+	// CSRFCookie is oauth2-proxy's cookie-name with _csrf appended.
 	CSRFCookie string
 }
 
-// CheckSignInRedirect requests path on host through Traefik's websecure
-// entrypoint, the same way CheckHTTP200 does, and requires the redirect
-// described by want: a 3xx whose Location is want.LoginURL with
-// want.Callback as redirect_uri and, in the OAuth state, the original
-// https URL (path and query included) to come back to after signing in,
-// plus oauth2-proxy's CSRF cookie want.CSRFCookie for want.CookieDomain.
-// A 3xx without a
-// Location, which a browser renders instead of following, fails it. It
-// retries a 5xx (oauth2-proxy not up yet) and a 404 (no route yet) until
-// timeout; any other answer fails at once.
+// CheckSignInRedirect requests path on host through Traefik and requires
+// the redirect want describes, with the original https URL to return to in
+// the OAuth state. A 3xx without a Location, which a browser renders
+// instead of following, fails it. It retries a 5xx or 404 until timeout;
+// any other answer fails at once.
 func (c *Cluster) CheckSignInRedirect(ctx context.Context, host, path string, want SignIn, timeout time.Duration) error {
 	original := "https://" + host + path
 	return c.pollGET(ctx, host, path, timeout, func(resp *http.Response) (ok, retry bool, message string) {
@@ -918,23 +820,18 @@ func (c *Cluster) CheckSignInRedirect(ctx context.Context, host, path string, wa
 	})
 }
 
-// pollGET is the shared polling shape CheckHTTP200 and CheckSignInRedirect
-// build on: GET path on host through Traefik's websecure entrypoint (mapped to
-// HTTPSPort on the host), certificate verification disabled (kind's Traefik
-// falls back to its own default certificate, since no cloud DNS-01 issuer
-// can complete inside kind). Redirects are never followed (CheckHTTP200
-// never sees one; CheckSignInRedirect wants to see it directly). want inspects
-// the response and reports whether it is the wanted one; when it is not,
-// retry says whether polling again could still produce it (an unready
-// oauth2-proxy, say) as opposed to a wrong status entirely, which fails the
-// check immediately instead of waiting out the full timeout. A failure to
-// connect at all is always retried.
+// pollGET GETs path on host through Traefik's websecure entrypoint until
+// want accepts the response. Redirects are not followed, and certificates
+// are not verified: no DNS-01 issuer can complete inside kind, so Traefik
+// serves its default certificate. want's retry result says whether polling
+// again could still help; when it cannot, the check fails at once.
+// Connection failures are always retried.
 func (c *Cluster) pollGET(ctx context.Context, host, path string, timeout time.Duration, want func(resp *http.Response) (ok, retry bool, message string)) error {
 	return c.pollGETAt(ctx, fmt.Sprintf("https://127.0.0.1:%d%s", c.HTTPSPort, path), host, timeout, want)
 }
 
-// pollGETAt is pollGET for a full URL, so a check can use Traefik's plain
-// HTTP web entrypoint (HTTPPort) too.
+// pollGETAt is pollGET for a full URL, so a check can use the plain HTTP
+// entrypoint too.
 func (c *Cluster) pollGETAt(ctx context.Context, url, host string, timeout time.Duration, want func(resp *http.Response) (ok, retry bool, message string)) error {
 	client := &http.Client{
 		Timeout:       10 * time.Second,
@@ -971,25 +868,15 @@ func (c *Cluster) pollGETAt(ctx context.Context, url, host string, timeout time.
 }
 
 // CheckACMEChallengeBypassesLogin proves that cert-manager's HTTP-01
-// challenge for a login-protected custom domain is not sent to sign-in: it
-// creates, in namespace, an Ingress shaped like the solver Ingress
-// cert-manager v1.21 creates for a challenge (pkg/issuer/acme/http/ingress.go:
-// ingressClassName from the ClusterIssuer's solver, one rule for host with
-// the Exact path /.well-known/acme-challenge/<token>, and no Traefik
-// annotation), backed by service:port instead of a solver Pod. kind can
-// run no real challenge: Let's Encrypt never issues for .test.
+// challenge for a login-protected custom domain is not sent to sign-in. kind
+// can run no real challenge, so it creates an Ingress shaped like the one
+// cert-manager v1.21 creates for a solver (pkg/issuer/acme/http/ingress.go),
+// backed by service:port, and deletes it afterwards.
 //
-// Then, through Traefik:
-//   - https://host/<challenge path> must be answered by that backend, an
-//     nginx 404 (the fixture's image has no such file), not by the
-//     ForwardAuth middleware on the Application's own Ingress for host,
-//     whose answer is a redirect to sign-in. A redirect is retried until
-//     timeout, since Traefik may not have loaded the new Ingress yet.
-//   - http://host/<challenge path> must be redirected to the same https URL
-//     by the web entrypoint, which is what Let's Encrypt's validator
-//     follows (docs/implementation-notes/08-chart-static-domains-secrets.md).
-//
-// The Ingress is deleted afterwards.
+// Through Traefik, https://host/<challenge path> must then reach that
+// backend (an nginx 404) rather than the login middleware's redirect, and
+// http://host/<challenge path> must redirect to the same https URL, which
+// Let's Encrypt's validator follows.
 func (c *Cluster) CheckACMEChallengeBypassesLogin(ctx context.Context, namespace, host, service string, port int, timeout time.Duration) error {
 	const name = "cm-acme-http-solver-e2e"
 	path := "/.well-known/acme-challenge/e2e-token"
@@ -1027,8 +914,6 @@ spec:
 	return c.checkACMEChallengeServed(ctx, host, path, timeout)
 }
 
-// checkACMEChallengeServed is CheckACMEChallengeBypassesLogin's two
-// requests, once the solver-shaped Ingress exists.
 func (c *Cluster) checkACMEChallengeServed(ctx context.Context, host, path string, timeout time.Duration) error {
 	err := c.pollGET(ctx, host, path, timeout, func(resp *http.Response) (ok, retry bool, message string) {
 		server := resp.Header.Get("Server")
@@ -1045,8 +930,8 @@ func (c *Cluster) checkACMEChallengeServed(ctx context.Context, host, path strin
 		return err
 	}
 
-	// The port, if any, is the websecure entrypoint's, whatever the chart
-	// publishes it as; the scheme, host and path are what matter.
+	// The Location carries the websecure port the Traefik chart publishes,
+	// not the host port kind maps, so only scheme, host and path are checked.
 	return c.pollGETAt(ctx, fmt.Sprintf("http://127.0.0.1:%d%s", c.HTTPPort, path), host, timeout, func(resp *http.Response) (ok, retry bool, message string) {
 		location := resp.Header.Get("Location")
 		target, err := url.Parse(location)
@@ -1078,19 +963,16 @@ func pollUntil(ctx context.Context, timeout, interval time.Duration, attempt fun
 	}
 }
 
-// Repository is a git repository the in-cluster server serves as
-// <GitBaseURL>/<Name>.git: one commit on branch main with Files, a map from
-// path inside the repository ("." for the root) to a local file or
-// directory copied there.
+// Repository is served as <GitBaseURL>/<Name>.git with one commit on main.
+// Files maps a path inside the repository ("." for the root) to a local file
+// or directory copied there.
 type Repository struct {
 	Name  string
 	Files map[string]string
 }
 
-// ServeGitRepositories builds the git server image, loads it into the
-// cluster, packs the repositories into a ConfigMap and runs the server,
-// then checks from the host that a real git client can list each
-// repository through it.
+// ServeGitRepositories packs the repositories into a ConfigMap, runs the git
+// server on it, and checks from the host that git can list each one.
 func (c *Cluster) ServeGitRepositories(ctx context.Context, repos ...Repository) error {
 	c.Log("building the git server image with %s", c.Provider)
 	out, err := c.run(ctx, c.Provider, "build", "-t", gitServerImage, filepath.Join(c.RepoRoot, "test", "e2e", "gitserver"))
@@ -1135,10 +1017,9 @@ func (c *Cluster) ServeGitRepositories(ctx context.Context, repos ...Repository)
 	if err != nil {
 		return fmt.Errorf("render git-repositories ConfigMap: %w\n%s", err, configMap)
 	}
-	// Server-side: a client-side apply copies the whole object into the
-	// last-applied-configuration annotation, which may not exceed 256 KiB,
-	// and the packed repositories outgrew that. A ConfigMap itself may
-	// hold 1 MiB.
+	// Server-side: client-side apply copies the object into the
+	// last-applied-configuration annotation, capped at 256 KiB, which the
+	// packed repositories outgrew. A ConfigMap itself may hold 1 MiB.
 	if err := c.Apply(ctx, configMap, "--server-side", "--force-conflicts"); err != nil {
 		return err
 	}
@@ -1156,20 +1037,14 @@ func (c *Cluster) ServeGitRepositories(ctx context.Context, repos ...Repository)
 	return nil
 }
 
-// buildRepository makes a bare repository with one commit holding the
-// repository's files.
 func (c *Cluster) buildRepository(ctx context.Context, work, bare string, repo Repository) error {
 	bareDir := filepath.Join(bare, repo.Name+".git")
 	workDir := filepath.Join(work, repo.Name+"-work")
 	if out, err := c.run(ctx, "git", "init", "-q", "--bare", "-b", "main", bareDir); err != nil {
 		return fmt.Errorf("git init --bare: %w\n%s", err, out)
 	}
-	// git-http-backend refuses receive-pack (push) by default; this is what
-	// lets PushToRepository push a real change into an already-served
-	// repository later, the way a developer's iidp app delete would. The
-	// setting lives in the bare repository's own config, so it is packed
-	// into the ConfigMap tarball along with everything else and survives
-	// into the running server unchanged.
+	// git-http-backend refuses pushes by default; PushToRepository needs
+	// them. The setting travels in the packed repository's config.
 	if out, err := c.run(ctx, "git", "-C", bareDir, "config", "--bool", "http.receivepack", "true"); err != nil {
 		return fmt.Errorf("git config http.receivepack: %w\n%s", err, out)
 	}
@@ -1209,11 +1084,8 @@ func (c *Cluster) buildRepository(ctx context.Context, work, bare string, repo R
 	return nil
 }
 
-// withGitServerPortForward port-forwards the host to the in-cluster git
-// server's Service for the duration of fn, which receives the repository's
-// URL as seen from the host (http://127.0.0.1:<port>/git/<name>.git):
-// checkRepository and PushToRepository both need a real git client to talk
-// to a server only reachable, from the host, through a port-forward.
+// withGitServerPortForward runs fn with the named repository's URL as seen
+// from the host through a port-forward to the git server.
 func (c *Cluster) withGitServerPortForward(ctx context.Context, name string, fn func(ctx context.Context, url string) error) error {
 	return c.withPortForward(ctx, "git-server", func(ctx context.Context, base string) error {
 		return fn(ctx, base+"/git/"+name+".git")
@@ -1241,20 +1113,13 @@ func (c *Cluster) withPortForward(ctx context.Context, service string, fn func(c
 		cancel()
 		forward.Wait()
 	}()
-	// kubectl port-forward's own tunnel setup is asynchronous: Start
-	// returning only means the process was launched, not that the local
-	// port is listening yet. checkRepository tolerated this with its own
-	// retry loop around git ls-remote; callers with no such loop (a single
-	// git clone, in PushToRepository) would otherwise race it and fail on a
-	// connection refused a few milliseconds too early.
+	// Start returning does not mean the local port is listening yet.
 	if err := waitForLocalPort(ctx, port, 10*time.Second); err != nil {
 		return fmt.Errorf("kubectl port-forward to %s never started listening on 127.0.0.1:%d: %w", service, port, err)
 	}
 	return fn(ctx, fmt.Sprintf("http://127.0.0.1:%d", port))
 }
 
-// waitForLocalPort polls until a TCP connection to 127.0.0.1:port succeeds,
-// or timeout elapses.
 func waitForLocalPort(ctx context.Context, port int, timeout time.Duration) error {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	return pollUntil(ctx, timeout, 200*time.Millisecond,
@@ -1269,9 +1134,8 @@ func waitForLocalPort(ctx context.Context, port int, timeout time.Duration) erro
 		func() error { return fmt.Errorf("no listener on %s within %s", addr, timeout) })
 }
 
-// checkRepository port-forwards to the git server and lists the repository
-// with the host's git, so a broken server fails here with a clear message
-// rather than as an ArgoCD condition later.
+// checkRepository lists the repository with the host's git, so a broken
+// server fails here clearly rather than as an ArgoCD condition later.
 func (c *Cluster) checkRepository(ctx context.Context, name string) error {
 	return c.withGitServerPortForward(ctx, name, func(ctx context.Context, url string) error {
 		var lastErr error
@@ -1290,15 +1154,10 @@ func (c *Cluster) checkRepository(ctx context.Context, name string) error {
 	})
 }
 
-// PushToRepository clones the named repository through a port-forward to
-// the in-cluster git server, lets mutate change the working tree (an
-// absolute path to the clone), and commits and pushes the result to main
-// if mutate reports a change was made -- the harness's equivalent of what
-// iidp app delete does to the real Platform repository: a plain commit
-// pushed over HTTP to the repository ArgoCD is already watching, so its
-// next reconcile picks up the change on its own, with nothing re-served or
-// re-packed. mutate returns whether it changed anything; when it reports
-// false, nothing is committed or pushed.
+// PushToRepository clones the named served repository, lets mutate change
+// the clone at dir, and pushes a commit to main if mutate reports a change,
+// as iidp app delete does to a real Platform repository. ArgoCD picks the
+// commit up on its next reconcile.
 func (c *Cluster) PushToRepository(ctx context.Context, name, commitMessage string, mutate func(dir string) (changed bool, err error)) error {
 	return c.withGitServerPortForward(ctx, name, func(ctx context.Context, url string) error {
 		work, err := os.MkdirTemp("", "iidp-e2e-push-*")
@@ -1343,8 +1202,8 @@ func (c *Cluster) PushToRepository(ctx context.Context, name, commitMessage stri
 	})
 }
 
-// ApplyRootApplication applies the root Application `platform` with the
-// shape cloud-init uses.
+// ApplyRootApplication applies the root Application `platform` as
+// cloud-init does.
 func (c *Cluster) ApplyRootApplication(ctx context.Context, repoURL, path string) error {
 	c.Log("applying the root Application platform -> %s %s", repoURL, path)
 	return c.Apply(ctx, fmt.Sprintf(`apiVersion: argoproj.io/v1alpha1
@@ -1378,7 +1237,7 @@ type ApplicationStatus struct {
 	Health  string // Healthy, Progressing, Degraded, Missing, Suspended, Unknown
 	Phase   string // last operation phase
 	Message string // last operation message
-	// Conditions are "<type>: <message>" for every status condition.
+	// Conditions are "<type>: <message>".
 	Conditions []string
 }
 
@@ -1496,13 +1355,8 @@ func (c *Cluster) WaitForApplications(ctx context.Context, want map[string]Expec
 		}
 		if len(unmet) == 0 {
 			c.Log("all %d Applications reached their expected state after %s", len(names), time.Since(start).Round(time.Second))
-			// Logged on every successful wait, not only on the timeout path
-			// below: the node's CPU budget (docs/implementation-notes
-			// /39-final-backup-predelete-hook.md) is worth seeing on a green
-			// run too, both to catch the margin shrinking again before it
-			// starts failing and to give the next person who adds a fixture
-			// Application a number to check their own resource requests
-			// against.
+			// Logged on green runs too, so a shrinking CPU margin on the
+			// 2 vCPU CI runner shows before it starts failing.
 			c.logNodeAllocatedResources(ctx)
 			return nil
 		}
@@ -1520,21 +1374,8 @@ func (c *Cluster) WaitForApplications(ctx context.Context, want map[string]Expec
 	}
 }
 
-// DumpDiagnostics logs what is known about the named Applications, the
-// pods that are not running, the tail of the repo server and application
-// controller logs, the argocd Application's own operation state, and
-// recent cluster events: everything the takeover race (see
-// docs/implementation-notes/04-bootstrap.md, "The takeover race") needs to
-// be diagnosed from a single failed run's output, without a kept cluster.
-// logNodeAllocatedResources logs kind's single node's "Allocated resources:"
-// table (each resource's total Requests/Limits against the node's
-// Allocatable capacity, including the percentage this harness cares about:
-// how close cpu Requests are to the node's schedulable 2 vCPUs on a hosted
-// CI runner) -- see docs/implementation-notes/39-final-backup-predelete-hook.md
-// for why this budget is worth watching on every run, not only a failed
-// one. Best-effort: errors are swallowed, the same as every other
-// diagnostic in this file, since this only ever runs alongside a test's own
-// pass/fail result, which must not depend on it.
+// logNodeAllocatedResources logs the node's "Allocated resources:" table.
+// Best-effort: errors are ignored.
 func (c *Cluster) logNodeAllocatedResources(ctx context.Context) {
 	out, err := c.Kubectl(ctx, "describe", "node")
 	if err != nil {
@@ -1545,6 +1386,10 @@ func (c *Cluster) logNodeAllocatedResources(ctx context.Context) {
 	}
 }
 
+// DumpDiagnostics logs enough about the named Applications, ArgoCD and the
+// cluster to diagnose a failed run without a kept cluster. That includes a
+// stalled sync of the argocd Application, which replaces ArgoCD's own
+// components, the application controller running the sync among them.
 func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]ApplicationStatus, names []string) {
 	for _, name := range names {
 		app, ok := apps[name]
@@ -1560,28 +1405,18 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	if out, err := c.Kubectl(ctx, "get", "pods", "-A", "--field-selector=status.phase!=Running,status.phase!=Succeeded"); err == nil {
 		c.Log("pods not running:\n%s", out)
 	}
-	// Every pod in argocd, Running or not, with its age and restart count:
-	// whether the application controller currently exists at all, and how
-	// long ago it (or anything else) last restarted, is the single most
-	// direct answer to whether the takeover race (docs/implementation-notes
-	// /04-bootstrap.md) is the controller being mid-replacement right now.
+	// Ages and restart counts show whether the application controller is
+	// being replaced, which is when the argocd Application's sync can stall.
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "get", "pods", "-o", "wide"); err == nil {
 		c.Log("argocd namespace pods:\n%s", out)
 	} else {
 		c.Log("argocd namespace pods: kubectl get failed: %v\n%s", err, out)
 	}
-	// A Pod stuck Pending is almost always the scheduler refusing it (most
-	// often insufficient CPU or memory on kind's single node); the events
-	// and the node's per-pod requests and allocated-resources table say
-	// which pod, and by how much.
+	// A Pending Pod is usually short of CPU or memory on kind's single node;
+	// these say which pod, and by how much.
 	if out, err := c.Kubectl(ctx, "get", "events", "-A", "--field-selector=reason=FailedScheduling", "--sort-by=.lastTimestamp"); err == nil && strings.TrimSpace(out) != "" {
 		c.Log("FailedScheduling events:\n%s", out)
 	}
-	// From "Non-terminated Pods:" to the end of the output: this covers
-	// both the per-pod CPU/memory requests and limits table and the
-	// "Allocated resources:" totals right after it, so a timed-out run
-	// shows not just how full the node's CPU budget is but which pods are
-	// spending it (docs/implementation-notes/39-final-backup-predelete-hook.md).
 	if out, err := c.Kubectl(ctx, "describe", "node"); err == nil {
 		if i := strings.Index(out, "Non-terminated Pods:"); i >= 0 {
 			c.Log("node pods and allocated resources:\n%s", out[i:])
@@ -1592,22 +1427,16 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 	} else {
 		c.Log("argocd-repo-server log tail: kubectl logs failed: %v\n%s", err, out)
 	}
-	// The application controller is what runs every sync, including the
-	// argocd Application's own takeover of itself; its log tail and the
-	// argocd Application's full operation state are the two things that
-	// say whether it stalled waiting on a hook, on another component's
-	// health, or on the repo server (the takeover race). Logging the error
-	// too (rather than silently skipping) matters here: a StatefulSet
-	// reference resolves no pod, and so fails, exactly when the controller
-	// has been deleted and not yet recreated.
+	// The error is logged too: it fails exactly when the controller has
+	// been deleted and not yet recreated.
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "logs", "statefulset/argocd-application-controller", "--tail=80"); err == nil {
 		c.Log("argocd-application-controller log tail:\n%s", out)
 	} else {
 		c.Log("argocd-application-controller log tail: kubectl logs failed: %v\n%s", err, out)
 	}
-	// The redis-secret-init PreSync hook Job is the resource run 35659518279
-	// stalled on; its own status and pod log say whether the Job itself was
-	// slow to complete or the controller simply stopped reporting it.
+	// The argocd Application's sync has stalled on the redis-secret-init
+	// PreSync hook before: the Job's status and log tell a slow Job from a
+	// controller that stopped reporting it.
 	if out, err := c.Kubectl(ctx, "-n", "argocd", "get", "job", "argocd-redis-secret-init", "-o", "yaml"); err == nil {
 		c.Log("argocd-redis-secret-init Job:\n%s", out)
 	} else {
@@ -1622,8 +1451,6 @@ func (c *Cluster) DumpDiagnostics(ctx context.Context, apps map[string]Applicati
 		c.Log("argocd Application describe:\n%s", out)
 	}
 	if out, err := c.Kubectl(ctx, "get", "events", "-A", "--sort-by=.lastTimestamp"); err == nil {
-		// Sorted oldest first: keep the tail, the most recent events, not
-		// the head, when there are more than fit comfortably in the log.
 		c.Log("recent events:\n%s", tailString(out, 6000))
 	}
 }
@@ -1656,8 +1483,6 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// tailString keeps the last n characters of s, the opposite of truncate:
-// useful for output where the newest, most relevant lines are at the end.
 func tailString(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= n {
@@ -1666,9 +1491,8 @@ func tailString(s string, n int) string {
 	return "..." + s[len(s)-n:]
 }
 
-// gitServerManifest is the git server Deployment and Service. The checksum
-// of the repositories archive is a pod annotation so that serving new
-// content rolls the pod.
+// gitServerManifest is the git server Deployment and Service. The archive's
+// checksum is a pod annotation so that serving new content rolls the pod.
 func gitServerManifest(checksum string) string {
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
@@ -1735,27 +1559,12 @@ spec:
 `, GitServerNamespace, gitServerImage, checksum)
 }
 
-// objectStorageManifest is InstallObjectStorage's Deployment and Service:
-// a single versitygw Pod serving its posix backend from an emptyDir (kind's
-// disk is thrown away with the cluster regardless, so nothing here needs
-// to survive a restart). The posix backend treats each top-level directory
-// as a bucket, so an init container running the same image creates
-// ObjectStorageBucket with mkdir -- no client image, and no Job waiting
-// for the Service to answer, which MinIO's bucket needed its mc image for.
-// The server keeps its object metadata (ETags, checksums, multipart state)
-// in extended attributes on that volume. --region is spelled out as the
-// default it already is, us-east-1, the region botocore (underneath the
-// Barman Cloud plugin) signs with when the ObjectStore names none; the
-// gateway rejects a signature made for any other.
-//
-// CPU requests are pinned to 10m: this harness, not the product under
-// test, and a hosted CI runner's node has only 2 vCPUs of schedulable
-// capacity total (see docs/implementation-notes
-// /39-final-backup-predelete-hook.md) -- every millicore claimed here is one
-// the shop-prod/shop-staging fixture's own Deployment and migrate Job
-// cannot get. The init container's request does not add to the server's:
-// a Pod is scheduled on the larger of its init and regular containers'
-// requests, not their sum.
+// objectStorageManifest is a single versitygw Pod serving its posix backend
+// from an emptyDir. That backend treats each top-level directory as a
+// bucket, so an init container creates the bucket with mkdir. --region
+// us-east-1 is what botocore, under the Barman Cloud plugin, signs with
+// when the ObjectStore names none; the gateway rejects any other. CPU
+// requests are 10m to leave the CI runner's 2 vCPUs to the fixtures.
 func objectStorageManifest() string {
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
