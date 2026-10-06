@@ -18,7 +18,7 @@ export const CORE_RADIUS = 3;
  */
 export const COMPONENT_ORDER = [
   'traefik', 'deploy-gate', 'cert-manager', 'cloudnative-pg', 'cnpg-barman-cloud', 'external-dns',
-  'oauth2-proxy', 'monitoring', 'guardrails', 'platform-tls', 'argus', 'k3s',
+  'oauth2-proxy', 'monitoring', 'guardrails', 'platform-tls', 'argus', 'db-tunnel', 'k3s',
 ];
 
 /**

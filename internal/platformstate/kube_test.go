@@ -54,6 +54,36 @@ func TestKubeListsWithTheTokenAndTheSelector(t *testing.T) {
 	}
 }
 
+// Get is how the Database tunnel reads one Cluster and one Secret: the
+// object itself, and a missing one as the API server's 404.
+func TestKubeGetsOneObject(t *testing.T) {
+	var gotAuth string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/apis/postgresql.cnpg.io/v1/namespaces/shop-prod/clusters/shop-db":
+			_, _ = w.Write([]byte(`{"kind":"Cluster","metadata":{"name":"shop-db","annotations":{"iidp.itema.no/db-access-read-write":"admin"}}}`))
+		default:
+			http.Error(w, `{"kind":"Status","reason":"NotFound"}`, http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+	kube := &platformstate.Kube{BaseURL: api.URL, Token: func() (string, error) { return "sa-token", nil }}
+
+	var cluster platformstate.PostgresCluster
+	if err := kube.Get(context.Background(), "/apis/postgresql.cnpg.io/v1/namespaces/shop-prod/clusters/shop-db", &cluster); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer sa-token" || cluster.Metadata.Name != "shop-db" || cluster.Metadata.Annotations["iidp.itema.no/db-access-read-write"] != "admin" {
+		t.Errorf("Authorization = %q, cluster = %+v", gotAuth, cluster)
+	}
+	err := kube.Get(context.Background(), "/apis/postgresql.cnpg.io/v1/namespaces/shop-pr-7/clusters/shop-pr-7-db", &cluster)
+	var refusal *platformstate.StatusError
+	if !errors.As(err, &refusal) || refusal.Status != http.StatusNotFound {
+		t.Errorf("Get of a missing Cluster = %v, want the API server's 404", err)
+	}
+}
+
 // Read, the List path iidp app status takes, interprets what it lists:
 // an Environment ArgoCD has had for years with nothing deployed is
 // Unreleased, and one crash-looping is Degraded.

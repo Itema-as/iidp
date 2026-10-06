@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/platform"
@@ -68,11 +69,13 @@ func ValidateName(name string) error {
 }
 
 // ReservedNames are the labels under baseDomain the Platform serves itself:
-// the Deploy gate at deploy.<baseDomain> and the Itema login's oauth2-proxy
-// at auth.<baseDomain>. An Application of one of these names would have the
-// same address, and one serving deploy.<baseDomain> could receive the OIDC
-// tokens other Applications' workflows mint for the gate.
-var ReservedNames = []string{DeployGateHostLabel, "auth"}
+// the Deploy gate at deploy.<baseDomain>, the Itema login's oauth2-proxy at
+// auth.<baseDomain> and the Database tunnel at db.<baseDomain>. An
+// Application of one of these names would have the same address. One
+// serving deploy.<baseDomain> could receive the OIDC tokens other
+// Applications' workflows mint for the gate, and one serving
+// db.<baseDomain> the GitHub tokens developers send the tunnel.
+var ReservedNames = []string{DeployGateHostLabel, "auth", DatabaseTunnelHostLabel}
 
 // ValidateNewName is ValidateName for an Application about to be created:
 // it also refuses the ReservedNames.
@@ -154,6 +157,44 @@ type Result struct {
 	// <number> for the pull request's, or "" when the Application has no
 	// Preview Environments.
 	PreviewAddress string
+	// Databases are the database access levels of each Environment the run
+	// turned Postgres on in, prod first.
+	Databases []EnvironmentDatabase
+}
+
+// EnvironmentDatabase is one Environment's database access as a run left
+// it.
+type EnvironmentDatabase struct {
+	Environment string
+	Access      render.DatabaseAccess
+	// Closed is true when a level is not none but its password was not
+	// written, because platform.yaml has no agePublicKey: the Environment
+	// stays closed until iidp app db access writes it.
+	Closed bool
+}
+
+// openDatabase writes environment's default database access, with the
+// passwords it needs when platform.yaml has an agePublicKey, and returns
+// what it wrote and the Environment's database access.
+func (w *Writer) openDatabase(ctx context.Context, dir string, cfg Config, application, environment string) ([]string, EnvironmentDatabase, error) {
+	access := render.DefaultDatabaseAccess(environment)
+	passwords := cfg.AgePublicKey != ""
+	files, err := w.writeDatabaseAccess(ctx, dir, cfg, application, environment, access, passwords)
+	if err != nil {
+		return nil, EnvironmentDatabase{}, err
+	}
+	open := access.ReadWrite != render.AccessNone || access.ReadOnly != render.AccessNone
+	return files, EnvironmentDatabase{Environment: environment, Access: access, Closed: open && !passwords}, nil
+}
+
+// appendPaths appends each of more to files that files does not hold yet.
+func appendPaths(files []string, more ...string) []string {
+	for _, f := range more {
+		if !slices.Contains(files, f) {
+			files = append(files, f)
+		}
+	}
+	return files
 }
 
 // Writer commits Applications to the Platform repository.
@@ -336,6 +377,7 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 	}
 
 	var files []string
+	var databases []EnvironmentDatabase
 	if preview {
 		for _, environment := range environments {
 			envDir := EnvironmentDir(app.Name, environment)
@@ -343,6 +385,11 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 			if app.Postgres {
 				sopsDir := path.Join(envDir, "sops")
 				files = append(files, path.Join(sopsDir, "backups-credentials.enc.yaml"), path.Join(sopsDir, "kustomization.yaml"), path.Join(sopsDir, "ksops.yaml"))
+				for _, role := range render.AccessRoles {
+					if role.Level(render.DefaultDatabaseAccess(environment)) != render.AccessNone && cfg.AgePublicKey != "" {
+						files = append(files, path.Join(sopsDir, role.PasswordSlug()+".enc.yaml"))
+					}
+				}
 			}
 		}
 		if app.Repository != nil {
@@ -376,6 +423,12 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 					return Result{}, err
 				}
 				files = append(files, credFiles...)
+				dbFiles, db, err := w.openDatabase(ctx, dir, cfg, app.Name, environment)
+				if err != nil {
+					return Result{}, err
+				}
+				files = appendPaths(files, dbFiles...)
+				databases = append(databases, db)
 			}
 		}
 		if app.Repository != nil {
@@ -415,11 +468,12 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 	}
 
 	res := Result{
-		Config:  cfg,
-		Files:   files,
-		Address: "https://" + prodAddress,
-		Domains: domainPlans,
-		Login:   app.Login,
+		Config:    cfg,
+		Files:     files,
+		Address:   "https://" + prodAddress,
+		Domains:   domainPlans,
+		Login:     app.Login,
+		Databases: databases,
 	}
 	if app.Login {
 		res.LoginGroups = app.LoginGroups

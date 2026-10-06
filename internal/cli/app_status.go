@@ -33,8 +33,9 @@ func newAppStatusCommand(deps Dependencies) *cobra.Command {
 			"changing (Arriving, Unreleased, Deploying, Updating or Leaving), and whether\n" +
 			"that change is stuck and why; ArgoCD's sync and health and its last sync, the\n" +
 			"image running and when it was deployed, the pods ready and their restarts,\n" +
-			"the last migration, the last run of each Scheduled task, the addresses, and\n" +
-			"links to ArgoCD and to the logs in Grafana Cloud. It shows no logs.\n\n" +
+			"the last migration, who among the developers may reach the database, the last\n" +
+			"run of each Scheduled task, the addresses, and links to ArgoCD and to the logs\n" +
+			"in Grafana Cloud. It shows no logs.\n\n" +
 			"It asks the Deploy gate's service at https://deploy.<baseDomain> (baseDomain\n" +
 			"from the Platform repository's platform.yaml), sending your gh auth token.\n" +
 			"The service shows the status only to someone who can read the Application's\n" +
@@ -191,6 +192,9 @@ func printStatus(out io.Writer, status platformstate.Status) {
 		if env.Migration != nil {
 			line("Migration", "last run "+runText(*env.Migration))
 		}
+		if a := env.DatabaseAccess; a != nil {
+			line("Database", statusAccessText(status.Application, env.Name, *a))
+		}
 		label := "Tasks"
 		for _, task := range env.Tasks {
 			text := task.Name + " (" + task.Schedule + "): no run yet"
@@ -212,6 +216,23 @@ func printStatus(out io.Writer, status platformstate.Status) {
 			line("Logs", env.Links.Grafana)
 		}
 	}
+}
+
+// statusAccessText is an Environment's database access in words, with how
+// to set up a level whose password has not been written. A Preview
+// Environment's levels are staging's, so it is staging that is set up.
+func statusAccessText(application, environment string, a platformstate.DatabaseAccess) string {
+	if environment != "prod" {
+		environment = "staging"
+	}
+	level := func(words, level string, setUp bool) string {
+		text := words + " " + level
+		if !setUp {
+			text += " (not set up: run iidp app db access " + application + " --env " + environment + ")"
+		}
+		return text
+	}
+	return level("read-write", a.ReadWrite, a.ReadWriteSetUp) + " · " + level("read-only", a.ReadOnly, a.ReadOnlySetUp)
 }
 
 // hopText is a Deploy's hop in words.

@@ -80,6 +80,17 @@ function capabilityState(c) {
   return { state: 'Healthy', tone: 'healthy' };
 }
 
+/**
+ * An Environment's database access in words, with how to set up a level
+ * whose password has not been written; a preview's levels are staging's.
+ * @param {string} app @param {string} env
+ * @param {NonNullable<Environment['databaseAccess']>} a
+ */
+function accessText(app, env, a) {
+  const fix = ` (not set up: run iidp app db access ${app} --env ${env})`;
+  return `read-write ${a.readWrite}${a.readWriteSetUp ? '' : fix} · read-only ${a.readOnly}${a.readOnlySetUp ? '' : fix}`;
+}
+
 /** @param {Note} n */
 function recentEntry(n) {
   return { tone: toneOf(n), at: n.at, message: n.message };
@@ -119,6 +130,7 @@ export function environmentCard(app, env, { feed, platform, nowMs, capability })
     /** @type {[string, string][]} */
     const rows = [['Last migration', runText(env.migration, nowMs)]];
     if (postgres) rows.push(['Backups', postgres.condition.warning ? `failing: ${postgres.condition.warning.replace(/^backups are failing: /, '')}` : 'no failure reported']);
+    if (env.databaseAccess) rows.push(['Developer access', accessText(app, preview ? 'staging' : env.name, env.databaseAccess)]);
     sections.push({ title: 'Database', rows });
   }
   if (env.tasks.length) {
@@ -184,6 +196,7 @@ export const COMPONENTS = {
   'cert-manager': ['cert-manager', 'Issues and renews the certificates'],
   'cloudnative-pg': ['CloudNativePG', 'Runs the Postgres databases'],
   'cnpg-barman-cloud': ['Barman Cloud', 'Backs the databases up to Object Storage'],
+  'db-tunnel': ['Database tunnel', "Lets developers reach an Environment's database from their own machine"],
   'deploy-gate': ['Deploy gate', 'Checks and records every Deploy and Promote'],
   'external-dns': ['external-dns', "Keeps the DNS records for the Platform's addresses"],
   guardrails: ['Guardrails', 'Admission policies on the Application namespaces'],

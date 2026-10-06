@@ -129,14 +129,15 @@ func TestPlatformComponents(t *testing.T) {
 	}
 }
 
-// Only cmd/iidp-argus links client-go, and only its dynamic client: the CLI
-// and the Deploy gate keep their standard-library Kubernetes client.
+// Only cmd/iidp-argus links client-go, and only its dynamic client: the
+// CLI, the Deploy gate and the Database tunnel keep their standard-library
+// Kubernetes client.
 func TestOnlyArgusLinksClientGo(t *testing.T) {
 	gobin, err := exec.LookPath("go")
 	if err != nil {
 		t.Skip("go not on PATH")
 	}
-	out, err := exec.Command(gobin, "list", "-deps", "github.com/Itema-as/iidp/cmd/iidp", "github.com/Itema-as/iidp/cmd/iidp-deploy-gate", "github.com/Itema-as/iidp/internal/argus").CombinedOutput()
+	out, err := exec.Command(gobin, "list", "-deps", "github.com/Itema-as/iidp/cmd/iidp", "github.com/Itema-as/iidp/cmd/iidp-deploy-gate", "github.com/Itema-as/iidp/cmd/iidp-db-tunnel", "github.com/Itema-as/iidp/internal/argus").CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list: %v\n%s", err, out)
 	}
@@ -148,7 +149,7 @@ func TestOnlyArgusLinksClientGo(t *testing.T) {
 	}
 	sort.Strings(k8s)
 	if len(k8s) > 0 {
-		t.Errorf("the CLI, the Deploy gate or internal/argus link %v; only cmd/iidp-argus may", k8s)
+		t.Errorf("the CLI, the Deploy gate, the Database tunnel or internal/argus link %v; only cmd/iidp-argus may", k8s)
 	}
 
 	// And Argus itself none of the typed clientsets or API types.
@@ -161,6 +162,43 @@ func TestOnlyArgusLinksClientGo(t *testing.T) {
 			if strings.HasPrefix(pkg, banned) {
 				t.Errorf("cmd/iidp-argus links %s: only the dynamic client is used", pkg)
 			}
+		}
+	}
+}
+
+// Argus shows each Environment's database access as its Cluster's
+// annotations have it, and a Preview Environment's the same way; it reads
+// nothing more than the Clusters it already watches.
+func TestAnEnvironmentsDatabaseAccessComesFromItsCluster(t *testing.T) {
+	s, _ := newStore(t)
+	cluster := func(ns, name, readWrite, readOnly string, open ...string) obj {
+		var roles []any
+		for _, role := range open {
+			roles = append(roles, obj{"name": role, "ensure": "present"})
+		}
+		return obj{"kind": "Cluster", "metadata": obj{"name": name, "namespace": ns, "creationTimestamp": at(-time.Hour),
+			"labels": obj{platformstate.ApplicationLabel: "shop"},
+			"annotations": obj{
+				platformstate.DatabaseAccessReadWriteAnnotation: readWrite,
+				platformstate.DatabaseAccessReadOnlyAnnotation:  readOnly,
+			}},
+			"spec": obj{"managed": obj{"roles": roles}}}
+	}
+	put(t, s, servingShop()...)
+	put(t, s, argoApp("shop", "pr-4"), envDeployment("shop", "pr-4", "abc"),
+		cluster("shop-prod", "shop-db", "none", "maintain", "shop_read"), cluster("shop-pr-4", "shop-pr-4-db", "push", "none"))
+	s.Seed()
+	envs := map[string]*platformstate.DatabaseAccess{}
+	for _, env := range s.Snapshot().Applications[0].Environments {
+		envs[env.Name] = env.DatabaseAccess
+	}
+	for name, want := range map[string]platformstate.DatabaseAccess{
+		"prod": {ReadWrite: "none", ReadOnly: "maintain", ReadWriteSetUp: true, ReadOnlySetUp: true},
+		// staging's read-write password was never written.
+		"pr-4": {ReadWrite: "push", ReadOnly: "none", ReadOnlySetUp: true},
+	} {
+		if envs[name] == nil || *envs[name] != want {
+			t.Errorf("%s database access = %+v, want %+v", name, envs[name], want)
 		}
 	}
 }

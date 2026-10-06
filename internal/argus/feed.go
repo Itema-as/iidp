@@ -15,7 +15,8 @@ import (
 //	        included); Leaving; Unknown; a Promote
 //	quiet   a Deploy; Updating; a Preview Environment arriving, leaving
 //	        or deploying; a Capability's Warning; a Platform component
-//	        Updating; a refused Deploy
+//	        Updating; a refused Deploy; a database session starting,
+//	        ending or refused
 //
 // A note that only reports something finished is feed-only (Note.FeedOnly)
 // whatever its loudness.

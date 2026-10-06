@@ -76,11 +76,23 @@
 //	                "grafana": "https://itema.grafana.net/explore?..."},
 //	      "condition": {"state": "Healthy"},
 //	      "activity": null,
+//	      "databaseAccess": {"readWrite": "push", "readOnly": "none",
+//	                         "readWriteSetUp": true,
+//	                         "readOnlySetUp": true},
 //	      "capabilities": [Capability...],
 //	      "deploys": [Deploy...]             oldest first
 //	    }
 //	  ]
 //	}
+//
+// databaseAccess is who among the Application's developers may reach the
+// database, read from the annotations the chart sets on the Environment's
+// Cluster: each level the lowest permission on the Application repository
+// that qualifies (pull, push, maintain or admin), or none. A level's
+// setUp is false when it is not none but its role is not present among the
+// Cluster's managed roles, because its password has not been written.
+// Absent without Postgres, and for a Cluster from a chart older than
+// database access.
 //
 // image, migration and a task's lastRun are null when there is none;
 // argocd is never null here, since Argus knows an Environment only by its
@@ -195,6 +207,11 @@
 //	                                     not seen happening
 //	 "seam": true}                       the one "since Argus restarted at
 //	                                     hh:mm" entry
+//
+// A note about a database session, from the Database tunnel's Events,
+// says in the tunnel's own words who connected to which Environment's
+// database as which role, when the session ended and why, or why it was
+// refused.
 //
 // feed.go lists which changes are loud, normal and quiet. The feed keeps
 // the last 200 notes or 24 hours of them, whichever is fewer; a browser

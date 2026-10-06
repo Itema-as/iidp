@@ -1,6 +1,6 @@
-# GoReleaser configuration for the iidp CLI and the Deploy gate's and Argus's
-# images. Run by .github/workflows/release.yaml on every v* tag. Verify
-# locally with:
+# GoReleaser configuration for the iidp CLI and the Deploy gate's, Argus's and
+# the Database tunnel's images. Run by .github/workflows/release.yaml on every
+# v* tag. Verify locally with:
 #   goreleaser check
 #   goreleaser build --snapshot --clean --single-target
 version: 2
@@ -45,6 +45,22 @@ builds:
   - id: iidp-argus
     main: ./cmd/iidp-argus
     binary: iidp-argus
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/Itema-as/iidp/internal/version.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  # Shipped only as an image, like the gate.
+  - id: iidp-db-tunnel
+    main: ./cmd/iidp-db-tunnel
+    binary: iidp-db-tunnel
     env:
       - CGO_ENABLED=0
     goos:
@@ -103,6 +119,27 @@ dockers_v2:
     flags:
       - "--provenance=false"
     disable: '{{ ne (index .Env "IIDP_PUBLISH_ARGUS") "true" }}'
+
+  # Published like the gate's, under IIDP_PUBLISH_DB_TUNNEL.
+  - id: iidp-db-tunnel
+    ids:
+      - iidp-db-tunnel
+    dockerfile: cmd/iidp-db-tunnel/Dockerfile
+    images:
+      - ghcr.io/itema-as/iidp-db-tunnel
+    tags:
+      - "{{ .Version }}"
+    platforms:
+      - linux/amd64
+    labels:
+      "org.opencontainers.image.source": '{{ trimsuffix .GitURL ".git" }}'
+      "org.opencontainers.image.description": "The iidp Database tunnel"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+    sbom: false
+    flags:
+      - "--provenance=false"
+    disable: '{{ ne (index .Env "IIDP_PUBLISH_DB_TUNNEL") "true" }}'
 
 archives:
   - id: iidp

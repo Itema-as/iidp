@@ -91,7 +91,7 @@ iidp app create --name shop --path create --framework nextjs --postgres --stagin
 | `--image` | `ghcr.io/itema-as/<name>` | Image repository |
 | `--port` | `3000` | Port the container listens on |
 | `--probe-path` | `/` | Path the readiness and liveness probes request |
-| `--postgres` | off | Add the Postgres Capability: `DATABASE_URL` injected into every Environment, continuous backups. Needs `platform.yaml`'s `backupsBucket` and `objectStorageEndpoint`, and the bootstrap wizard's `bootstrap/templates/backups-credentials.enc.yaml` in the Platform repository, copied into each Environment (see "Secrets" below) |
+| `--postgres` | off | Add the Postgres Capability: `DATABASE_URL` injected into every Environment, continuous backups. Needs `platform.yaml`'s `backupsBucket` and `objectStorageEndpoint`, and the bootstrap wizard's `bootstrap/templates/backups-credentials.enc.yaml` in the Platform repository, copied into each Environment (see "Secrets" below). Each new Environment gets its default database access (see "Database access" below): with `--staging` and an `agePublicKey` in `platform.yaml`, that means writing staging's database password, which needs `sops` on `PATH` |
 | `--migration-command` | detected, or none | Shell command run before every rollout with `DATABASE_URL` set, one line. Requires `--postgres`; without it, detected from Prisma, Drizzle or an npm `migrate` script. Written to the Application repository's `iidp.yaml` (see "The migration command" below); without `--path`, printed as the line to add there |
 | `--staging` | off | Add a `staging` Environment next to `prod`: its own address, its own database, the same Capabilities |
 | `--domain` | none | Custom domain to serve besides the Platform address, for `prod` only (repeatable). Automatic inside `platform.yaml`'s `cloudflareZone`; otherwise the closing summary prints a CNAME to create |
@@ -226,6 +226,70 @@ A pull request without the label starts a run in which every job is skipped, whi
 
 The Environment deploys once a deploy workflow writes the first image tag. Until then ArgoCD shows it as Synced and Healthy with nothing running: with `--staging`, that is prod until the first `v*` tag promotes staging's image ([`chart/application/README.md`](chart/application/README.md#an-environment-without-an-image)).
 
+### Database access
+
+Who among an Application's developers may reach an Environment's database is a setting of the Postgres Capability, by their permission on the Application repository. Each Environment has two levels, read-write and read-only, and each is `none`, `pull`, `push`, `maintain` or `admin`: the lowest permission that qualifies. `admin` includes `maintain`, which includes `push`, which includes `pull`, and `none` lets nobody in. A developer gets the higher of the two levels they qualify for, and GitHub's `triage` permission counts as `pull`. Set them with `iidp app db access`:
+
+```sh
+iidp app db access shop --env staging
+iidp app db access shop --env prod --read-only maintain
+iidp app db access shop --env prod --read-write admin --read-only pull
+iidp app db access shop --env staging --read-write none
+```
+
+```
+  prod database: read-write admin · read-only pull
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--env` | required | `prod` or `staging`. A Preview Environment always has staging's levels, the way it has staging's sign-in groups |
+| `--read-write` | the current level | The lowest permission that may read and write. It opens the role `<name>_write`, which reads and writes every table and changes no schema |
+| `--read-only` | the current level | The lowest permission that may read. It opens the role `<name>_read`, which reads every table |
+
+An Environment that never set a level has its default: read-write `push` and read-only `none` on staging, both `none` on prod. `--read-only` must not need more permission than `--read-write` unless one of them is `none`; `--read-write pull --read-only admin` is refused, and so is an unknown level and a level other than `none` for an Environment without Postgres. The chart refuses the same values with the same messages.
+
+The command writes the levels to the Environment's values file. For each level that is not `none` it also generates the role's password and commits it SOPS-encrypted with the Platform's age key, the way `iidp secret set` does (so it needs `sops` on `PATH`); a password already there is kept. A level set to `none` removes its role's password, and the role is dropped from the database. Without `--read-write` or `--read-only` it writes the passwords the current levels need, defaults included: that is how an Environment made before database access is opened at its defaults. A role exists only while its level is not `none` and its password is written, so such an Environment stays closed until then, whatever its default says; `iidp app status` and Argus show such a level as not set up. `iidp app create --postgres` and `iidp app add-capability --postgres` or `--staging` write each new Environment's default levels and passwords from the start; on a Platform whose `platform.yaml` has no `agePublicKey`, they write the levels only and say which Environment stays closed. Whoever can write to the Platform repository can change the levels, as with every other setting; the CLI does not check permissions on the Application repository.
+
+The roles never include the database's owner, which runs the migrations, or the `postgres` superuser, which stays disabled. Each role holds at most 3 connections. A role that is closed is dropped as soon as the Environment syncs. A session still open as that role ends at its next statement, except one holding a temporary table, which keeps the role until the session ends. `iidp app status` and Argus show each Environment's levels. Developers reach the database at those levels with `iidp app db connect` (below). See [`chart/application/README.md`](chart/application/README.md).
+
+### `app db connect`
+
+Reach an Environment's database from your own machine, with any Postgres client:
+
+```sh
+iidp app db connect shop
+iidp app db connect shop --env prod --read-only
+iidp app db connect shop --pr 42
+iidp app db connect shop --psql
+```
+
+```
+Connected to shop staging's database through the Database tunnel at https://db.app.itma.no:
+
+  postgresql://shop_write@127.0.0.1:52144/shop?sslmode=disable
+
+shop staging, read-write as shop_write. Each connection is checked again and recorded; a session ends after 30 minutes without traffic and after 8 hours.
+Press Ctrl-C to stop.
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--env` | staging when the Application has one, else prod | `prod` or `staging` |
+| `--pr` | none | The Preview Environment of this pull request; it has staging's levels. It cannot be combined with `--env` |
+| `--read-only` | off | Connect as `<name>_read` even when you qualify for read-write |
+| `--psql` | off | Run `psql` with the connection string, and exit with its status when it ends. Without `psql` on `PATH` the command says so, and suggests leaving `--psql` out |
+
+The command goes through the Database tunnel at `https://db.<baseDomain>` (`baseDomain` from `platform.yaml`; when `platform.yaml` cannot be read, it says so and asks Itema's, `https://db.app.itma.no`), with your `gh auth` token, and never talks to Kubernetes. It connects directly, not through an HTTPS proxy. It first asks the tunnel to run its check once, so a refusal comes back straight away, with the tunnel's reason and a non-zero exit. It then listens on `127.0.0.1`, on a free port, until Ctrl-C, and carries each connection to that port over a WebSocket of its own to the tunnel. On every connection the tunnel asks GitHub for your permission on the Application repository, reads the Environment's levels from its database `Cluster` (what is deployed, not what the Platform repository says), and logs in to the database itself, as `<name>_write` when you qualify for read-write and did not ask for `--read-only`, else as `<name>_read`. So you need no password, and none reaches your machine; whatever user, database and password your client sends are ignored. Of the client's startup parameters only `application_name`, `client_encoding`, `DateStyle`, `TimeZone`, `IntervalStyle`, `extra_float_digits` and `search_path` reach the database; `options` is dropped, along with anything else. Postgres's own refusals reach your client as they are, such as a role's limit of 3 connections. The refusals are:
+
+- GitHub does not accept your token, or you cannot read the Application repository;
+- the Application is bound to no repository, or to one outside `Itema-as`;
+- an unknown Environment, or a pull request with no Preview Environment;
+- you qualify for neither level: the message names the permission each level needs, and `iidp app db access` changes them;
+- you qualify, but the level's role or password is not there yet: `no database access set up for <environment> yet, run iidp app db access <name> --env <environment>`.
+
+While the command runs, any process on your machine can connect to its port without a password, as with `kubectl port-forward`, and does so as you; stop it with Ctrl-C when you are done. A session ends after 30 minutes with no traffic either way, and after 8 hours in any case; neither is a setting. Ctrl-C in `psql` cancels the running query, as it does on a direct connection. Each session's start and end, and each refusal, is recorded as a Kubernetes Event on the Environment's ArgoCD Application, which Argus shows in the Environment's activity, and as a log line in Grafana Cloud with your GitHub login, the role, and at the end its length and bytes each way. Neither records SQL, query results, passwords or tokens. Why it works this way is [ADR-0009](docs/adr/0009-developers-reach-an-environments-database-through-a-database-tunnel.md).
+
 ### `app status`
 
 See how every Environment of an Application is doing right now:
@@ -244,13 +308,14 @@ prod
   Image:     ghcr.io/itema-as/shop:1.0.1, deployed 2026-09-21 10:00 UTC
   Pods:      1/1 ready, 0 restarts
   Migration: last run succeeded 2026-09-21 10:02 UTC
+  Database:  read-write none · read-only maintain
   Tasks:     nightly-cleanup (0 3 * * *): last run succeeded 2026-09-22 01:00 UTC
   Addresses: https://shop.app.itma.no
   ArgoCD:    https://argocd.platform.itma.no/applications/argocd/shop-prod
   Logs:      https://itema.grafana.net/explore?...
 ```
 
-One block per Environment, `prod`, then `staging`, then any others by name. For each: its Condition and Activity (below); ArgoCD's sync status and health and its last sync (with ArgoCD's message when it failed); the image the Deployment runs and when the Platform repository's commit that set that tag was made; the pods ready, in total and their restarts; the last migration Job; each Scheduled task's schedule and last run; the addresses; and links to the Environment in ArgoCD and to its logs in Grafana Cloud. Times are in UTC. It shows no logs. An Environment the Platform repository has but ArgoCD has not picked up yet says so, and one with no image yet says nothing has been deployed.
+One block per Environment, `prod`, then `staging`, then any others by name. For each: its Condition and Activity (below); ArgoCD's sync status and health and its last sync (with ArgoCD's message when it failed); the image the Deployment runs and when the Platform repository's commit that set that tag was made; the pods ready, in total and their restarts; the last migration Job; with Postgres, the database access levels, read from the Environment's values file in the Platform repository (a Preview Environment's are staging's); each Scheduled task's schedule and last run; the addresses; and links to the Environment in ArgoCD and to its logs in Grafana Cloud. Times are in UTC. It shows no logs. An Environment the Platform repository has but ArgoCD has not picked up yet says so, and one with no image yet says nothing has been deployed.
 
 **Condition** is whether the Environment is serving, judged on its own pods:
 
@@ -291,7 +356,8 @@ It asks the Deploy gate's service at `https://deploy.<baseDomain>` (from `platfo
       "addresses": ["https://shop.app.itma.no"],
       "links": {"argocd": "https://argocd.platform.itma.no/applications/argocd/shop-prod", "grafana": "https://itema.grafana.net/explore?..."},
       "condition": {"state": "Healthy"},
-      "activity": null
+      "activity": null,
+      "databaseAccess": {"readWrite": "none", "readOnly": "maintain", "readWriteSetUp": true, "readOnlySetUp": true}
     }
   ]
 }
@@ -303,6 +369,7 @@ It asks the Deploy gate's service at `https://deploy.<baseDomain>` (from `platfo
 - `links` is absent when `platform.yaml` names neither `argocdURL` nor `grafanaURL`, and each link when its URL is not set.
 - `condition` is absent for an Environment ArgoCD has not picked up yet. Its `state` is `Healthy`, `Degraded` or `Unknown`, and `reason` says why it is not Healthy.
 - `activity` is `null` when nothing is changing. Its `state` is `Arriving`, `Unreleased`, `Deploying`, `Updating` or `Leaving`; `stuck` says whether the change is stuck and `reason` why. For example `{"state": "Deploying", "stuck": false, "deploy": {"tag": "1.0.2", "promote": true, "hop": "RollingOut"}}`. `deploy` is there for a Deploy under way: its `tag`, `commit` (the Platform repository's, when known), `promote` and `preview` when true, `at` (when the Deploy gate accepted it, when known), `hop` (`Accepted`, `WaitingForArgoCD`, `Applying`, `RollingOut` or `Serving`), and `stuck` and `reason`.
+- `databaseAccess` is the Environment's database access levels (see "Database access" above), each `none`, `pull`, `push`, `maintain` or `admin`. `readWriteSetUp` and `readOnlySetUp` are `false` for a level that is not `none` but whose password has not been written yet, so nobody gets in at it; the text output then says `(not set up: run iidp app db access <name> --env <environment>)` after the level. It is absent without Postgres.
 - Times are RFC 3339, in UTC.
 
 See [`docs/implementation-notes/94-app-status.md`](docs/implementation-notes/94-app-status.md).
@@ -336,7 +403,7 @@ The loud looks have a shape and a marked tag as well as a colour, so they can be
 
 **The feed** in the corner lists the latest six changes, newest at the bottom, with a dot for how loud each was (red, cyan, amber, and grey for something that finished) and its age. Clicking one flies there; pointing at one rings its place on the map.
 
-**The card**: pointing at an Environment, a Capability, a component or the core shows a peek with its state, the Deploy's hops and three key facts. Clicking pins it, with links to the address, ArgoCD, Grafana and, for a Deploy, its commit in the Platform repository; "All details" adds the image and when it was deployed, pods, addresses, the last migration and backups, Scheduled tasks, ArgoCD's sync, the Capabilities and the latest feed entries. A Capability opens its Environment's card with the Capability outlined. Esc, the close button or a click on empty space closes it.
+**The card**: pointing at an Environment, a Capability, a component or the core shows a peek with its state, the Deploy's hops and three key facts. Clicking pins it, with links to the address, ArgoCD, Grafana and, for a Deploy, its commit in the Platform repository; "All details" adds the image and when it was deployed, pods, addresses, the last migration and backups, the database's developer access (its levels, read from the annotations the chart sets on the Environment's database, with any level whose role is not set up yet), Scheduled tasks, ArgoCD's sync, the Capabilities and the latest feed entries. A Capability opens its Environment's card with the Capability outlined. Esc, the close button or a click on empty space closes it.
 
 When the Itema login session expires, the page reloads itself to sign in again, at most once a minute (backing off). `?fps=1` shows the frame rate, and `?glow=` scales the glow round the particles: `0` turns it off, `0.5` halves it, `2` doubles it. How it is built, and how it was checked, is in [`docs/implementation-notes/119-argus-frontend.md`](docs/implementation-notes/119-argus-frontend.md). Why it is a component of its own that watches Kubernetes with client-go is [ADR-0008](docs/adr/0008-argus-watches-kubernetes-with-client-go.md).
 
@@ -348,6 +415,7 @@ The layout follows [`docs/design.md`](docs/design.md). Not every directory exist
 cmd/iidp/            CLI entrypoint
 cmd/iidp-deploy-gate/  the Deploy gate, the service CI deploys through (image only)
 cmd/iidp-argus/      Argus, the live view of the Platform (image only); web/ is its page
+cmd/iidp-db-tunnel/  the Database tunnel, through which developers reach a database (image only)
 internal/            wizard, github, platformrepo, render, deploygate, oidc
 chart/application/   the generic Helm chart
 infra/               OpenTofu for the node, cloud-init for k3s
@@ -389,7 +457,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The `Release` workflow runs GoReleaser, which builds darwin and linux binaries for amd64 and arm64, publishes them with checksums to GitHub Releases, and updates the Homebrew cask in `Itema-as/homebrew-tap`. It also pushes the Deploy gate's image, `ghcr.io/itema-as/iidp-deploy-gate:<version>`, which a Platform pinned to that bootstrap release runs (`bootstrap/README.md`); the release job needs `packages: write` and a GHCR login for that, and sets `IIDP_PUBLISH_DEPLOY_GATE=true`, without which `.goreleaser.yaml` skips the image. Pre-release tags such as `v0.2.0-rc1` are published as GitHub pre-releases and do not touch the tap.
+The `Release` workflow runs GoReleaser, which builds darwin and linux binaries for amd64 and arm64, publishes them with checksums to GitHub Releases, and updates the Homebrew cask in `Itema-as/homebrew-tap`. It also pushes the Deploy gate's image, `ghcr.io/itema-as/iidp-deploy-gate:<version>`, Argus's, `ghcr.io/itema-as/iidp-argus:<version>`, and the Database tunnel's, `ghcr.io/itema-as/iidp-db-tunnel:<version>`, which a Platform pinned to that bootstrap release runs (`bootstrap/README.md`); the release job needs `packages: write` and a GHCR login for that, and sets `IIDP_PUBLISH_DEPLOY_GATE=true`, `IIDP_PUBLISH_ARGUS=true` and `IIDP_PUBLISH_DB_TUNNEL=true`, without which `.goreleaser.yaml` skips each image. Pre-release tags such as `v0.2.0-rc1` are published as GitHub pre-releases and do not touch the tap.
 
 Once a release is out, the workflow moves the major tag (`v0` for `v0.x.y`) to it, only ever forward, so every Application repository calling the reusable deploy workflow at `@v0` runs it from then on. So the next deploy of every Application picks up any change to [`.github/workflows/application-deploy.yaml`](.github/workflows/application-deploy.yaml). Anything that breaks a caller needs a new major instead: removing or renaming an input, adding a required one, needing a permission callers don't grant (today `contents: read`, `packages: write`, `id-token: write`), or needing a different trigger. Don't push `v0` by hand; the `Release` and `e2e` workflows only react to `vX.Y.Z` tags, so it would start nothing, but it would move every Application's deploy workflow at once. See `docs/implementation-notes/74-reusable-deploy-workflow.md`.
 

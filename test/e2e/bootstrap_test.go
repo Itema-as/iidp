@@ -85,6 +85,9 @@ func TestBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := cluster.BuildDatabaseTunnelImage(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	// The Platform repository points at this repository for the bootstrap,
 	// so both are served. The fixture Environments also take the chart from
@@ -116,6 +119,7 @@ func TestBootstrap(t *testing.T) {
 		// pod to come up; only a real sign-in would need real ones.
 		"oauth2-proxy": Healthy,
 		"deploy-gate":  Healthy,
+		"db-tunnel":    Healthy,
 		"guardrails":   Healthy,
 		// Cloud-dependent: configured, applied, but nothing to talk to.
 		"platform-tls": Synced,
@@ -127,6 +131,8 @@ func TestBootstrap(t *testing.T) {
 	}
 
 	testFixtureApplication(ctx, t, cluster)
+	testDatabaseAccess(ctx, t, cluster)
+	testDatabaseTunnel(ctx, t, cluster)
 	testUnreleasedEnvironments(ctx, t, cluster)
 	testDeleteEnvironment(ctx, t, cluster)
 	// The order matters. Workloads added later (brochure-prod's first image,

@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: shop-db-write
+    labels:
+        app.kubernetes.io/name: shop
+        cnpg.io/reload: "true"
+        iidp.itema.no/application: shop
+        iidp.itema.no/environment: prod
+    annotations:
+        argocd.argoproj.io/sync-wave: "-2"
+        kustomize.config.k8s.io/needs-hash: "false"
+type: kubernetes.io/basic-auth
+stringData:
+    password: ENC[AES256_GCM,data:bVVqVTMO+/vfVos8/GUYnsQsT+gsGQQx+Y9GCBP7k84=,iv:J6Wi4JQRt3Bk3YuBmCWaymCklX06xAd7bloVWNxN6FQ=,tag:cm0a1Ybo2cQnLyl/90CYNQ==,type:str]
+    username: ENC[AES256_GCM,data:JjHDv+aoC5MFdw==,iv:ke1D2vt43ylE67gG7A8V1Fzj7Y8KXrx+4LrAmXjDyc0=,tag:yI+o8FMhwZCr152UIZJ67Q==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAxcVBIV0NIMzBsWXlTZnQ3
+            L0NhMXVXZm1vcldFWnlkL1lVSGpuUTc4am00ClR1Szc2ZE5rWFdCLy8wVWZqbE5o
+            QkNhamFPTnRadHhpUnVzcmJ3TUZENVkKLS0tIERRUXhJa0thRGplaHNpMnZlVUdy
+            WXpkUE40N1hhT0dnMTY5eXJybVdZWk0K/VFO1K3CvcDs2j2o17TyNgVGaclO6AEK
+            8l3a9OQHUGbCdp/MPHpfiD5qo3cg9CUpzbQmI/rL+0ZRBSPNe2WULA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-06T14:04:47Z"
+    mac: ENC[AES256_GCM,data:N94rP0Eb2QofqjnyfkyO1S34kndaChU76gl9k+CGFMVIlLhIfMeG5agQBP7CUa757vOND5UnPE3PId76t9naqTNiJsF4LPwewp6rmM0GOgalgakI06S7W/l02QWzXfrfJmdr+ZaIYi1nhstGe6nOekgDPdK9MmjwJu8Tj2bCg/U=,iv:hbkSeDQY6t+sCqzYQ8zr6auL2+2u0X6SkoOMYJbO50s=,tag:r/mF67CD2ih5d53vY76MQA==,type:str]
+    version: 3.13.3

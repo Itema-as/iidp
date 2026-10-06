@@ -2,6 +2,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/Itema-as/iidp/internal/github"
 	"github.com/Itema-as/iidp/internal/platform"
+	"github.com/Itema-as/iidp/internal/sops"
 	"github.com/Itema-as/iidp/internal/version"
 )
 
@@ -30,7 +33,22 @@ type Dependencies struct {
 	// HTTPClient is what app status calls the Deploy gate with; nil means a
 	// client with a one-minute timeout.
 	HTTPClient *http.Client
+	// Encryptor encrypts what the CLI writes to the Platform repository's
+	// sops/ directories; nil means the sops binary on PATH.
+	Encryptor sops.Encryptor
+	// Context is what commands run in; nil means context.Background().
+	// Tests cancel it where a developer would press Ctrl-C.
+	Context context.Context
+	// DatabaseTunnel is how app db connect reaches the Database tunnel at
+	// url with the developer's token; nil means its WebSocket client.
+	DatabaseTunnel func(url, token string) DatabaseTunnel
 }
+
+// exitStatus is an error that ends the CLI with code and says nothing
+// more: the program it ran, such as psql, has said why.
+type exitStatus struct{ code int }
+
+func (e *exitStatus) Error() string { return fmt.Sprintf("exit status %d", e.code) }
 
 // Run executes the CLI with args (excluding the program name) and returns
 // the process exit code.
@@ -53,7 +71,15 @@ func RunWith(args []string, stdin io.Reader, stdout, stderr io.Writer, deps Depe
 	root.SetIn(stdin)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	if err := root.Execute(); err != nil {
+	ctx := deps.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := root.ExecuteContext(ctx); err != nil {
+		var exit *exitStatus
+		if errors.As(err, &exit) {
+			return exit.code
+		}
 		return 1
 	}
 	return 0

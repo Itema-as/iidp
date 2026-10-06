@@ -11,6 +11,7 @@ const prod = {
   image: { repository: 'ghcr.io/itema-as/shop', tag: '1.0.1', deployedAt: '2026-09-28T11:50:00Z' },
   pods: { ready: 1, total: 1, restarts: 2 },
   migration: { result: 'succeeded', finishedAt: '2026-09-28T11:49:00Z' },
+  databaseAccess: { readWrite: 'none', readOnly: 'maintain', readWriteSetUp: true, readOnlySetUp: true },
   tasks: [{ name: 'report', schedule: '0 3 * * *', lastRun: { result: 'failed', finishedAt: '2026-09-28T03:01:00Z' } }],
   addresses: ['https://shop.app.itma.no'],
   links: { argocd: 'https://argocd.example.test/applications/argocd/shop-prod', grafana: 'https://itema.grafana.net/explore?x' },
@@ -34,7 +35,7 @@ test("an Environment's card: state, hops, facts, Capabilities, links and its fee
   assert.equal(card.hops.caption, 'Deploy of 1.0.2 is being applied');
   assert.deepEqual(card.peek, [['Image', '1.0.1'], ['Deployed', '10 min ago'], ['Pods', '1 of 1 ready, 2 restarts']]);
   assert.deepEqual(card.sections.map((s) => s.title), ['Running', 'Database', 'Scheduled tasks', 'ArgoCD']);
-  assert.deepEqual(card.sections[1].rows, [['Last migration', 'succeeded 11 min ago'], ['Backups', 'failing: exit 2']]);
+  assert.deepEqual(card.sections[1].rows, [['Last migration', 'succeeded 11 min ago'], ['Backups', 'failing: exit 2'], ['Developer access', 'read-write none · read-only maintain']]);
   assert.deepEqual(card.capabilities.map((c) => [c.name, c.state, c.outlined]), [['Postgres shop-db', 'Warning', true], ['Itema login', 'Healthy', false]]);
   assert.deepEqual(card.links.map((l) => l.href), [
     'https://shop.app.itma.no',
@@ -43,6 +44,14 @@ test("an Environment's card: state, hops, facts, Capabilities, links and its fee
     'https://github.com/Itema-as/iidp-platform/commit/1234567abcdef',
   ]);
   assert.deepEqual(card.recent.map((r) => r.message), ['Deploy 1.0.2 to shop prod accepted']);
+});
+
+test("a Preview Environment's card shows the database access it has from staging, and an older chart's none", () => {
+  const preview = environmentCard('shop', { ...prod, name: 'pr-4', databaseAccess: { readWrite: 'push', readOnly: 'none', readWriteSetUp: false, readOnlySetUp: true } }, { feed, platform, nowMs: now });
+  assert.deepEqual(preview.sections.find((s) => s.title === 'Database').rows.at(-1),
+    ['Developer access', 'read-write push (not set up: run iidp app db access shop --env staging) · read-only none']);
+  const older = environmentCard('shop', { ...prod, databaseAccess: undefined }, { feed, platform, nowMs: now });
+  assert.deepEqual(older.sections.find((s) => s.title === 'Database').rows.map((r) => r[0]), ['Last migration', 'Backups']);
 });
 
 test('a stuck or Degraded Environment says why first', () => {

@@ -47,7 +47,7 @@ Read from the root of the repository on every run, so changing a Platform-wide s
 | `chartRepository` | no | The OCI reference of the generic chart. Default `oci://ghcr.io/itema-as/charts/application`, where the release workflow pushes it. |
 | `argocdURL` | no | Printed by the CLI as where to look at an Application's status. |
 | `grafanaURL` | no | Printed by the CLI as where to look at an Application's logs. |
-| `agePublicKey` | only for `iidp secret set` | What `iidp secret set` encrypts values with. The matching private key exists only in the cluster (`bootstrap/README.md`, Secret `argocd/sops-age`); the CLI never sees it. Not required to create an Application. |
+| `agePublicKey` | for `iidp secret set`, `iidp app db access`, and database passwords | What the CLI encrypts values with: `iidp secret set`'s, and the database access passwords that `iidp app db access` writes, and so do `iidp app create --postgres` and `add-capability --postgres` or `--staging` for a new Environment's default access. The matching private key exists only in the cluster (`bootstrap/README.md`, Secret `argocd/sops-age`); the CLI never sees it. Not required to create an Application: without it, a new Environment's database stays closed until `iidp app db access` writes its passwords. |
 | `cloudflareZone` | no | The Cloudflare zone containing `baseDomain`. A `--domain` host inside it is fully automated: external-dns creates the record. It is also the Itema login cookie's domain, written with `--login` as `platform.loginCookieDomain`; without it, `baseDomain` is. A custom domain outside it signs in on its own host (`--login`, below). |
 | `backupsBucket` | only for `--postgres` | The Object Storage bucket every Application database is backed up to, written into the Environment's `values.yaml` as `platform.backupsBucket`. Not required without `--postgres`. |
 | `objectStorageEndpoint` | only for `--postgres` | The S3 endpoint of `backupsBucket`'s location, for example `https://hel1.your-objectstorage.com`, written as `platform.objectStorageEndpoint`. Not required without `--postgres`. |
@@ -223,11 +223,29 @@ When the first write comes depends on the Application: prod without staging gets
 
 `secrets` (a list of Secret names, empty until `iidp secret set` adds to it) is documented below.
 
+With Postgres, `postgres` also holds the database access setting, which `iidp app db access` writes (below), and the names of the Secrets holding the access roles' passwords:
+
+```yaml
+postgres:
+    enabled: true
+    migrationCommand: ""
+    backupRetention: 30d
+    access:
+        readWrite: push
+        readOnly: none
+    readWritePasswordSecret: shop-staging-db-write
+```
+
+`readWrite` and `readOnly` are each `none`, `pull`, `push`, `maintain` or `admin`: the lowest permission on the Application repository that qualifies for read-write and read-only access to the database. A level that is missing, as in every Environment written before the setting existed, takes the chart's default: `push` for read-write on staging, which a Preview Environment shares, and `none` for everything else. A role, `<name>_write` or `<name>_read`, exists only when its level is not `none` and its `...PasswordSecret` is named; otherwise the chart declares it absent, and CloudNativePG drops it from the database. See [`chart/application/README.md`](../chart/application/README.md) for the roles and the refusals.
+
 Nothing in the file says who the image runs as: the chart runs every container as a non-root user and serves every Static site on 8080 (`chart/application/README.md`, "Port and probes" and "Security context"). An Environment written between #90 and #110 may still carry `runAsNonRoot`, which the chart no longer reads; `add-capability --staging` does not copy it.
 
 ### What the Capabilities write
 
 - **`--postgres`** sets `postgres.enabled: true` in every Environment (prod and, with `--staging`, staging too: each gets its own database by construction, since the chart names the CloudNativePG `Cluster` after the Environment's own object name) and fills `platform.backupsBucket` and `platform.objectStorageEndpoint` from `platform.yaml`. It does not write a migration command here. `--migration-command`, or, left unset, the command the CLI proposes after looking for a Prisma schema, a Drizzle config or an npm `migrate` script in the Application repository (the generated template with `--path create`, the cloned repository with `--path adopt`, or the current directory when it has a `package.json`), goes into the Application repository's `iidp.yaml`: `--path create` writes it into the generated repository, `--path adopt` into its pull request, and without `--path` the CLI prints the line to add. The first deploy carries it to `postgres.migrationCommand`. A migration command without `--postgres` is refused: there is nothing to migrate. It also copies `bootstrap/templates/backups-credentials.enc.yaml` into every Environment that gets Postgres (below); a Platform repository without that file refuses `--postgres` before anything is written.
+
+  `--postgres` also writes each Environment's default database access, `postgres.access` above: `readWrite: push` and `readOnly: none` for staging, both `none` for prod. For a level that is not `none` it generates the role's password and writes it, SOPS-encrypted, to `sops/db-write.enc.yaml` (below), so a new staging opens to the developers who can push the moment it renders. On a Platform whose `platform.yaml` has no `agePublicKey` it writes the levels only; the CLI says which Environment stays closed until `iidp app db access` writes its password.
+
 - **`--staging`** writes `applications/<name>/staging/{application.yaml,values.yaml}` next to `prod`, in the same commit: `environment: staging`, the ArgoCD Application `<name>-staging` in namespace `<name>-staging`, and the address `<name>-staging.<baseDomain>` (the chart derives it from `environment`). Every other Capability is the same in both Environments.
 - **`--domain`** (repeatable) validates each host the way the chart does at render time (a lowercase DNS hostname of at least two labels, no duplicates) plus one only the CLI can check: none may equal a Platform address of either Environment. It then classifies each host: one label directly under `baseDomain` is covered by the Platform's wildcard certificate; any host inside `platform.yaml`'s `cloudflareZone` (the wildcard-covered ones included) is fully automatic, since external-dns can create its DNS record; anything else needs a CNAME to the prod address, which the closing summary prints (`CNAME <host> -> <name>.<baseDomain>`). `domains` is written for prod only: custom domains apply there, staging keeps its Platform address.
 - **`--size`** (`small`, `medium` or `large`) applies to every Environment; any other value is refused.
@@ -332,7 +350,7 @@ spec:
 
 ## `applications/<name>/<environment>/sops/`
 
-Written and updated by `iidp secret set <app> <env> KEY=value`, never by `iidp app create`. One SOPS-encrypted Kubernetes Secret per key, because the CLI never holds the Platform's age private key and so cannot decrypt an existing document to merge a change into it: setting a key writes that key's whole file, whichever of its keys changed.
+Written and updated by `iidp secret set <app> <env> KEY=value`. One SOPS-encrypted Kubernetes Secret per key, because the CLI never holds the Platform's age private key and so cannot decrypt an existing document to merge a change into it: setting a key writes that key's whole file, whichever of its keys changed. The Postgres Capability and `iidp app db access` add files of their own, below.
 
 ```
 applications/shop/prod/sops/
@@ -391,6 +409,22 @@ The Secret's name (`<fullname>-<key-slug>`: the bare Application name for prod, 
 
 `iidp secret set` validates the Application name, the Environment (`prod` or `staging`) and every `KEY` before cloning anything. It then clones `main` to read `platform.yaml` and check that the Environment (`applications/<app>/<env>/`) already exists; a missing `agePublicKey` or a missing Environment is refused there, with a clear error, before anything is written. The private key never reaches the CLI or the Platform repository; only the cluster (`bootstrap/README.md`, Secret `argocd/sops-age`) can decrypt.
 
+### The database access passwords
+
+`iidp app db access`, and `--postgres` on `app create` and `add-capability`, write one more file per database access role whose level is not `none`, in the same directory and registered the same way:
+
+```
+applications/shop/staging/sops/
+  db-write.enc.yaml         Secret shop-staging-db-write: the password of shop_write
+  db-read.enc.yaml          Secret shop-staging-db-read: the password of shop_read
+```
+
+Each is a Secret of type `kubernetes.io/basic-auth`, the shape CloudNativePG's managed roles take a password in, with `stringData.username` the role's name and `stringData.password` a password the CLI generated (`crypto/rand`'s `Text`, 26 base32 characters). It carries the same labels and annotations as the Secrets above, and the label `cnpg.io/reload: "true"`, so that CloudNativePG applies a changed password at once. Only `data` and `stringData` are encrypted, as above, and neither the password nor its Secret is added to the `secrets:` list: the chart names it in the `Cluster` through `postgres.readWritePasswordSecret` or `readOnlyPasswordSecret`, and the Application's containers never see it. A password already there is kept on later runs; a level set to `none` deletes its file and its reference. `iidp secret set` refuses a `KEY` that would land in one of these files (`DB_WRITE`, `DB_READ`). A Preview Environment gets staging's through staging's `sops/` source, like every other staging Secret.
+
+## `iidp app db access`
+
+Sets one Environment's database access levels, `prod` or `staging`, in one commit, `iidp app db access <name> --env <environment> --read-write <level> --read-only <level>` with the resulting levels. A level the command is not given keeps its value, or its default. It writes both levels to `postgres.access` in `values.yaml`, then generates and writes the password of each role whose level is not `none` and has none yet, and removes the password of each role whose level is `none` (above), which drops the role once the Environment syncs, with the `sops/` source added to `application.yaml` if the Environment had none. Before anything is written it refuses what the chart would: an unknown level, `readOnly` needing more than `readWrite` when neither is `none`, and a level other than `none` on an Environment without Postgres, with the chart's own message; and an Environment without Postgres at all, naming `iidp app add-capability --postgres`. A run that changes nothing commits nothing. It is pushed with the same retry-once-on-a-moved-`main` behaviour as `app create`.
+
 ## `bootstrap/templates/backups-credentials.enc.yaml` and the Postgres Capability's own Secret
 
 The chart's Postgres Capability needs the Platform's Object Storage access and secret key in a Secret named `backups-credentials` (`platform.backupsCredentialsSecret`'s default) in every Environment's own namespace (`chart/application/README.md`, `docs/implementation-notes/07-chart-postgres.md`). Unlike a developer's own secrets (`iidp secret set`, above), the CLI never encrypts this one -- it does not hold the Platform's age private key or the Object Storage keys, and this Secret's plaintext is the same in every Environment, not per-Application.
@@ -407,8 +441,8 @@ Idempotent: re-running `iidp app create`/`add-capability --postgres` on an Envir
 
 Edits an Application's existing Environment files in place with the yaml.v3 node helpers `internal/render` already uses for `secret set` (`AddSecretName`, `AddKustomizeSource`), so unrelated keys, comments and `secrets:` survive. It refuses an Application with no directory under `applications/`, and refuses a Capability already present (Postgres already `enabled`, a `staging` directory that already exists, a domain already in `domains`, the requested size equal to the current one, Itema login already `enabled`, the same sign-in groups), naming it; nothing is written when any check fails.
 
-- **`--postgres`** sets `postgres.enabled: true` and `platform.backupsBucket`/`objectStorageEndpoint` in every Environment the Application already has, exactly the fields `app create` writes. It never sets `postgres.migrationCommand`: the command would run against the image each Environment already runs, which may not have the migration tooling yet. It cannot write the developer's repository either, so it prints the `migrationCommand:` line to add to `iidp.yaml` (`--migration-command`, or the detected command, or an example); the next deploy of a commit with that line sets it. It also copies `bootstrap/templates/backups-credentials.enc.yaml` into each of them (above). **`--staging`**, below, also copies it into the new Environment when Postgres is already enabled (on prod, from this run or an earlier one) -- Postgres is uniform across an Application's Environments by construction.
-- **`--staging`** copies `prod`'s values.yaml into a new `applications/<name>/staging/values.yaml` (`environment: staging`, `image.tag` reset to `""`, so staging renders nothing until the next push to `main` writes its first image, `domains: []`, and no `secrets:` list — prod's secrets are not copied, since the CLI cannot decrypt them to move them, and the command logs that) plus the same `application.yaml` shape `app create` writes.
+- **`--postgres`** sets `postgres.enabled: true` and `platform.backupsBucket`/`objectStorageEndpoint` in every Environment the Application already has, exactly the fields `app create` writes, and each Environment's default database access and passwords, the same way. It never sets `postgres.migrationCommand`: the command would run against the image each Environment already runs, which may not have the migration tooling yet. It cannot write the developer's repository either, so it prints the `migrationCommand:` line to add to `iidp.yaml` (`--migration-command`, or the detected command, or an example); the next deploy of a commit with that line sets it. It also copies `bootstrap/templates/backups-credentials.enc.yaml` into each of them (above). **`--staging`**, below, also copies it into the new Environment when Postgres is already enabled (on prod, from this run or an earlier one) -- Postgres is uniform across an Application's Environments by construction.
+- **`--staging`** copies `prod`'s values.yaml into a new `applications/<name>/staging/values.yaml` (`environment: staging`, `image.tag` reset to `""`, so staging renders nothing until the next push to `main` writes its first image, `domains: []`, and no `secrets:` list — prod's secrets are not copied, since the CLI cannot decrypt them to move them, and the command logs that) plus the same `application.yaml` shape `app create` writes. Prod's database access and its passwords are not copied either: with Postgres, the new staging gets its own default levels and password, as `app create` writes them.
 - **`--domain`** (repeatable) validates and classifies each host exactly as `app create` does (`ValidateDomains`) and appends it to `prod`'s `domains`.
 - **`--size`** rewrites `size` in every Environment the Application already has.
 - **`--login`** sets `login.enabled: true` and `platform.loginCookieDomain` in every Environment the Application already has. For every custom domain of `prod` outside the login cookie's domain (`cloudflareZone`, above), those already listed and those given with `--domain` in the same run, it prints the redirect URI to add, as `app create` does. The same trade-offs apply.
@@ -538,4 +572,4 @@ The Deploy gate's service also answers one read, `GET https://deploy.<baseDomain
 4. It is bound (`applications/<name>/repository.yaml`, above) with both ids, to a repository in `Itema-as` (HTTP 403, naming `iidp app bind`).
 5. GitHub, asked with the same token for the bound repository by its id (`GET /repositories/<repositoryId>`), says the user may read it. GitHub answers 404 rather than 403 for a private repository the user cannot see; both are HTTP 403 here, "you cannot read ... Application repository".
 
-Only then does it read the cluster, and it answers with every Environment it finds: each ArgoCD Application in `argocd` labelled `iidp.itema.no/application: <name>` (the label every `application.yaml` carries, above), with the objects in the namespace it names. The Environments this repository has but ArgoCD does not yet are listed too. When the image was deployed is the time of the newest commit here that set the running tag in that Environment's `values.yaml`. The answer's shape is documented in the README ("`app status`").
+Only then does it read the cluster, and it answers with every Environment it finds: each ArgoCD Application in `argocd` labelled `iidp.itema.no/application: <name>` (the label every `application.yaml` carries, above), with the objects in the namespace it names. The Environments this repository has but ArgoCD does not yet are listed too. When the image was deployed is the time of the newest commit here that set the running tag in that Environment's `values.yaml`. An Environment's database access levels are read from its `values.yaml` here too, staging's for a Preview Environment, so the service needs nothing more in the cluster for them. The answer's shape is documented in the README ("`app status`").

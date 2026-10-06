@@ -160,14 +160,17 @@ func (s *Store) Put(source, key string, obj any) {
 	case platformstate.Event:
 		// A new Warning Event is a feed entry, once the store has
 		// seeded the feed with those from before it started. The Deploy
-		// gate's refusals are the Deploy's own note.
+		// gate's refusals are the Deploy's own note, and the database
+		// tunnel's Events are notes in the tunnel's own words.
 		for other, byKey := range s.objects {
 			if _, ok := byKey[key].(platformstate.Event); ok && other != source {
 				had = true // another informer holds it too
 			}
 		}
-		if !had && s.seeded && o.Type == "Warning" && o.Reason != platformstate.ReasonDeployRefused {
-			s.publishNotes([]Note{eventNote(o, s.argoCDLocked())}, now)
+		if !had && s.seeded {
+			if n, _, ok := eventFeedNote(o, s.argoCDLocked()); ok {
+				s.publishNotes([]Note{n}, now)
+			}
 		}
 	}
 	s.poke()
@@ -427,6 +430,27 @@ func eventNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplication) 
 		message = string(r[:299]) + "…"
 	}
 	return Note{At: e.Time(), Place: placeOf(e, argoCD), Loudness: Quiet, FeedOnly: true, Message: message}
+}
+
+// eventFeedNote is the feed entry an Event makes of its own, if any: one
+// of the Database tunnel's, or any other Warning but the Deploy gate's
+// refusals, which are their Deploy's own note. warning is true for the
+// second.
+func eventFeedNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplication) (n Note, warning, ok bool) {
+	switch {
+	case platformstate.IsDatabaseSessionEvent(e):
+		return sessionNote(e, argoCD), false, true
+	case e.Type == "Warning" && e.Reason != platformstate.ReasonDeployRefused:
+		return eventNote(e, argoCD), true, true
+	}
+	return Note{}, false, false
+}
+
+// sessionNote is the feed entry for one of the Database tunnel's Events,
+// in the tunnel's own words. A session's end only reports something
+// finished.
+func sessionNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplication) Note {
+	return Note{At: e.Time(), Place: placeOf(e, argoCD), Loudness: Quiet, FeedOnly: e.Reason == platformstate.ReasonDatabaseSessionEnded, Message: e.Note}
 }
 
 // sortedKeys are the keys of a and b together, sorted.

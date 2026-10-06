@@ -175,6 +175,7 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		envs = append(envs, "staging")
 	}
 	var files []string
+	var databases []EnvironmentDatabase
 	var prodValuesAfterEdits []byte
 	for _, env := range envs {
 		envFiles, newValues, err := applyCapabilitiesToEnvironment(dir, application, env, caps, cfg, prod.Login.Enabled)
@@ -184,12 +185,18 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		files = append(files, envFiles...)
 		if caps.Postgres {
 			// Only when Postgres is turned on now: an Environment that
-			// already had it has the file.
+			// already had it has the file, and access of its own.
 			credFiles, err := copyBackupsCredentials(dir, application, env)
 			if err != nil {
 				return Result{}, err
 			}
 			files = append(files, credFiles...)
+			dbFiles, db, err := w.openDatabase(ctx, dir, cfg, application, env)
+			if err != nil {
+				return Result{}, err
+			}
+			files = appendPaths(files, dbFiles...)
+			databases = append(databases, db)
 		}
 		if env == "prod" {
 			prodValuesAfterEdits = newValues
@@ -207,12 +214,19 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		}
 		files = append(files, stagingFiles...)
 		if postgresEnabledAfter {
-			// A new staging Environment never had the file copied.
+			// A new staging Environment never had the file copied, nor
+			// access of its own.
 			credFiles, err := copyBackupsCredentials(dir, application, "staging")
 			if err != nil {
 				return Result{}, err
 			}
 			files = append(files, credFiles...)
+			dbFiles, db, err := w.openDatabase(ctx, dir, cfg, application, "staging")
+			if err != nil {
+				return Result{}, err
+			}
+			files = appendPaths(files, dbFiles...)
+			databases = append(databases, db)
 		}
 	}
 
@@ -227,7 +241,7 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 	if err != nil {
 		return Result{}, err
 	}
-	files = append(files, previewFiles...)
+	files = appendPaths(files, previewFiles...)
 
 	if err := repo.Add(ctx, files...); err != nil {
 		return Result{}, err
@@ -254,6 +268,7 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		Domains:            domainPlans,
 		Login:              caps.Login || prod.Login.Enabled,
 		LoginCallbackHosts: loginCallbackHosts,
+		Databases:          databases,
 	}
 	switch {
 	case caps.SetLoginGroups:

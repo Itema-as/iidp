@@ -35,6 +35,10 @@ const (
 	// deploy-gate-url input. A test keeps the two equal.
 	DefaultDeployGateURL = "https://deploy.app.itma.no"
 
+	// DefaultDatabaseTunnelURL is where iidp app db connect asks when it
+	// cannot read platform.yaml: Itema's Platform's Database tunnel.
+	DefaultDatabaseTunnelURL = "https://db.app.itma.no"
+
 	// DeployWorkflow is the reusable workflow every Application
 	// repository's .github/workflows/deploy.yaml calls, without a ref.
 	DeployWorkflow = CLIRepository + "/.github/workflows/application-deploy.yaml"

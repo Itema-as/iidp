@@ -19,29 +19,56 @@ type Secret struct {
 }
 
 // SecretDocument renders the plaintext Kubernetes Secret manifest for s.
+func SecretDocument(s Secret) ([]byte, error) {
+	return yaml.Marshal(secretDocument(s.Name, s.Application, s.Environment, "Opaque", map[string]string{s.Key: s.Value}))
+}
+
+// PasswordSecret is the plaintext password Secret of one database access
+// role, before encryption. Like Secret, never write it to disk.
+type PasswordSecret struct {
+	Name        string
+	Application string
+	Environment string
+	// Username is the role's name, which CloudNativePG checks against the
+	// role it sets the password of.
+	Username string
+	Password string
+}
+
+// PasswordSecretDocument renders the plaintext Kubernetes Secret manifest
+// for s in the shape a CloudNativePG managed role's passwordSecret takes:
+// kubernetes.io/basic-auth, with username and password. The cnpg.io/reload
+// label makes CloudNativePG apply a changed password at once rather than
+// at its next reconciliation.
+func PasswordSecretDocument(s PasswordSecret) ([]byte, error) {
+	doc := secretDocument(s.Name, s.Application, s.Environment, "kubernetes.io/basic-auth", map[string]string{"username": s.Username, "password": s.Password})
+	doc.Metadata.Labels["cnpg.io/reload"] = "true"
+	return yaml.Marshal(doc)
+}
+
+// secretDocument is the Secret every Platform secret is written as.
 // needs-hash is off so the name stays what values.yaml and ksops.yaml
 // reference, and sync-wave -2 makes the Secret exist a wave before the
 // migration Job that may need it.
-func SecretDocument(s Secret) ([]byte, error) {
-	doc := secretDoc{
+func secretDocument(name, application, environment, secretType string, stringData map[string]string) secretDoc {
+	return secretDoc{
 		APIVersion: "v1",
 		Kind:       "Secret",
 		Metadata: secretMetadata{
-			Name: s.Name,
+			Name: name,
 			Labels: map[string]string{
-				"app.kubernetes.io/name":    s.Application,
-				"iidp.itema.no/application": s.Application,
-				"iidp.itema.no/environment": s.Environment,
+				"app.kubernetes.io/name":    application,
+				"iidp.itema.no/application": application,
+				"iidp.itema.no/environment": environment,
 			},
 			Annotations: map[string]string{
 				"kustomize.config.k8s.io/needs-hash": "false",
 				"argocd.argoproj.io/sync-wave":       "-2",
 			},
 		},
-		Type:       "Opaque",
-		StringData: map[string]string{s.Key: s.Value},
+		Type:       secretType,
+		StringData: stringData,
 	}
-	return yaml.Marshal(doc)
 }
 
 type secretDoc struct {
@@ -49,8 +76,8 @@ type secretDoc struct {
 	Kind       string         `yaml:"kind"`
 	Metadata   secretMetadata `yaml:"metadata"`
 	Type       string         `yaml:"type"`
-	// StringData holds exactly one key: the CLI has no private key, so it
-	// cannot merge into an existing encrypted document.
+	// StringData holds one Secret's whole content: the CLI has no private
+	// key, so it cannot merge into an existing encrypted document.
 	StringData map[string]string `yaml:"stringData"`
 }
 

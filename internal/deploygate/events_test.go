@@ -3,19 +3,17 @@ package deploygate_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Itema-as/iidp/internal/deploygate"
-	"github.com/Itema-as/iidp/internal/platformstate"
+	"github.com/Itema-as/iidp/internal/kubeevent"
 )
 
 // fakeEvents keeps the Events the gate records. err, when set, is what
@@ -23,12 +21,12 @@ import (
 // it is closed.
 type fakeEvents struct {
 	mu     sync.Mutex
-	events []deploygate.Event
+	events []kubeevent.Event
 	err    error
 	hold   chan struct{}
 }
 
-func (f *fakeEvents) CreateEvent(ctx context.Context, event deploygate.Event) error {
+func (f *fakeEvents) CreateEvent(ctx context.Context, event kubeevent.Event) error {
 	if f.hold != nil {
 		select {
 		case <-f.hold:
@@ -46,11 +44,11 @@ func (f *fakeEvents) CreateEvent(ctx context.Context, event deploygate.Event) er
 }
 
 // recorded waits for the gate's Events in flight and returns them all.
-func (f *fakeEvents) recorded(e *env) []deploygate.Event {
+func (f *fakeEvents) recorded(e *env) []kubeevent.Event {
 	e.gate.WaitForEvents()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]deploygate.Event(nil), f.events...)
+	return append([]kubeevent.Event(nil), f.events...)
 }
 
 func withEvents(e *env) *fakeEvents {
@@ -62,7 +60,7 @@ func withEvents(e *env) *fakeEvents {
 // checkEvent asserts everything about an Event but its note, which each
 // test checks itself: the ArgoCD Application it regards, in argocd, and
 // exactly the annotations wanted.
-func checkEvent(t *testing.T, event deploygate.Event, reason, eventType, action, argoApp string, annotations map[string]string) {
+func checkEvent(t *testing.T, event kubeevent.Event, reason, eventType, action, argoApp string, annotations map[string]string) {
 	t.Helper()
 	if event.APIVersion != "events.k8s.io/v1" || event.Kind != "Event" {
 		t.Errorf("apiVersion/kind = %s/%s, want events.k8s.io/v1 Event", event.APIVersion, event.Kind)
@@ -72,7 +70,7 @@ func checkEvent(t *testing.T, event deploygate.Event, reason, eventType, action,
 	}
 	// Kubernetes requires an Event to be in the namespace of the object it
 	// is about.
-	want := deploygate.ObjectReference{APIVersion: "argoproj.io/v1alpha1", Kind: "Application", Namespace: "argocd", Name: argoApp}
+	want := kubeevent.ObjectReference{APIVersion: "argoproj.io/v1alpha1", Kind: "Application", Namespace: "argocd", Name: argoApp}
 	if event.Regarding != want || event.Metadata.Namespace != "argocd" {
 		t.Errorf("regarding = %+v in namespace %q, want %+v in argocd", event.Regarding, event.Metadata.Namespace, want)
 	}
@@ -324,47 +322,5 @@ func TestAnEventThatHangsDoesNotDelayTheDeploy(t *testing.T) {
 	close(sink.hold)
 	if events := sink.recorded(e); len(events) != 1 {
 		t.Errorf("recorded %d Events once released, want 1", len(events))
-	}
-}
-
-func TestKubeEventsPostsTheEventToItsNamespace(t *testing.T) {
-	var gotMethod, gotPath, gotAuth, gotType string
-	var got map[string]any
-	answer := http.StatusCreated
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath, gotAuth, gotType = r.Method, r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Content-Type")
-		_ = json.NewDecoder(r.Body).Decode(&got)
-		if answer != http.StatusCreated {
-			http.Error(w, `{"kind":"Status","reason":"Forbidden"}`, answer)
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"kind":"Event"}`))
-	}))
-	defer api.Close()
-	sink := &deploygate.KubeEvents{Kube: &platformstate.Kube{BaseURL: api.URL, Token: func() (string, error) { return "sa-token", nil }}}
-	event := deploygate.Event{
-		APIVersion: "events.k8s.io/v1", Kind: "Event",
-		Metadata:  deploygate.EventMetadata{Name: "shop-prod.1", Namespace: "argocd", Annotations: map[string]string{"iidp.itema.no/tag": "1a2b3c4"}},
-		EventTime: "2026-09-27T10:00:00.000000Z", ReportingController: "iidp.itema.no/deploy-gate", ReportingInstance: "gate-pod",
-		Action: "Deploy", Reason: "DeployAccepted", Type: "Normal", Note: "Deploy shop prod 1a2b3c4 accepted",
-		Regarding: deploygate.ObjectReference{APIVersion: "argoproj.io/v1alpha1", Kind: "Application", Namespace: "argocd", Name: "shop-prod"},
-	}
-	if err := sink.CreateEvent(context.Background(), event); err != nil {
-		t.Fatal(err)
-	}
-	if gotMethod != http.MethodPost || gotPath != "/apis/events.k8s.io/v1/namespaces/argocd/events" || gotAuth != "Bearer sa-token" || gotType != "application/json" {
-		t.Errorf("request = %s %s, Authorization %q, Content-Type %q", gotMethod, gotPath, gotAuth, gotType)
-	}
-	regarding, _ := got["regarding"].(map[string]any)
-	if got["reason"] != "DeployAccepted" || got["eventTime"] != "2026-09-27T10:00:00.000000Z" || regarding["name"] != "shop-prod" || regarding["namespace"] != "argocd" {
-		t.Errorf("body = %v", got)
-	}
-
-	answer = http.StatusForbidden
-	err := sink.CreateEvent(context.Background(), event)
-	var refusal *platformstate.StatusError
-	if !errors.As(err, &refusal) || refusal.Status != http.StatusForbidden {
-		t.Errorf("CreateEvent = %v, want the API server's 403", err)
 	}
 }

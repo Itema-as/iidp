@@ -122,7 +122,7 @@ func runAppAddCapability(cmd *cobra.Command, name string, opts addCapabilityOpti
 
 	fmt.Fprintf(out, "Adding Capabilities to %s: %s\n", name, strings.Join(capabilitySummary(opts, setLoginGroups, loginGroups), ", "))
 
-	writer := &platformrepo.Writer{URL: opts.platformRepo, Auth: git.Auth{Token: token}, BeforePush: deps.BeforePush}
+	writer := &platformrepo.Writer{URL: opts.platformRepo, Auth: git.Auth{Token: token}, BeforePush: deps.BeforePush, Encryptor: deps.Encryptor}
 	res, err := writer.AddCapabilities(cmd.Context(), name, platformrepo.Capabilities{
 		Postgres:       opts.postgres,
 		Staging:        opts.staging,
@@ -230,6 +230,7 @@ func printAddCapabilityResult(out io.Writer, name string, res platformrepo.Resul
 		fmt.Fprintf(out, "  Login:    Itema (Entra ID) sign-in required; one sign-in covers every protected address inside %s\n", res.Config.LoginCookieDomain())
 		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(res.LoginGroups))
 	}
+	printDatabases(out, name, res)
 	printDomains(out, res)
 	printLoginCallbacks(out, res)
 }

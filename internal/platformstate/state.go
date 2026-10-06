@@ -80,6 +80,57 @@ type Environment struct {
 	// Activity is what is changing: Arriving, Unreleased, Deploying,
 	// Updating or Leaving, progressing or stuck. Null when nothing is.
 	Activity *Activity `json:"activity"`
+	// DatabaseAccess is who among the Application's developers may reach
+	// its database. iidp app status reads it from the Platform repository,
+	// Argus from the Environment's Cluster. Absent without Postgres, and
+	// from older Deploy gates and charts.
+	DatabaseAccess *DatabaseAccess `json:"databaseAccess,omitempty"`
+}
+
+// DatabaseAccess is an Environment's database access levels: each the
+// lowest permission on the Application repository that qualifies for it
+// (pull, push, maintain or admin), or none.
+type DatabaseAccess struct {
+	ReadWrite string `json:"readWrite"`
+	ReadOnly  string `json:"readOnly"`
+	// ReadWriteSetUp and ReadOnlySetUp are false when the level is not
+	// none but its role's password has not been written yet, so nobody
+	// gets in at that level; true otherwise.
+	ReadWriteSetUp bool `json:"readWriteSetUp"`
+	ReadOnlySetUp  bool `json:"readOnlySetUp"`
+}
+
+// The annotations the application chart sets on an Environment's Cluster
+// with its database access levels.
+const (
+	DatabaseAccessReadWriteAnnotation = "iidp.itema.no/db-access-read-write"
+	DatabaseAccessReadOnlyAnnotation  = "iidp.itema.no/db-access-read-only"
+)
+
+// databaseAccessOf is the database access the chart set on application's
+// Cluster, or nil when it has none or no Cluster. A level is set up when
+// it is none or its role, <application>_write or <application>_read, is
+// present among the Cluster's managed roles.
+func databaseAccessOf(application string, clusters []PostgresCluster) *DatabaseAccess {
+	for _, c := range clusters {
+		readWrite, rw := c.Metadata.Annotations[DatabaseAccessReadWriteAnnotation]
+		readOnly, ro := c.Metadata.Annotations[DatabaseAccessReadOnlyAnnotation]
+		if !rw || !ro {
+			continue
+		}
+		present := map[string]bool{}
+		for _, role := range c.Spec.Managed.Roles {
+			// CloudNativePG's default for ensure is present.
+			present[role.Name] = role.Ensure == "" || role.Ensure == "present"
+		}
+		return &DatabaseAccess{
+			ReadWrite:      readWrite,
+			ReadOnly:       readOnly,
+			ReadWriteSetUp: readWrite == "none" || present[application+"_write"],
+			ReadOnlySetUp:  readOnly == "none" || present[application+"_read"],
+		}
+	}
+	return nil
 }
 
 // ArgoCD is an Environment's ArgoCD Application.
@@ -206,11 +257,12 @@ func EnvironmentOf(application string, o Objects, now time.Time) Environment {
 
 func environmentOf(application string, o Objects, now time.Time) (Environment, []Deploy) {
 	env := Environment{
-		Name:      EnvironmentName(application, o.ArgoCD),
-		Namespace: o.ArgoCD.Spec.Destination.Namespace,
-		ArgoCD:    argoCDOf(o.ArgoCD),
-		Tasks:     []Task{},
-		Addresses: addressesOf(o.ArgoCD.Status.Summary.ExternalURLs),
+		Name:           EnvironmentName(application, o.ArgoCD),
+		Namespace:      o.ArgoCD.Spec.Destination.Namespace,
+		ArgoCD:         argoCDOf(o.ArgoCD),
+		Tasks:          []Task{},
+		Addresses:      addressesOf(o.ArgoCD.Status.Summary.ExternalURLs),
+		DatabaseAccess: databaseAccessOf(application, o.PostgresClusters),
 	}
 	if d, ok := workload(o.Deployments); ok {
 		if len(d.Spec.Template.Spec.Containers) > 0 {

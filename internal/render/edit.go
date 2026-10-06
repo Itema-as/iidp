@@ -170,7 +170,8 @@ func SetLoginGroups(valuesYAML []byte, groups []string) (out []byte, changed boo
 // CopyValuesForStaging turns a prod Environment's values.yaml into the
 // starting values.yaml of a new staging Environment: no image tag, no
 // custom domains, no Scheduled tasks (staging's first deploy brings its
-// own) and no secrets. The CLI cannot decrypt prod's Secrets to copy them;
+// own), no secrets, and no database access, so staging starts at its own
+// defaults. The CLI cannot decrypt prod's Secrets to copy them;
 // secretsDropped reports whether prod had any.
 func CopyValuesForStaging(prodValuesYAML []byte) (out []byte, secretsDropped bool, err error) {
 	root, err := decodeDocument(prodValuesYAML, "values.yaml")
@@ -184,6 +185,12 @@ func CopyValuesForStaging(prodValuesYAML []byte) (out []byte, secretsDropped boo
 		domains.Content = nil
 	}
 	secretsDropped = removeMappingKey(root, "secrets")
+	if postgres := mappingValue(root, "postgres"); postgres != nil {
+		removeMappingKey(postgres, "access")
+		for _, role := range AccessRoles {
+			removeMappingKey(postgres, role.passwordSecretKey())
+		}
+	}
 	removeMappingKey(root, "tasks")
 	// Older values files may carry runAsNonRoot, which the chart doesn't
 	// read.

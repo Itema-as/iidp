@@ -40,9 +40,10 @@ type Config struct {
 	ArgoCDURL string `yaml:"argocdURL"`
 	// GrafanaURL is where developers look at their Application's logs.
 	GrafanaURL string `yaml:"grafanaURL"`
-	// AgePublicKey is what iidp secret set encrypts values with. The
-	// matching private key exists only in the cluster. Required for
-	// secret set; not required to create an Application.
+	// AgePublicKey is what iidp secret set encrypts values with, and the
+	// database access passwords. The matching private key exists only in
+	// the cluster. Required for secret set and iidp app db access; not
+	// required to create an Application, whose database then stays closed.
 	AgePublicKey string `yaml:"agePublicKey"`
 	// CloudflareZone is the Cloudflare zone containing BaseDomain: the only
 	// zone external-dns manages, and so the only zone in which the CLI can
@@ -116,6 +117,18 @@ const DeployGateHostLabel = "deploy"
 // repository.
 func (c Config) DeployGateURL() string {
 	return "https://" + DeployGateHostLabel + "." + c.BaseDomain
+}
+
+// DatabaseTunnelHostLabel is the label under baseDomain the database
+// tunnel is served at: https://db.<baseDomain>, under the Platform's
+// wildcard certificate. The bootstrap chart builds the tunnel's Ingress
+// host the same way (bootstrap/components/db-tunnel).
+const DatabaseTunnelHostLabel = "db"
+
+// DatabaseTunnelURL is the Database tunnel's address, where iidp app db
+// connect opens its connections.
+func (c Config) DatabaseTunnelURL() string {
+	return "https://" + DatabaseTunnelHostLabel + "." + c.BaseDomain
 }
 
 // Chart splits ChartRepository into the registry path ArgoCD wants as

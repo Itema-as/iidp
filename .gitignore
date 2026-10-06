@@ -24,6 +24,7 @@ Thumbs.db
 dist/
 /iidp
 /iidp-argus
+/iidp-db-tunnel
 
 # OpenTofu
 infra/**/.terraform/

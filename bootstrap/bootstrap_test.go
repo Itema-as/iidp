@@ -32,7 +32,7 @@ func TestRendersOneApplicationPerComponent(t *testing.T) {
 		got = append(got, name)
 	}
 	sort.Strings(got)
-	want := []string{"argocd", "cert-manager", "cloudnative-pg", "cnpg-barman-cloud", "deploy-gate", "external-dns", "guardrails", "monitoring", "oauth2-proxy", "platform-tls"}
+	want := []string{"argocd", "cert-manager", "cloudnative-pg", "cnpg-barman-cloud", "db-tunnel", "deploy-gate", "external-dns", "guardrails", "monitoring", "oauth2-proxy", "platform-tls"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("rendered Applications = %v, want %v", got, want)
 	}

@@ -16,7 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # To push the Deploy gate's and Argus's images to GHCR.
+      # To push the Deploy gate's, Argus's and the Database tunnel's images
+      # to GHCR.
       packages: write
     steps:
       - uses: actions/checkout@v7
@@ -45,6 +46,7 @@ jobs:
           # once logged in to GHCR.
           IIDP_PUBLISH_DEPLOY_GATE: "true"
           IIDP_PUBLISH_ARGUS: "true"
+          IIDP_PUBLISH_DB_TUNNEL: "true"
 
   # Publishes chart/application to GHCR as an OCI artifact with the tag's
   # version, so the Platform repository can pin the same version the CLI
