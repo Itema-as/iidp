@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -133,6 +134,17 @@ func testDatabaseAccess(ctx context.Context, t *testing.T, cluster *Cluster) {
 	if _, err := psqlAs(ctx, cluster, namespace, db, "shop_write", "SELECT count(*) FROM e2e_access"); err != nil {
 		t.Errorf("shop_write cannot read after read-only closed: %v", err)
 	}
+	// The Role is applied in a later sync wave than the Cluster, after the
+	// migration Job, so it can still name shop-db-read when shop_read is
+	// already gone.
+	err = pollUntil(ctx, 3*time.Minute, 5*time.Second, func() (bool, error) {
+		return tunnelMayGet(ctx, cluster, namespace, "shop-db-read") == "no", nil
+	}, func() error {
+		return errors.New("the database tunnel may still get shop-db-read after read-only was closed")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	checkTunnelSecrets(ctx, t, cluster, namespace, map[string]string{"shop-db-write": "yes", "shop-db-read": "no"})
 }
 
@@ -141,11 +153,17 @@ func testDatabaseAccess(ctx context.Context, t *testing.T, cluster *Cluster) {
 func checkTunnelSecrets(ctx context.Context, t *testing.T, cluster *Cluster, namespace string, want map[string]string) {
 	t.Helper()
 	for secret, want := range want {
-		out, _ := cluster.Kubectl(ctx, "auth", "can-i", "get", "secret/"+secret, "-n", namespace, "--as", "system:serviceaccount:iidp-db-tunnel:iidp-db-tunnel")
-		if got := strings.TrimSpace(out); got != want {
+		if got := tunnelMayGet(ctx, cluster, namespace, secret); got != want {
 			t.Errorf("the database tunnel may get %s: %q, want %q", secret, got, want)
 		}
 	}
+}
+
+// tunnelMayGet is kubectl auth can-i's answer, "yes" or "no", to whether
+// the database tunnel's ServiceAccount may get secret in namespace.
+func tunnelMayGet(ctx context.Context, cluster *Cluster, namespace, secret string) string {
+	out, _ := cluster.Kubectl(ctx, "auth", "can-i", "get", "secret/"+secret, "-n", namespace, "--as", "system:serviceaccount:iidp-db-tunnel:iidp-db-tunnel")
+	return strings.TrimSpace(out)
 }
 
 // psqlAs runs one SQL statement on the Application's database as role,
