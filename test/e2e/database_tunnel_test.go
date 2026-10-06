@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // testDatabaseTunnel proves iidp app db connect reaches shop's databases
@@ -24,7 +27,7 @@ import (
 //     cannot insert one;
 //   - prod, which testDatabaseAccess left read-write for admin and
 //     read-only for nobody, refuses it with the levels and the command
-//     that changes them;
+//     that changes them, and so does prod back at its defaults, closed;
 //   - each session's start and end, and the refusal, are Events on the
 //     Environment's ArgoCD Application.
 //
@@ -60,11 +63,12 @@ func testDatabaseTunnel(ctx context.Context, t *testing.T, cluster *Cluster) {
 			// hijacked connection no longer has.
 			"\\! sleep 65\n"+
 			"SELECT 'still connected as ' || current_user;\n")
-		t.Logf("psql through the tunnel to staging, across 65 idle seconds: %q", got)
 		if err != nil {
 			t.Errorf("psql through the tunnel to staging: %v", err)
 		} else if got != "INSERT 0 1\nshop_write\nstill connected as shop_write" {
 			t.Errorf("psql through the tunnel to staging printed %q, want the insert, then shop_write before and after a minute's idle", got)
+		} else {
+			t.Log("psql through the tunnel to staging inserted a row as shop_write, and was still shop_write after 65 idle seconds")
 		}
 		if code, _, stderr := conn.Stop(); code != 0 {
 			t.Errorf("iidp app db connect shop exited %d after Ctrl-C: %s", code, stderr)
@@ -95,6 +99,20 @@ func testDatabaseTunnel(ctx context.Context, t *testing.T, cluster *Cluster) {
 		t.Logf("iidp app db connect shop --env prod: exit %d: %s", code, strings.TrimSpace(stderr))
 		if code == 0 || conn.ConnString != "" || !strings.Contains(stderr, want) {
 			t.Errorf("iidp app db connect shop --env prod: exit %d\nstdout:\n%s\nstderr:\n%s\nwant it refused with %q", code, stdout, stderr, want)
+		}
+
+		// No fixture prod with a database has its default levels, so shop's
+		// goes back to them: closed, and refused for everyone.
+		closeProdToItsDefaults(ctx, t, cluster)
+		conn, err = cluster.DatabaseConnect(ctx, platformRepo, "shop", "--env", "prod")
+		if err != nil {
+			return err
+		}
+		code, stdout, stderr = conn.Stop()
+		want = "refused: your permission on Itema-as/shop is push, and shop prod's database admits read-write for nobody (none) and read-only for nobody (none). iidp app db access shop --env prod changes who may connect"
+		t.Logf("iidp app db connect shop --env prod, closed by default: exit %d: %s", code, strings.TrimSpace(stderr))
+		if code == 0 || conn.ConnString != "" || !strings.Contains(stderr, want) {
+			t.Errorf("iidp app db connect shop --env prod, closed by default: exit %d\nstdout:\n%s\nstderr:\n%s\nwant it refused with %q", code, stdout, stderr, want)
 		}
 		return nil
 	})
@@ -158,8 +176,65 @@ func testPreviewThroughTheTunnel(ctx context.Context, t *testing.T, cluster *Clu
 		if err != nil || got != application+"_write on "+application {
 			t.Errorf("psql through the tunnel to the preview printed %q, %v", got, err)
 		}
-		t.Logf("psql through the tunnel to %s pr-%s: %q", application, number, got)
+		t.Logf("iidp app db connect %s --pr %s: %s", application, number, conn.ConnString)
 		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// closeProdToItsDefaults takes shop-prod's access levels and password
+// names out of its values file, as an Environment made before database
+// access has none, and waits for its Cluster to say both levels are none.
+func closeProdToItsDefaults(ctx context.Context, t *testing.T, cluster *Cluster) {
+	t.Helper()
+	err := cluster.PushToRepository(ctx, "iidp-platform", "test: shop's prod back to its default database access", func(dir string) (bool, error) {
+		file := filepath.Join(dir, "applications", "shop", "prod", "values.yaml")
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return false, err
+		}
+		var doc yaml.Node
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return false, err
+		}
+		root := doc.Content[0]
+		for i := 0; i+1 < len(root.Content); i += 2 {
+			if root.Content[i].Value != "postgres" {
+				continue
+			}
+			postgres := root.Content[i+1]
+			var kept []*yaml.Node
+			for j := 0; j+1 < len(postgres.Content); j += 2 {
+				switch postgres.Content[j].Value {
+				case "access", "readWritePasswordSecret", "readOnlyPasswordSecret":
+				default:
+					kept = append(kept, postgres.Content[j], postgres.Content[j+1])
+				}
+			}
+			postgres.Content = kept
+		}
+		out, err := yaml.Marshal(&doc)
+		if err != nil {
+			return false, err
+		}
+		return true, os.WriteFile(file, out, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.RefreshApplication(ctx, "shop-prod"); err != nil {
+		t.Fatal(err)
+	}
+	var levels string
+	err = pollUntil(ctx, 3*time.Minute, 5*time.Second, func() (bool, error) {
+		out, err := cluster.Kubectl(ctx, "-n", "shop-prod", "get", "clusters.postgresql.cnpg.io", "shop-db", "-o",
+			`jsonpath={.metadata.annotations.iidp\.itema\.no/db-access-read-write} {.metadata.annotations.iidp\.itema\.no/db-access-read-only}`)
+		levels = strings.TrimSpace(out)
+		return err == nil && levels == "none none", nil
+	}, func() error {
+		return fmt.Errorf("shop-db's access levels are %q, want none none once its values file has none", levels)
 	})
 	if err != nil {
 		t.Fatal(err)
