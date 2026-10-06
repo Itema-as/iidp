@@ -111,8 +111,9 @@ func TestTheCheckRefusesALevelOfNone(t *testing.T) {
 
 	e.cluster.put(clusterPath("shop-staging", "shop-staging-db"), clusterObject("push", "none", role{"shop_write", "shop-staging-db-write"}, role{"shop_read", ""}))
 	_, err = e.check(t, adminToken, "shop", "staging", true)
-	if err == nil || !strings.Contains(err.Error(), "shop staging's database has no read-only access") || !strings.Contains(err.Error(), "Leave out --read-only") {
-		t.Errorf("--read-only where read-only is none: %v", err)
+	want := "refused: your permission on Itema-as/shop is admin, and shop staging's database has no read-only access (read-only is none, and read-write admits push). Leave out --read-only, or open it with iidp app db access shop --env staging --read-only <level>"
+	if err == nil || err.Error() != want {
+		t.Errorf("--read-only where read-only is none: %v\nwant %s", err, want)
 	}
 }
 

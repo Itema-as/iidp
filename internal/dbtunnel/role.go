@@ -28,8 +28,8 @@ func ChooseRole(permission string, access render.DatabaseAccess, readOnly bool) 
 // and the command that changes the levels.
 func levelRefusal(application, environment, repository, permission string, access render.DatabaseAccess, readOnly bool) string {
 	if readOnly && access.ReadOnly == render.AccessNone {
-		return fmt.Sprintf("refused: %s %s's database has no read-only access (read-only is none, and read-write admits %s). Leave out --read-only, or open it with %s --read-only <level>",
-			application, environment, levelWords(access.ReadWrite), accessCommand(application, environment))
+		return fmt.Sprintf("refused: your permission on %s is %s, and %s %s's database has no read-only access (read-only is none, and read-write admits %s). Leave out --read-only, or open it with %s --read-only <level>",
+			repository, permission, application, environment, levelWords(access.ReadWrite), accessCommand(application, environment))
 	}
 	return fmt.Sprintf("refused: your permission on %s is %s, and %s %s's database admits read-write for %s and read-only for %s. %s changes who may connect",
 		repository, permission, application, environment, levelWords(access.ReadWrite), levelWords(access.ReadOnly), accessCommand(application, environment))
