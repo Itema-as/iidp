@@ -230,5 +230,6 @@ func printAddCapabilityResult(out io.Writer, name string, res platformrepo.Resul
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
 		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(res.LoginGroups))
 	}
+	printDatabases(out, name, res)
 	printDomains(out, res)
 }

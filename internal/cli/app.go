@@ -24,6 +24,7 @@ import (
 	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/prompt"
 	"github.com/Itema-as/iidp/internal/render"
+	"github.com/Itema-as/iidp/internal/sops"
 	"github.com/Itema-as/iidp/internal/templates"
 )
 
@@ -314,6 +315,9 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		if err := checkLoginDomains(plan, cfg); err != nil {
 			return err
 		}
+		if err := checkPasswordEncryption(plan, cfg, deps); err != nil {
+			return err
+		}
 
 		creator := &apprepo.Creator{Client: ghClient, Auth: auth}
 		appRepo, err = creator.Create(cmd.Context(), apprepo.Application{
@@ -348,6 +352,9 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 			return err
 		}
 		if err := checkLoginDomains(plan, cfg); err != nil {
+			return err
+		}
+		if err := checkPasswordEncryption(plan, cfg, deps); err != nil {
 			return err
 		}
 
@@ -505,6 +512,17 @@ func checkPostgresKind(postgres bool, kind string) error {
 		return errors.New("--postgres needs --kind web-service (or a framework/detected framework that derives it); a Static site has no server to use a database")
 	}
 	return nil
+}
+
+// checkPasswordEncryption refuses --postgres --staging when platform.yaml
+// has an agePublicKey but the sops binary that would encrypt staging's
+// database password is missing. It runs before the Application repository
+// is created or the pull request opened; the Writer would refuse only after.
+func checkPasswordEncryption(plan createPlan, cfg platformrepo.Config, deps Dependencies) error {
+	if !plan.postgres || !plan.staging || cfg.AgePublicKey == "" || deps.Encryptor != nil || sops.Available() {
+		return nil
+	}
+	return errors.New("--postgres with --staging writes staging's database password, encrypted with sops, which is not installed or not on PATH; install it from https://github.com/getsops/sops")
 }
 
 // checkLoginDomains refuses --login together with a --domain outside the
@@ -883,6 +901,7 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
 		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(res.LoginGroups))
 	}
+	printDatabases(out, name, res)
 	if res.Config.ArgoCDURL != "" {
 		fmt.Fprintf(out, "  ArgoCD:   %s\n", res.Config.ArgoCDURL)
 	}
@@ -891,6 +910,20 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 	}
 	printDomains(out, res)
 	fmt.Fprintf(out, "\nThe Environment deploys once the deploy workflow writes the first image tag.\n")
+}
+
+// printDatabases reports the database access of each Environment the run
+// turned Postgres on in, and how to open one whose password could not be
+// written.
+func printDatabases(out io.Writer, name string, res platformrepo.Result) {
+	for _, db := range res.Databases {
+		fmt.Fprintf(out, "  %-19s%s\n", db.Environment+" database:", databaseAccessText(db.Access))
+	}
+	for _, db := range res.Databases {
+		if db.Closed {
+			fmt.Fprintf(out, "  %s's database stays closed to developers for now: %s has no agePublicKey to encrypt its password with. Once it has one, run iidp app db access %s --env %s\n", db.Environment, platformrepo.ConfigFile, name, db.Environment)
+		}
+	}
 }
 
 func printPreviews(out io.Writer, res platformrepo.Result) {

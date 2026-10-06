@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Itema-as/iidp/internal/cli"
+	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/sops"
 )
 
@@ -322,5 +325,168 @@ func TestSecretSetRefusesTheKeysOfTheDatabasePasswords(t *testing.T) {
 		if code == 0 || !strings.Contains(stderr, "iidp app db access") {
 			t.Errorf("%s: exit %d, stderr %q; want it refused", key, code, stderr)
 		}
+	}
+}
+
+// renderEnvironment renders an Environment's committed values.yaml through
+// the chart with an image tag, as its first deploy would, and returns the
+// managed roles of its Cluster by name. It skips without helm.
+func renderedRoles(t *testing.T, clone, environment, cluster string) map[string]any {
+	t.Helper()
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is not on PATH; skipping")
+	}
+	values := filepath.Join(clone, "applications", "shop", environment, "values.yaml")
+	out, err := exec.Command("helm", "template", "shop", "../../chart/application", "--values", values, "--set", "image.tag=1.0.0").CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(out))
+	for {
+		var obj map[string]any
+		if err := dec.Decode(&obj); err != nil {
+			break
+		}
+		if obj["kind"] != "Cluster" || lookup(t, obj, "metadata", "name") != cluster {
+			continue
+		}
+		roles := map[string]any{}
+		if managed, ok := obj["spec"].(map[string]any)["managed"].(map[string]any); ok {
+			for _, r := range managed["roles"].([]any) {
+				role := r.(map[string]any)
+				roles[role["name"].(string)] = role
+			}
+		}
+		return roles
+	}
+	t.Fatalf("no Cluster %s rendered:\n%s", cluster, out)
+	return nil
+}
+
+func TestAppCreatePostgresOpensEveryEnvironmentAtItsDefaults(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML+"agePublicKey: "+testAgePublicKey+"\n")
+
+	stdout, stderr, code := createApplication(t, url, cli.Dependencies{Encryptor: fakeEncryptor{}},
+		"--name", "shop", "--kind", "web-service", "--postgres", "--staging")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	for _, want := range []string{"prod database:     read-write none · read-only none", "staging database:  read-write push · read-only none"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	clone := cloneMain(t, url)
+	staging := postgresValues(t, clone, "staging")
+	if access := staging["access"].(map[string]any); access["readWrite"] != "push" || access["readOnly"] != "none" {
+		t.Errorf("staging postgres.access = %v", access)
+	}
+	if staging["readWritePasswordSecret"] != "shop-staging-db-write" {
+		t.Errorf("staging readWritePasswordSecret = %v", staging["readWritePasswordSecret"])
+	}
+	assertPasswordSecret(t, filepath.Join(clone, "applications", "shop", "staging", "sops", "db-write.enc.yaml"), "shop-staging-db-write", "staging", "shop_write")
+	if access := postgresValues(t, clone, "prod")["access"].(map[string]any); access["readWrite"] != "none" || access["readOnly"] != "none" {
+		t.Errorf("prod postgres.access = %v", access)
+	}
+	if files := ksopsFiles(t, clone, "prod"); !slices.Equal(files, []string{"backups-credentials.enc.yaml"}) {
+		t.Errorf("prod ksops.yaml files = %v, want no password", files)
+	}
+	if got := gitRun(t, clone, "log", "--format=%s"); strings.Count(got, "\n") != 2 {
+		t.Errorf("history = %q, want the seed and one iidp app create commit", got)
+	}
+
+	roles := renderedRoles(t, clone, "staging", "shop-staging-db")
+	if _, ok := roles["shop_write"]; !ok || len(roles) != 1 {
+		t.Errorf("the new staging renders roles %v, want shop_write", roles)
+	}
+	if roles := renderedRoles(t, clone, "prod", "shop-db"); len(roles) != 0 {
+		t.Errorf("the new prod renders roles %v, want none", roles)
+	}
+}
+
+func TestAppCreatePostgresWithoutTheAgeKeyLeavesTheDatabaseClosed(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
+
+	stdout, stderr, code := createApplication(t, url, cli.Dependencies{Encryptor: fakeEncryptor{}},
+		"--name", "shop", "--kind", "web-service", "--postgres", "--staging")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "iidp app db access shop --env staging") {
+		t.Errorf("stdout does not say how to write the password later:\n%s", stdout)
+	}
+	clone := cloneMain(t, url)
+	if _, named := postgresValues(t, clone, "staging")["readWritePasswordSecret"]; named {
+		t.Error("staging names a password that was never written")
+	}
+	if roles := renderedRoles(t, clone, "staging", "shop-staging-db"); len(roles) != 0 {
+		t.Errorf("staging renders roles %v, want none until its password is written", roles)
+	}
+}
+
+func TestAppAddCapabilityPostgresOpensEveryEnvironmentAtItsDefaults(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML+"agePublicKey: "+testAgePublicKey+"\n")
+	seedApplication(t, url, "--staging")
+
+	stdout, stderr, code := addCapability(t, url, "shop", cli.Dependencies{Encryptor: fakeEncryptor{}}, "--postgres")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "staging database:  read-write push · read-only none") {
+		t.Errorf("stdout does not print staging's levels:\n%s", stdout)
+	}
+	clone := cloneMain(t, url)
+	assertPasswordSecret(t, filepath.Join(clone, "applications", "shop", "staging", "sops", "db-write.enc.yaml"), "shop-staging-db-write", "staging", "shop_write")
+	if _, ok := renderedRoles(t, clone, "staging", "shop-staging-db")["shop_write"]; !ok {
+		t.Error("staging does not render shop_write")
+	}
+	if access := postgresValues(t, clone, "prod")["access"].(map[string]any); access["readWrite"] != "none" {
+		t.Errorf("prod postgres.access = %v, want closed", access)
+	}
+}
+
+func TestAppAddCapabilityStagingOpensTheNewStagingsDatabase(t *testing.T) {
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML+"agePublicKey: "+testAgePublicKey+"\n")
+	seedApplication(t, url, "--postgres")
+	if _, stderr, code := dbAccess(t, url, cli.Dependencies{}, "shop", "--env", "prod", "--read-only", "admin"); code != 0 {
+		t.Fatalf("opening prod: %s", stderr)
+	}
+
+	if _, stderr, code := addCapability(t, url, "shop", cli.Dependencies{Encryptor: fakeEncryptor{}}, "--staging"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	clone := cloneMain(t, url)
+	staging := postgresValues(t, clone, "staging")
+	if access := staging["access"].(map[string]any); access["readWrite"] != "push" || access["readOnly"] != "none" {
+		t.Errorf("staging postgres.access = %v, want staging's defaults, not prod's", access)
+	}
+	if staging["readWritePasswordSecret"] != "shop-staging-db-write" || staging["readOnlyPasswordSecret"] != nil {
+		t.Errorf("staging names %v and %v, want only its own read-write password", staging["readWritePasswordSecret"], staging["readOnlyPasswordSecret"])
+	}
+	assertPasswordSecret(t, filepath.Join(clone, "applications", "shop", "staging", "sops", "db-write.enc.yaml"), "shop-staging-db-write", "staging", "shop_write")
+}
+
+// Without sops a Create would make the Application repository and only then
+// fail to write the Platform repository, so it is refused first.
+func TestAppCreatePostgresRefusesWithoutSopsBeforeCreatingTheRepository(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.Symlink(gitPath, filepath.Join(bin, "git")); err != nil {
+		t.Fatal(err)
+	}
+	url := newPlatformRepository(t, testCapabilitiesPlatformYAML+"agePublicKey: "+testAgePublicKey+"\n")
+	gh := newFakeGitHub(t)
+	t.Setenv("PATH", bin)
+
+	_, stderr, code := createApplication(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL},
+		"--name", "shop", "--path", "create", "--framework", "nextjs", "--postgres", "--staging")
+	if code == 0 || !strings.Contains(stderr, "sops") {
+		t.Fatalf("exit %d, stderr %q; want a refusal naming sops", code, stderr)
+	}
+	if n := gh.requestsTo(http.MethodPost, "/orgs/"+platform.Org+"/repos"); n != 0 {
+		t.Errorf("created the Application repository %d times before refusing", n)
 	}
 }

@@ -192,3 +192,30 @@ func TestPasswordSecretDocumentIsBasicAuthForTheRole(t *testing.T) {
 		t.Errorf("annotations = %v", secret.Metadata.Annotations)
 	}
 }
+
+// prod's levels and passwords are prod's: a new staging starts at its own
+// defaults, and the CLI writes its passwords.
+func TestCopyValuesForStagingDropsProdsDatabaseAccess(t *testing.T) {
+	prod := strings.Replace(testPostgresValuesYAML, "environment: staging", "environment: prod", 1)
+	values, _, err := render.SetDatabaseAccess([]byte(prod), render.DatabaseAccess{ReadWrite: "none", ReadOnly: "maintain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values, _, err = render.SetPasswordSecret(values, render.ReadOnlyRole, "shop-db-read"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := render.CopyValuesForStaging(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "access") || strings.Contains(string(out), "PasswordSecret") {
+		t.Errorf("staging kept prod's database access:\n%s", out)
+	}
+	db, err := render.ReadDatabase(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (render.Database{Enabled: true, Access: render.DefaultDatabaseAccess("staging")}); db != want {
+		t.Errorf("staging's database = %+v, want %+v", db, want)
+	}
+}
