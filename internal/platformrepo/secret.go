@@ -49,10 +49,17 @@ func ValidateEnvironmentName(environment string) error {
 // ValidateSecretKey checks that key can be a secret's KEY: a POSIX
 // environment variable name (letters, digits and underscores, not starting
 // with a digit). It also becomes part of a Secret name and a file name, by
-// way of SecretSlug, which is why it must not be empty.
+// way of SecretSlug, which is why it must not be empty. A KEY whose slug is
+// a database access role's password's is refused, so iidp secret set never
+// overwrites that password's Secret.
 func ValidateSecretKey(key string) error {
 	if !envVarName.MatchString(key) {
 		return fmt.Errorf("%w: %q must be letters, digits and underscores, and not start with a digit", ErrInvalidSecretKey, key)
+	}
+	for _, role := range render.AccessRoles {
+		if SecretSlug(key) == passwordSlug(role) {
+			return fmt.Errorf("%w: %q would be stored as %s.enc.yaml, where iidp app db access keeps the %s database password; choose another KEY", ErrInvalidSecretKey, key, passwordSlug(role), role)
+		}
 	}
 	return nil
 }

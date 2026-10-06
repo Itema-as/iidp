@@ -47,6 +47,7 @@ func newAppCommand(deps Dependencies) *cobra.Command {
 	app.AddCommand(newAppDeleteCommand(deps))
 	app.AddCommand(newAppBindCommand(deps))
 	app.AddCommand(newAppStatusCommand(deps))
+	app.AddCommand(newAppDBCommand(deps))
 	return app
 }
 
@@ -194,7 +195,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	}
 
 	auth := git.Auth{Token: token}
-	platformWriter := &platformrepo.Writer{URL: opts.platformRepo, Auth: auth, BeforePush: deps.BeforePush}
+	platformWriter := &platformrepo.Writer{URL: opts.platformRepo, Auth: auth, BeforePush: deps.BeforePush, Encryptor: deps.Encryptor}
 
 	ghClient := &github.Client{Token: token}
 	if deps.GitHubAPI != "" {
