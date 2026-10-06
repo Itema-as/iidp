@@ -53,12 +53,14 @@ func testDatabaseTunnel(ctx context.Context, t *testing.T, cluster *Cluster) {
 			code, stdout, stderr := conn.Stop()
 			return fmt.Errorf("iidp app db connect shop: exit %d, connection string %q\nstdout:\n%s\nstderr:\n%s", code, conn.ConnString, stdout, stderr)
 		}
+		t.Logf("iidp app db connect shop: %s", conn.ConnString)
 		got, err := psqlThrough(ctx, conn.ConnString, "INSERT INTO e2e_tunnel VALUES ('through the tunnel');\n"+
 			"SELECT current_user;\n"+
 			// Idle past Traefik's 60-second readTimeout, which a
 			// hijacked connection no longer has.
 			"\\! sleep 65\n"+
 			"SELECT 'still connected as ' || current_user;\n")
+		t.Logf("psql through the tunnel to staging, across 65 idle seconds: %q", got)
 		if err != nil {
 			t.Errorf("psql through the tunnel to staging: %v", err)
 		} else if got != "INSERT 0 1\nshop_write\nstill connected as shop_write" {
@@ -90,6 +92,7 @@ func testDatabaseTunnel(ctx context.Context, t *testing.T, cluster *Cluster) {
 		}
 		code, stdout, stderr := conn.Stop()
 		want := "refused: your permission on Itema-as/shop is push, and shop prod's database admits read-write for admin and read-only for nobody (none). iidp app db access shop --env prod changes who may connect"
+		t.Logf("iidp app db connect shop --env prod: exit %d: %s", code, strings.TrimSpace(stderr))
 		if code == 0 || conn.ConnString != "" || !strings.Contains(stderr, want) {
 			t.Errorf("iidp app db connect shop --env prod: exit %d\nstdout:\n%s\nstderr:\n%s\nwant it refused with %q", code, stdout, stderr, want)
 		}
@@ -107,6 +110,7 @@ func testDatabaseTunnel(ctx context.Context, t *testing.T, cluster *Cluster) {
 			t.Errorf("an Event names %q, want the developer's login %s: %+v", e.Metadata.Annotations["iidp.itema.no/login"], DeveloperLogin, e)
 		}
 	}
+	t.Logf("the database tunnel's Events: %v", seen)
 	for _, want := range []string{
 		"DatabaseSessionStarted shop-staging shop_write",
 		"DatabaseSessionEnded shop-staging shop_write",
@@ -150,9 +154,11 @@ func testPreviewThroughTheTunnel(ctx context.Context, t *testing.T, cluster *Clu
 			code, stdout, stderr := conn.Stop()
 			return fmt.Errorf("iidp app db connect %s --pr %s: exit %d, connection string %q\nstdout:\n%s\nstderr:\n%s", application, number, code, conn.ConnString, stdout, stderr)
 		}
-		if got, err := psqlThrough(ctx, conn.ConnString, "SELECT current_user || ' on ' || current_database();\n"); err != nil || got != application+"_write on "+application {
+		got, err := psqlThrough(ctx, conn.ConnString, "SELECT current_user || ' on ' || current_database();\n")
+		if err != nil || got != application+"_write on "+application {
 			t.Errorf("psql through the tunnel to the preview printed %q, %v", got, err)
 		}
+		t.Logf("psql through the tunnel to %s pr-%s: %q", application, number, got)
 		return nil
 	})
 	if err != nil {
