@@ -71,7 +71,7 @@ func connect(t *testing.T, server *httptest.Server, token, environment string, r
 		t.Fatalf("the answer to an SSLRequest is %q, %v; want N", answer, err)
 	}
 	startup, _ := (&pgproto3.StartupMessage{ProtocolVersion: pgproto3.ProtocolVersion30, Parameters: map[string]string{
-		"user": "mallory", "database": "postgres", "application_name": "psql", "options": "-c role=shop",
+		"user": "mallory", "database": "postgres", "application_name": "psql", "search_path": "reporting, public", "options": "-c role=shop",
 	}}).Encode(nil)
 	if _, err := conn.Write(startup); err != nil {
 		t.Fatal(err)
@@ -142,8 +142,8 @@ func TestTheTunnelLogsInAsTheRoleAndIgnoresTheClientsUser(t *testing.T) {
 	}
 
 	got := db.startup()
-	if len(got) != 1 || got[0]["user"] != "shop_write" || got[0]["database"] != "shop" || got[0]["application_name"] != "psql" {
-		t.Errorf("the database saw startups %v, want one as shop_write to shop with the client's application_name", got)
+	if len(got) != 1 || got[0]["user"] != "shop_write" || got[0]["database"] != "shop" || got[0]["application_name"] != "psql" || got[0]["search_path"] != "reporting, public" {
+		t.Errorf("the database saw startups %v, want one as shop_write to shop with the client's application_name and search_path", got)
 	}
 	if _, ok := got[0]["options"]; ok {
 		t.Errorf("the client's options reached the database: %v", got[0])

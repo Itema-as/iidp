@@ -43,7 +43,7 @@ const (
 // passes on to the database. The user and the database are the tunnel's
 // own choice, and options or replication could ask for more than a
 // session.
-var forwardedParameters = []string{"application_name", "client_encoding", "DateStyle", "TimeZone", "IntervalStyle", "extra_float_digits"}
+var forwardedParameters = []string{"application_name", "client_encoding", "DateStyle", "TimeZone", "IntervalStyle", "extra_float_digits", "search_path"}
 
 // serve is one Postgres connection over client: the client's startup,
 // the check, the tunnel's own login as the role the check chose, then the
