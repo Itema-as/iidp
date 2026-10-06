@@ -3,11 +3,11 @@ status: accepted
 date: 2026-10-06
 ---
 
-# Developers reach an Environment's database through a database tunnel
+# Developers reach an Environment's database through a Database tunnel
 
 A developer sometimes needs to look at, or fix, the data in one of their Application's Environments. Until now nothing outside the cluster could reach a database: the node's firewall opens only 22, 80 and 443, and only the Platform admin holds a kubeconfig.
 
-We decided that a developer reaches an Environment's database from their own machine through a **database tunnel**: `iidp app db connect` listens on `127.0.0.1` and carries each local connection over a WebSocket to the tunnel at `db.<baseDomain>`, on 443. Who may connect follows their permission on the Application repository, which the tunnel asks GitHub for with the developer's own `gh auth` token, on every connection. Each Environment's levels (`postgres.access`, #158) name the lowest permission that may connect read-write and read-only, and the tunnel logs in to the database itself as that level's role.
+We decided that a developer reaches an Environment's database from their own machine through a **Database tunnel**: `iidp app db connect` listens on `127.0.0.1` and carries each local connection over a WebSocket to the tunnel at `db.<baseDomain>`, on 443. Who may connect follows their permission on the Application repository, which the tunnel asks GitHub for with the developer's own `gh auth` token, on every connection. Each Environment's levels (`postgres.access`, #158) name the lowest permission that may connect read-write and read-only, and the tunnel logs in to the database itself as that level's role.
 
 ## Decision
 
