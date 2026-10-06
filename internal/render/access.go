@@ -23,13 +23,10 @@ const (
 var accessLevels = []string{AccessNone, AccessPull, AccessPush, AccessMaintain, AccessAdmin}
 
 // Qualifies reports whether a developer whose highest permission on the
-// Application repository is permission (pull, push, maintain or admin, with
-// GitHub's triage counted as pull) qualifies for level. Nobody qualifies
-// for AccessNone, and nobody without a permission qualifies for anything.
+// Application repository is permission (AccessPull, AccessPush,
+// AccessMaintain or AccessAdmin) qualifies for level. Nobody qualifies for
+// AccessNone, and nobody without a permission qualifies for anything.
 func Qualifies(permission, level string) bool {
-	if permission == "triage" {
-		permission = AccessPull
-	}
 	has, needs := slices.Index(accessLevels, permission), slices.Index(accessLevels, level)
 	return has > 0 && needs > 0 && has >= needs
 }

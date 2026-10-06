@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/Itema-as/iidp/internal/render"
 )
 
 // DefaultBaseURL is the GitHub REST API root.
@@ -172,18 +174,19 @@ type ReadableRepository struct {
 	CanAdmin    bool
 }
 
-// Permission is the token's highest permission on the repository: admin,
-// maintain, push or pull, or "" for none.
+// Permission is the token's highest permission on the repository, in the
+// words of the database access levels: render.AccessAdmin, AccessMaintain,
+// AccessPush or AccessPull, or "" for none.
 func (r ReadableRepository) Permission() string {
 	switch {
 	case r.CanAdmin:
-		return "admin"
+		return render.AccessAdmin
 	case r.CanMaintain:
-		return "maintain"
+		return render.AccessMaintain
 	case r.CanPush:
-		return "push"
+		return render.AccessPush
 	case r.CanPull:
-		return "pull"
+		return render.AccessPull
 	}
 	return ""
 }
