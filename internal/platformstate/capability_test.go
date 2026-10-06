@@ -173,10 +173,13 @@ func TestItemaLoginFromIngresses(t *testing.T) {
 		{"a middleware merely called itema-login", []obj{ingress("shop", "-itema-login@kubernetescrd")}, ""},
 		{"the shared middleware", []obj{ingress("shop", "oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
 		{"the Environment's own, with sign-in groups", []obj{ingress("shop", "shop-prod-shop-itema-login@kubernetescrd")}, "none"},
+		{"the host-only middleware, for a domain outside the login cookie domain", []obj{ingress("shop-shop-example-com", "oauth2-proxy-itema-login-host-auth@kubernetescrd")}, "none"},
+		{"the Environment's own host-only one, with sign-in groups", []obj{ingress("shop-shop-example-com", "shop-prod-shop-itema-login-host@kubernetescrd")}, "none"},
+		{"a middleware merely called itema-login-host", []obj{ingress("shop", "-itema-login-host@kubernetescrd")}, ""},
 		{"among other middlewares", []obj{ingress("shop", "kube-system-headers@kubernetescrd, oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
-		{"on the custom domains' Ingress too: one Capability", []obj{ingress("shop", "oauth2-proxy-itema-login-auth@kubernetescrd"), ingress("shop-http01", "oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
+		{"on the custom domains' Ingress too: one Capability", []obj{ingress("shop", "oauth2-proxy-itema-login-auth@kubernetescrd"), ingress("shop-x-itma-no", "oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
 		{"its only Ingress being deleted", []obj{leavingIngress}, platformstate.Leaving},
-		{"one of two being deleted", []obj{leavingIngress, ingress("shop-http01", "oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
+		{"one of two being deleted", []obj{leavingIngress, ingress("shop-x-itma-no", "oauth2-proxy-itema-login-auth@kubernetescrd")}, "none"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := env()

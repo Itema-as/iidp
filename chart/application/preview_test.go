@@ -252,8 +252,8 @@ func TestAPreviewHasNoTasksAndNoCustomDomains(t *testing.T) {
 	if cronJobs := objectsOfKind(objects, "CronJob"); len(cronJobs) != 0 {
 		t.Errorf("rendered %v, want no Scheduled task in a preview", cronJobs)
 	}
-	if _, ok := objects["Ingress/shop-pr-42-http01"]; ok {
-		t.Error("rendered an HTTP-01 Ingress, want no custom domain in a preview")
+	if ingresses := objectsOfKind(objects, "Ingress"); !slices.Equal(ingresses, []string{"Ingress/shop-pr-42"}) {
+		t.Errorf("rendered %v, want only the preview's own Ingress, no custom domain", ingresses)
 	}
 	if data := mustObject(t, objects, "ConfigMap/iidp-domains")["data"]; data != nil {
 		t.Errorf("iidp-domains data = %v, want no declared domains", data)

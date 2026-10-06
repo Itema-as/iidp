@@ -37,10 +37,11 @@ login:
   groups:
     - 0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b
 # The CLI writes custom domains for prod only, but the chart takes them
-# anywhere, and this is the protected Environment. The first is inside the
-# zone but not under the base domain, so it goes on the chart's HTTP-01
-# Ingress behind the shared login. The second is outside the zone, so it
-# signs in through the host-only oauth2-proxy.
+# anywhere, and this is the protected Environment. Neither is under the
+# base domain, so each gets an Ingress of its own with a certificate from
+# the HTTP-01 issuer. The first is inside the zone, behind the shared
+# login. The second is outside it, so it signs in through the host-only
+# oauth2-proxy.
 domains:
   - shop-staging.example.test
   - shop-staging.other.test

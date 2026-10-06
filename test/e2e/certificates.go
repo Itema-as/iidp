@@ -58,9 +58,9 @@ func selfSignedCertificate(host string) (certPEM, keyPEM, der []byte, err error)
 // SNI, as a browser does.
 //
 // kind can issue no certificate, so it writes a self-signed one into every
-// Secret the Environment's HTTP-01 Ingress names, as cert-manager would.
-// Every one is needed: Traefik stops loading an Ingress's certificates at
-// the first Secret that does not exist.
+// Secret the host's own Ingress names, as cert-manager would. Traefik stops
+// loading an Ingress's certificates at the first Secret that does not
+// exist, so a Secret missing there would hide the host's.
 func (c *Cluster) CheckCertificateServedForCallback(ctx context.Context, namespace, ingress, host string, timeout time.Duration) error {
 	out, err := c.Kubectl(ctx, "-n", namespace, "get", "ingress", ingress, "-o", `jsonpath={range .spec.tls[*]}{.secretName} {.hosts[0]}{"\n"}{end}`)
 	if err != nil {

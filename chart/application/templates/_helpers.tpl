@@ -238,6 +238,7 @@ the base domain is covered by the wildcard certificate.
 {{- $wildcard := list -}}
 {{- $foreign := list -}}
 {{- $seen := dict -}}
+{{- $names := dict -}}
 {{- range .Values.domains -}}
 {{- $host := . | toString -}}
 {{- if or (gt (len $host) 253) (not (regexMatch `^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$` $host)) -}}
@@ -256,6 +257,11 @@ the base domain is covered by the wildcard certificate.
 {{- if gt (len (include "application.tlsSecretName" (list $ $host))) 253 -}}
 {{- fail (printf "domains: %q is too long for the name of its TLS secret (%s-<host>-tls must be at most 253 characters)" $host (include "application.fullname" $)) -}}
 {{- end -}}
+{{- $name := include "application.domainIngressName" (list $ $host) -}}
+{{- if hasKey $names $name -}}
+{{- fail (printf "domains: %q and %q would share the Ingress %s and the TLS secret %s; keep one of them" (get $names $name) $host $name (include "application.tlsSecretName" (list $ $host))) -}}
+{{- end -}}
+{{- $_ := set $names $name $host -}}
 {{- $foreign = append $foreign $host -}}
 {{- end -}}
 {{- end -}}
@@ -377,8 +383,19 @@ traefik.ingress.kubernetes.io/router.middlewares: {{ ternary "oauth2-proxy-itema
 {{- end -}}
 
 {{/*
+The Ingress of a foreign host, from a list of the root context and the
+host. Dots become dashes, so application.domains refuses two hosts that
+would share it.
+*/}}
+{{- define "application.domainIngressName" -}}
+{{- printf "%s-%s" (include "application.fullname" (index . 0)) (replace "." "-" (index . 1)) -}}
+{{- end -}}
+
+{{/*
 The Secret cert-manager writes a foreign host's certificate into, from a
-list of the root context and the host.
+list of the root context and the host. The name is kept as it was when
+foreign hosts shared one Ingress, so an Environment moving to an Ingress
+per host keeps its certificates.
 */}}
 {{- define "application.tlsSecretName" -}}
 {{- $root := index . 0 -}}

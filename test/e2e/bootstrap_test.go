@@ -580,8 +580,9 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 	}
 	// The callback's route is in oauth2-proxy's namespace and names no
 	// secret; Traefik must still present the host's own certificate, from
-	// the Environment's HTTP-01 Ingress.
-	if err := cluster.CheckCertificateServedForCallback(ctx, "shop-staging", "shop-staging-http01", shopStagingHostOnlyDomain, 2*time.Minute); err != nil {
+	// the host's own Ingress. The other custom domain's Secret never exists
+	// on kind, and must not keep this one from being loaded.
+	if err := cluster.CheckCertificateServedForCallback(ctx, "shop-staging", "shop-staging-shop-staging-other-test", shopStagingHostOnlyDomain, 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err := cluster.CheckACMEChallengeBypassesLogin(ctx, "shop-staging", shopStagingHostOnlyDomain, "shop-staging", 8080, 2*time.Minute); err != nil {
@@ -600,8 +601,8 @@ func checkSignInGroupMiddleware(ctx context.Context, cluster *Cluster) error {
 		name, address string
 		ingresses     []string
 	}{
-		{"shop-staging-itema-login", "http://oauth2-proxy.oauth2-proxy.svc.cluster.local/?allowed_groups=0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b", []string{"shop-staging", "shop-staging-http01"}},
-		{"shop-staging-itema-login-host", "http://oauth2-proxy-host.oauth2-proxy.svc.cluster.local/?allowed_groups=0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b", []string{"shop-staging-host-login"}},
+		{"shop-staging-itema-login", "http://oauth2-proxy.oauth2-proxy.svc.cluster.local/?allowed_groups=0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b", []string{"shop-staging", "shop-staging-shop-staging-example-test"}},
+		{"shop-staging-itema-login-host", "http://oauth2-proxy-host.oauth2-proxy.svc.cluster.local/?allowed_groups=0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b", []string{"shop-staging-shop-staging-other-test"}},
 	} {
 		got, err := cluster.Kubectl(ctx, "-n", "shop-staging", "get", "middlewares.traefik.io", mw.name, "-o", "jsonpath={.spec.forwardAuth.address}")
 		if err != nil {

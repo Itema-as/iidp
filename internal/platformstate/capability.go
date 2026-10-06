@@ -2,6 +2,7 @@ package platformstate
 
 import (
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -18,12 +19,15 @@ const (
 // The Itema login Capability is only an annotation on the Environment's
 // Ingresses (chart/application/templates/_helpers.tpl,
 // application.login.annotation): Traefik's middlewares annotation names
-// the Platform's shared ForwardAuth middleware, or, with sign-in groups,
-// the Environment's own copy of it, <namespace>-<fullname>-itema-login.
-const (
-	MiddlewaresAnnotation = "traefik.ingress.kubernetes.io/router.middlewares"
-	sharedLoginMiddleware = "oauth2-proxy-itema-login-auth@kubernetescrd"
-	ownLoginMiddleware    = "-itema-login@kubernetescrd"
+// one of the Platform's two ForwardAuth middlewares, the shared one or the
+// host-only one for custom domains outside the login cookie domain. With
+// sign-in groups it names the Environment's own copy instead,
+// <namespace>-<fullname>-itema-login or <namespace>-<fullname>-itema-login-host.
+const MiddlewaresAnnotation = "traefik.ingress.kubernetes.io/router.middlewares"
+
+var (
+	platformLoginMiddlewares = []string{"oauth2-proxy-itema-login-auth@kubernetescrd", "oauth2-proxy-itema-login-host-auth@kubernetescrd"}
+	ownLoginMiddlewares      = []string{"-itema-login@kubernetescrd", "-itema-login-host@kubernetescrd"}
 )
 
 // cnpgSettingUpPrimary is CNPG's phase for a Cluster being created.
@@ -94,12 +98,18 @@ func loginCapability(ingresses []Ingress) (Capability, bool) {
 }
 
 // behindItemaLogin reports whether an Ingress's middlewares annotation
-// names the shared Itema login middleware or an Environment's own copy.
+// names one of the Platform's Itema login middlewares or an Environment's
+// own copy of one.
 func behindItemaLogin(ing Ingress) bool {
 	for _, m := range strings.Split(ing.Metadata.Annotations[MiddlewaresAnnotation], ",") {
 		m = strings.TrimSpace(m)
-		if m == sharedLoginMiddleware || (strings.HasSuffix(m, ownLoginMiddleware) && len(m) > len(ownLoginMiddleware)) {
+		if slices.Contains(platformLoginMiddlewares, m) {
 			return true
+		}
+		for _, own := range ownLoginMiddlewares {
+			if strings.HasSuffix(m, own) && len(m) > len(own) {
+				return true
+			}
 		}
 	}
 	return false

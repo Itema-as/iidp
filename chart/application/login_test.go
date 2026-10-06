@@ -26,7 +26,8 @@ func TestLoginAddsTheForwardAuthMiddlewareAnnotation(t *testing.T) {
 }
 
 // Custom domains inside the login cookie domain are protected on whichever
-// Ingress they land, and the HTTP-01 one keeps its issuer annotation.
+// Ingress they land, and each foreign host's Ingress keeps its issuer
+// annotation.
 func TestLoginProtectsCustomDomainsInsideTheCookieDomain(t *testing.T) {
 	objects := render(t, "login-custom-domains.yaml")
 	for _, tc := range []struct {
@@ -34,37 +35,40 @@ func TestLoginProtectsCustomDomainsInsideTheCookieDomain(t *testing.T) {
 		hosts   []string
 	}{
 		{"Ingress/shop", []string{"shop.app.itma.no", "butikk.app.itma.no"}},
-		{"Ingress/shop-http01", []string{"x.itma.no", "test.shop.app.itma.no", "itma.no"}},
+		{"Ingress/shop-x-itma-no", []string{"x.itma.no"}},
+		{"Ingress/shop-test-shop-app-itma-no", []string{"test.shop.app.itma.no"}},
+		{"Ingress/shop-itma-no", []string{"itma.no"}},
 	} {
 		ing := mustObject(t, objects, tc.ingress)
 		if hosts := ingressHosts(t, ing); !slices.Equal(hosts, tc.hosts) {
 			t.Errorf("%s hosts = %v, want %v", tc.ingress, hosts, tc.hosts)
 		}
-		annotations := get[map[string]any](t, ing, "metadata", "annotations")
-		if got := annotations["traefik.ingress.kubernetes.io/router.middlewares"]; got != loginMiddlewareAnnotation {
+		if got := middlewaresOf(t, ing); got != loginMiddlewareAnnotation {
 			t.Errorf("%s router.middlewares = %v, want %s", tc.ingress, got, loginMiddlewareAnnotation)
 		}
-	}
-	http01 := get[map[string]any](t, mustObject(t, objects, "Ingress/shop-http01"), "metadata", "annotations")
-	if got := http01["cert-manager.io/cluster-issuer"]; got != "letsencrypt-http01" {
-		t.Errorf("shop-http01 cert-manager.io/cluster-issuer = %v, want letsencrypt-http01", got)
+		if tc.ingress == "Ingress/shop" {
+			continue
+		}
+		if got := get[map[string]any](t, ing, "metadata", "annotations")["cert-manager.io/cluster-issuer"]; got != "letsencrypt-http01" {
+			t.Errorf("%s cert-manager.io/cluster-issuer = %v, want letsencrypt-http01", tc.ingress, got)
+		}
 	}
 }
 
 // Without platform.loginCookieDomain the cookie domain is the base domain.
 func TestLoginCookieDomainDefaultsToTheBaseDomain(t *testing.T) {
-	objects := render(t, "login-custom-domains.yaml", "--set", "platform.loginCookieDomain=", "--set", "domains={butikk.app.itma.no,test.shop.app.itma.no}")
-	for _, name := range []string{"Ingress/shop", "Ingress/shop-http01"} {
-		annotations := get[map[string]any](t, mustObject(t, objects, name), "metadata", "annotations")
-		if got := annotations["traefik.ingress.kubernetes.io/router.middlewares"]; got != loginMiddlewareAnnotation {
-			t.Errorf("%s router.middlewares = %v, want %s", name, got, loginMiddlewareAnnotation)
+	objects := render(t, "login-custom-domains.yaml", "--set", "platform.loginCookieDomain=")
+	for name, want := range map[string]string{
+		"Ingress/shop":                       loginMiddlewareAnnotation,
+		"Ingress/shop-test-shop-app-itma-no": loginMiddlewareAnnotation,
+		// The zone's other hosts are outside app.itma.no, so behind the
+		// host-only login.
+		"Ingress/shop-x-itma-no": hostLoginMiddlewareAnnotation,
+		"Ingress/shop-itma-no":   hostLoginMiddlewareAnnotation,
+	} {
+		if got := middlewaresOf(t, mustObject(t, objects, name)); got != want {
+			t.Errorf("%s router.middlewares = %v, want %s", name, got, want)
 		}
-	}
-	// The zone's other hosts are outside app.itma.no, so behind the
-	// host-only login.
-	objects = render(t, "login-custom-domains.yaml", "--set", "platform.loginCookieDomain=")
-	if hosts := ingressHosts(t, mustObject(t, objects, "Ingress/shop-host-login")); !slices.Equal(hosts, []string{"x.itma.no", "itma.no"}) {
-		t.Errorf("shop-host-login hosts = %v, want [x.itma.no itma.no]", hosts)
 	}
 }
 
@@ -103,11 +107,11 @@ func TestLoginDisabledByDefaultLeavesNoMiddlewareAnnotation(t *testing.T) {
 	}
 }
 
-func TestLoginDisabledLeavesTheHTTP01IngressWithoutMiddleware(t *testing.T) {
-	ing := mustObject(t, render(t, "custom-domains-mixed.yaml"), "Ingress/shop-staging-http01")
-	annotations := get[map[string]any](t, ing, "metadata", "annotations")
-	if _, set := annotations["traefik.ingress.kubernetes.io/router.middlewares"]; set {
-		t.Errorf("router.middlewares = %v, want unset when login is disabled", annotations["traefik.ingress.kubernetes.io/router.middlewares"])
+func TestLoginDisabledLeavesForeignDomainIngressesWithoutMiddleware(t *testing.T) {
+	for _, name := range []string{"Ingress/shop-staging-test-shop-app-itma-no", "Ingress/shop-staging-shop-staging-itma-no"} {
+		if got := middlewaresOf(t, mustObject(t, render(t, "custom-domains-mixed.yaml"), name)); got != "" {
+			t.Errorf("%s router.middlewares = %v, want unset when login is disabled", name, got)
+		}
 	}
 }
 
@@ -139,65 +143,38 @@ func middlewaresOf(t *testing.T, ing object) string {
 	return value
 }
 
-// Custom domains outside the cookie domain go behind the host-only proxy,
-// on an Ingress of their own; every other host keeps the shared one.
+// Custom domains outside the cookie domain go behind the host-only proxy;
+// every other host keeps the shared one. Each foreign host's Ingress names
+// its own login, so the two never share an Ingress.
 func TestLoginOutsideTheCookieDomainUsesTheHostOnlyProxy(t *testing.T) {
 	objects := render(t, "login-domains-outside-cookie-domain.yaml", "--namespace", hostLoginNamespace)
 
 	for _, tc := range []struct {
-		ingress, middleware string
-		hosts               []string
+		ingress, middleware, host, secret string
 	}{
-		{"Ingress/shop", loginMiddlewareAnnotation, []string{"shop.app.itma.no", "butikk.app.itma.no"}},
-		{"Ingress/shop-http01", loginMiddlewareAnnotation, []string{"x.itma.no", "shop.example.com", "notitma.no"}},
-		{"Ingress/shop-host-login", hostLoginMiddlewareAnnotation, []string{"shop.example.com", "notitma.no"}},
+		{"Ingress/shop-x-itma-no", loginMiddlewareAnnotation, "x.itma.no", "shop-x-itma-no-tls"},
+		{"Ingress/shop-shop-example-com", hostLoginMiddlewareAnnotation, "shop.example.com", "shop-shop-example-com-tls"},
+		{"Ingress/shop-notitma-no", hostLoginMiddlewareAnnotation, "notitma.no", "shop-notitma-no-tls"},
 	} {
 		ing := mustObject(t, objects, tc.ingress)
-		if hosts := ingressHosts(t, ing); !slices.Equal(hosts, tc.hosts) {
-			t.Errorf("%s hosts = %v, want %v", tc.ingress, hosts, tc.hosts)
+		if hosts := ingressHosts(t, ing); !slices.Equal(hosts, []string{tc.host}) {
+			t.Errorf("%s hosts = %v, want [%s]", tc.ingress, hosts, tc.host)
 		}
 		if got := middlewaresOf(t, ing); got != tc.middleware {
 			t.Errorf("%s router.middlewares = %q, want %q", tc.ingress, got, tc.middleware)
 		}
-	}
-
-	// The HTTP-01 Ingress still holds every certificate, so turning login
-	// on or off never moves one between Ingresses. The hosts outside the
-	// cookie domain are listed there without paths: their routes are on
-	// shop-host-login, and Traefik finds their certificates by SNI.
-	http01 := mustObject(t, objects, "Ingress/shop-http01")
-	if got := get[string](t, http01, "metadata", "annotations", "cert-manager.io/cluster-issuer"); got != "letsencrypt-http01" {
-		t.Errorf("shop-http01 cert-manager.io/cluster-issuer = %q, want letsencrypt-http01", got)
-	}
-	wantTLS := []tlsEntry{
-		{[]string{"x.itma.no"}, "shop-x-itma-no-tls"},
-		{[]string{"shop.example.com"}, "shop-shop-example-com-tls"},
-		{[]string{"notitma.no"}, "shop-notitma-no-tls"},
-	}
-	if got := tlsEntries(t, http01); !reflect.DeepEqual(got, wantTLS) {
-		t.Errorf("shop-http01 tls = %v, want %v", got, wantTLS)
-	}
-	for _, rule := range get[[]any](t, http01, "spec", "rules") {
-		host := get[string](t, rule, "host")
-		_, routed := rule.(map[string]any)["http"]
-		if want := host == "x.itma.no"; routed != want {
-			t.Errorf("shop-http01 rule %s has paths = %v, want %v", host, routed, want)
+		assertEveryRuleRoutesTo(t, ing, "shop", 3000)
+		// The certificate stays on the host's own Ingress, under the name
+		// the chart has always given its Secret.
+		if got := get[string](t, ing, "metadata", "annotations", "cert-manager.io/cluster-issuer"); got != "letsencrypt-http01" {
+			t.Errorf("%s cert-manager.io/cluster-issuer = %q, want letsencrypt-http01", tc.ingress, got)
+		}
+		if got := tlsEntries(t, ing); len(got) != 1 || got[0].secretName != tc.secret {
+			t.Errorf("%s tls = %v, want one entry with %s", tc.ingress, got, tc.secret)
 		}
 	}
-
-	hostLogin := mustObject(t, objects, "Ingress/shop-host-login")
-	assertEveryRuleRoutesTo(t, hostLogin, "shop", 3000)
-	annotations := get[map[string]any](t, hostLogin, "metadata", "annotations")
-	if _, set := annotations["cert-manager.io/cluster-issuer"]; set {
-		t.Errorf("shop-host-login has an issuer annotation; its certificates come from shop-http01")
-	}
-	if got := annotations["traefik.ingress.kubernetes.io/router.entrypoints"]; got != "websecure" {
-		t.Errorf("shop-host-login router.entrypoints = %v, want websecure", got)
-	}
-	for _, entry := range tlsEntries(t, hostLogin) {
-		if entry.secretName != "" {
-			t.Errorf("shop-host-login names TLS secret %s; its certificates come from shop-http01", entry.secretName)
-		}
+	if got := middlewaresOf(t, mustObject(t, objects, "Ingress/shop")); got != loginMiddlewareAnnotation {
+		t.Errorf("shop router.middlewares = %q, want %q", got, loginMiddlewareAnnotation)
 	}
 }
 
@@ -266,7 +243,7 @@ func TestHostOnlyLoginRendersOnlyForHostsOutsideTheCookieDomain(t *testing.T) {
 	} {
 		t.Run(tc.fixture+" "+strings.Join(tc.args, " "), func(t *testing.T) {
 			for key, obj := range render(t, tc.fixture, tc.args...) {
-				if strings.HasSuffix(key, "-host-login") || strings.HasSuffix(key, "-oauth2") || strings.HasSuffix(key, "-itema-login-host") {
+				if strings.HasSuffix(key, "-oauth2") || strings.HasSuffix(key, "-itema-login-host") {
 					t.Errorf("rendered %s", key)
 				}
 				if strings.HasPrefix(key, "Ingress/") && strings.Contains(middlewaresOf(t, obj), "host") {
@@ -278,7 +255,7 @@ func TestHostOnlyLoginRendersOnlyForHostsOutsideTheCookieDomain(t *testing.T) {
 	// Without login the hosts outside the cookie domain are served like
 	// any other custom domain.
 	objects := render(t, "login-domains-outside-cookie-domain.yaml", "--set", "login.enabled=false")
-	assertEveryRuleRoutesTo(t, mustObject(t, objects, "Ingress/shop-http01"), "shop", 3000)
+	assertEveryRuleRoutesTo(t, mustObject(t, objects, "Ingress/shop-shop-example-com"), "shop", 3000)
 }
 
 // With sign-in groups, the hosts outside the cookie domain get the
@@ -294,9 +271,10 @@ func TestLoginGroupsOutsideTheCookieDomainUseTheirOwnHostOnlyMiddleware(t *testi
 		t.Errorf("sync-wave = %s, want -1, before the Ingress that names it", got)
 	}
 	for name, want := range map[string]string{
-		"Ingress/shop":            "shop-shop-itema-login@kubernetescrd",
-		"Ingress/shop-http01":     "shop-shop-itema-login@kubernetescrd",
-		"Ingress/shop-host-login": "shop-shop-itema-login-host@kubernetescrd",
+		"Ingress/shop":                  "shop-shop-itema-login@kubernetescrd",
+		"Ingress/shop-x-itma-no":        "shop-shop-itema-login@kubernetescrd",
+		"Ingress/shop-shop-example-com": "shop-shop-itema-login-host@kubernetescrd",
+		"Ingress/shop-notitma-no":       "shop-shop-itema-login-host@kubernetescrd",
 	} {
 		if got := middlewaresOf(t, mustObject(t, objects, name)); got != want {
 			t.Errorf("%s router.middlewares = %q, want %q", name, got, want)
@@ -386,7 +364,7 @@ func TestLoginGroupsRenderTheEnvironmentsOwnMiddleware(t *testing.T) {
 		t.Errorf("sync-wave = %s, want -1, before the Ingresses that name it", got)
 	}
 	// Every Ingress that carries login names it, the HTTP-01 one included.
-	for _, name := range []string{"Ingress/shop-staging", "Ingress/shop-staging-http01"} {
+	for _, name := range []string{"Ingress/shop-staging", "Ingress/shop-staging-x-itma-no"} {
 		annotations := get[map[string]any](t, mustObject(t, objects, name), "metadata", "annotations")
 		if got := annotations["traefik.ingress.kubernetes.io/router.middlewares"]; got != signInGroupsAnnotation {
 			t.Errorf("%s router.middlewares = %v, want %s", name, got, signInGroupsAnnotation)
@@ -473,8 +451,9 @@ func TestLoginGroupsFixturesPassKubeconformWithTheCRDSchemas(t *testing.T) {
 		valid   int
 	}{
 		{"login-groups.yaml", nil, 6},
-		// Both Middlewares and the four Ingresses.
-		{"login-domains-outside-cookie-domain.yaml", []string{"--set-json", `login.groups=["0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b"]`}, 9},
+		// Both Middlewares, the Platform Ingress, one Ingress per foreign
+		// host and the callback route.
+		{"login-domains-outside-cookie-domain.yaml", []string{"--set-json", `login.groups=["0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b"]`}, 10},
 	} {
 		t.Run(tc.fixture, func(t *testing.T) {
 			manifests, err := helmTemplate(t, tc.fixture, append([]string{"--namespace", signInGroupsNamespace}, tc.args...)...)
