@@ -43,6 +43,37 @@ const (
 	kindPromote = "promote"
 )
 
+// The database tunnel's Events: an events.k8s.io/v1 Event in argocd
+// regarding the Environment's ArgoCD Application when a developer's session
+// on its database starts, when it ends, and when one is refused, with
+// AnnotationApplication, AnnotationEnvironment and these annotations.
+const (
+	ReasonDatabaseSessionStarted = "DatabaseSessionStarted"
+	ReasonDatabaseSessionEnded   = "DatabaseSessionEnded"
+	ReasonDatabaseSessionRefused = "DatabaseSessionRefused"
+
+	// AnnotationLogin is the developer's GitHub login.
+	AnnotationLogin = "iidp.itema.no/login"
+	// AnnotationRole is the Postgres role, once one was chosen.
+	AnnotationRole = "iidp.itema.no/role"
+	// AnnotationDuration, AnnotationBytesFromClient and
+	// AnnotationBytesToClient are a session's length and traffic; ended
+	// only.
+	AnnotationDuration        = "iidp.itema.no/duration"
+	AnnotationBytesFromClient = "iidp.itema.no/bytes-from-client"
+	AnnotationBytesToClient   = "iidp.itema.no/bytes-to-client"
+)
+
+// IsDatabaseSessionEvent reports whether an Event is the database
+// tunnel's.
+func IsDatabaseSessionEvent(e Event) bool {
+	switch e.Reason {
+	case ReasonDatabaseSessionStarted, ReasonDatabaseSessionEnded, ReasonDatabaseSessionRefused:
+		return true
+	}
+	return false
+}
+
 // Deploy is one Deploy or Promote of an Environment, and where it is.
 type Deploy struct {
 	// Tag is the image tag it deploys.

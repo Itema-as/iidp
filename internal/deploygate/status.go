@@ -71,7 +71,7 @@ func (g *Gate) status(ctx context.Context, r *http.Request, application string) 
 		return platformstate.Status{}, 0, accessRefusal(err)
 	}
 
-	environments, err := repositoryEnvironments(dir, application)
+	environments, err := platformrepo.LiveEnvironments(dir, application)
 	if err != nil {
 		return platformstate.Status{}, 0, err
 	}
@@ -162,22 +162,6 @@ func accessRefusal(err error) error {
 		repoaccess.Unavailable:        http.StatusBadGateway,
 	}[ref.Reason]
 	return refuse(status, "%s", ref.Message)
-}
-
-// repositoryEnvironments are the Environments the Platform repository has
-// for application: those with a live application.yaml.
-func repositoryEnvironments(dir, application string) ([]string, error) {
-	var out []string
-	for _, environment := range platformrepo.Environments {
-		live, err := platformrepo.HasEnvironment(dir, application, environment)
-		if err != nil {
-			return nil, err
-		}
-		if live {
-			out = append(out, environment)
-		}
-	}
-	return out, nil
 }
 
 // withRepositoryEnvironments adds an entry, with no ArgoCD state, for each

@@ -22,6 +22,18 @@ const (
 // accessLevels are the levels from least to most permission.
 var accessLevels = []string{AccessNone, AccessPull, AccessPush, AccessMaintain, AccessAdmin}
 
+// Qualifies reports whether a developer whose highest permission on the
+// Application repository is permission (pull, push, maintain or admin, with
+// GitHub's triage counted as pull) qualifies for level. Nobody qualifies
+// for AccessNone, and nobody without a permission qualifies for anything.
+func Qualifies(permission, level string) bool {
+	if permission == "triage" {
+		permission = AccessPull
+	}
+	has, needs := slices.Index(accessLevels, permission), slices.Index(accessLevels, level)
+	return has > 0 && needs > 0 && has >= needs
+}
+
 // ErrInvalidDatabaseAccess is what errors.Is matches every refusal of
 // database access levels to. The refusals' messages are the chart's own
 // (application.postgres.access in chart/application/templates/_helpers.tpl),
