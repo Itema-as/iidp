@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: notes-staging-db-write
+    labels:
+        app.kubernetes.io/name: notes
+        cnpg.io/reload: "true"
+        iidp.itema.no/application: notes
+        iidp.itema.no/environment: staging
+    annotations:
+        argocd.argoproj.io/sync-wave: "-2"
+        kustomize.config.k8s.io/needs-hash: "false"
+type: kubernetes.io/basic-auth
+stringData:
+    password: ENC[AES256_GCM,data:9t9FcjglQ0mArUYKS23ErSxs4SlUSBGLIUs=,iv:9lL8DhKhjQLdd91fuj3AeSmURPC7ZBWS78YyzlYJRBg=,tag:unRVNceFR/8j0KiTh2ZcxQ==,type:str]
+    username: ENC[AES256_GCM,data:jVCwM9j2gBCW8Qg=,iv:YIliXayy3txd4FBPN+ljVjvYpjLNWUlutx6/ezb5Li8=,tag:XUR7sLAXHN97O/YbBAGaOQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBJMWl6K29LNFZ1NmE1M3hs
+            TUtqaGp6anAxeENMaUg0dmFIdng1Qmc2WjFrClAycHh0Q09mcmllcGFzRjBaZHJm
+            cExSM2NMMEl0MW4vRTQrM3d5S1hFVEEKLS0tIHZRa2lucXJkb2FzanNtRWd2VnFP
+            M3VORU9JZFp6dFA0QVNXN3NjWDFMc2MKtDENyTZwOIqXNxnudgyIS8ySXNDW/rAE
+            eRb74TJd34GDEPuINvweGKg1MQ4wzj3Bs2R1b6slEY2R414BvYYydg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-06T17:17:51Z"
+    mac: ENC[AES256_GCM,data:HDX57CS10ojv379iBCZkCS97UufXvDWuOdaAMuzuB//lWWq7eTr1+My73/t1l5OSSMGJUC+o3wTV6LBumoMa8tod2x5xqxYnUdP56QFOlnUkXov/maxxvtyNgb+ogWUrtkoqx6UlMqacGqMp8bB8cfgaJa2/4hIbedVF4vVGiHM=,iv:pff9AV6VvVYrQp8KHdP/xk4ZQ6/tyQL/YWa4QFov8DU=,tag:c++k1bGdLvpm0gU34UzFMQ==,type:str]
+    version: 3.13.3

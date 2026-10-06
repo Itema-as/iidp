@@ -24,6 +24,8 @@ const previewHeadSHA = "5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f"
 //   - runs its image in a namespace the guardrails bind to, with a database
 //     and staging's migration and secrets but no backups and no Scheduled
 //     task, behind Itema login;
+//   - lets a developer reach its database through the database tunnel with
+//     staging's levels;
 //   - deletes the preview, its database and namespace when the pull request
 //     closes.
 func testPreviewEnvironments(ctx context.Context, t *testing.T, cluster *Cluster) {
@@ -68,6 +70,7 @@ func testPreviewEnvironments(ctx context.Context, t *testing.T, cluster *Cluster
 	}
 
 	testStatusListsPreview(ctx, t, cluster, "notes", "pr-7")
+	testPreviewThroughTheTunnel(ctx, t, cluster, "notes", "7")
 
 	out, err = cluster.Kubectl(ctx, "get", "namespace", namespace, "-o", "jsonpath={.metadata.labels}")
 	if err != nil {

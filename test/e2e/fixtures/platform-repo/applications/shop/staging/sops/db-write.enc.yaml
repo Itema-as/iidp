@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: shop-staging-db-write
+    labels:
+        app.kubernetes.io/name: shop
+        cnpg.io/reload: "true"
+        iidp.itema.no/application: shop
+        iidp.itema.no/environment: staging
+    annotations:
+        argocd.argoproj.io/sync-wave: "-2"
+        kustomize.config.k8s.io/needs-hash: "false"
+type: kubernetes.io/basic-auth
+stringData:
+    password: ENC[AES256_GCM,data:M4udsHZPGScHBA+U5J1Ad5qH4ifQGMmC850=,iv:BgpV1XVugaIbjTASU9E1t/vtXCCkb2xJs3ditKuFly8=,tag:15ovYH8BYevpe9I+MXIRXw==,type:str]
+    username: ENC[AES256_GCM,data:hcM7jwThApdIcQ==,iv:bHL/cZdBJUWsC2XJL0u2AKfXzk9d509JS/2+8C+MYsw=,tag:l/pbmspRIqXSmSstsFIIYw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBPOTMyVFUxazF2VC9mWjJP
+            OW9jN0diWTNMNXhJdldjNjBEVGtuOXRSWFJnCnF0ZDBKTW9MaXVEZXVwNUI5enBk
+            VmZEZVNzQW9semI2d05JSXRpTzR3NFUKLS0tIEVMNlp6ajM3NkVDQzlEaVFadGp0
+            ZUM4c3paejIraENITGZtK0dVRjZaKzAKIEKyABR72haANZ1ChwiHYMqjKUS/YNSC
+            k3jALeSk6m6ynGnec/GIGMASOc8u0tbGBJfGC0sVMWtGiuRIzd3q3A==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1kpq9t46wreydm6dp2e9a6txzm88ymqj9ph38jvjlsjgff3k5vfqqqhee6v
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-06T17:17:51Z"
+    mac: ENC[AES256_GCM,data:Vll+IPxSXm9w5qWAksNMVs8ad3jVkuBKh6wCWMJ1eYp7CIylqUeWILXtx4a5NJ6XgHUowVlG7XnavDzc12pPaAheXbi+cw0YHGwuOiTfn1eo7wvzSBUWOhgtR8zg/RG3DGzJuybVovPc27N8/jjeCnAmapmTQvSeRJRKolckf0s=,iv:3eiuk+asdrHZkV36icq7NJ7ZueHsWIC6hR9C8Y+FRNY=,tag:ub/fYbgjvGAlGzlzJFIbGA==,type:str]
+    version: 3.13.3
