@@ -69,9 +69,10 @@ const (
 	serviceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
 )
 
-// Kube lists objects from the Kubernetes API with the standard library,
-// authenticated as the pod's service account. It does only what Lister
-// needs, which keeps client-go out of the Deploy gate.
+// Kube lists and gets objects from the Kubernetes API with the standard
+// library, authenticated as the pod's service account. It does only what
+// Lister and the database tunnel's reads need, which keeps client-go out of
+// the Deploy gate and the tunnel.
 type Kube struct {
 	// BaseURL is the API server, https://<host>:<port>.
 	BaseURL string
@@ -133,11 +134,36 @@ func (e *StatusError) Error() string {
 
 // List implements Lister.
 func (k *Kube) List(ctx context.Context, path, labelSelector string, into any) error {
-	u := k.BaseURL + path
+	query := ""
 	if labelSelector != "" {
-		u += "?labelSelector=" + url.QueryEscape(labelSelector)
+		query = "?labelSelector=" + url.QueryEscape(labelSelector)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	var list struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := k.get(ctx, path, query, "listing", &list); err != nil {
+		return err
+	}
+	if len(list.Items) == 0 || string(list.Items) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(list.Items, into); err != nil {
+		return fmt.Errorf("decoding %s: %w", path, err)
+	}
+	return nil
+}
+
+// Get reads the one object at path, such as
+// /apis/postgresql.cnpg.io/v1/namespaces/shop-prod/clusters/shop-db, into
+// into. A missing object is a *StatusError with Status 404.
+func (k *Kube) Get(ctx context.Context, path string, into any) error {
+	return k.get(ctx, path, "", "reading", into)
+}
+
+// get decodes the answer to a GET of path and query into into; doing
+// words a failed request.
+func (k *Kube) get(ctx context.Context, path, query, doing string, into any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.BaseURL+path+query, nil)
 	if err != nil {
 		return err
 	}
@@ -155,23 +181,14 @@ func (k *Kube) List(ctx context.Context, path, labelSelector string, into any) e
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("listing %s: %w", path, err)
+		return fmt.Errorf("%s %s: %w", doing, path, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		return &StatusError{Path: path, Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
-	var list struct {
-		Items json.RawMessage `json:"items"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&list); err != nil {
-		return fmt.Errorf("decoding %s: %w", path, err)
-	}
-	if len(list.Items) == 0 || string(list.Items) == "null" {
-		return nil
-	}
-	if err := json.Unmarshal(list.Items, into); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(into); err != nil {
 		return fmt.Errorf("decoding %s: %w", path, err)
 	}
 	return nil
