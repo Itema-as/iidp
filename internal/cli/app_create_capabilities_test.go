@@ -402,13 +402,15 @@ func TestAppCreateRefusesDomainEqualToAPlatformAddress(t *testing.T) {
 	assertNoApplications(t, url)
 }
 
-// deploy.<baseDomain> is the Deploy gate and auth.<baseDomain> the Itema
-// login. An Application serving the gate's address could receive the OIDC
-// tokens other Applications' workflows mint for it.
+// deploy.<baseDomain> is the Deploy gate, auth.<baseDomain> the Itema
+// login and db.<baseDomain> the database tunnel. An Application serving the
+// gate's address could receive the OIDC tokens other Applications'
+// workflows mint for it, and one serving the tunnel's the developers' GitHub
+// tokens.
 func TestAppCreateRefusesThePlatformsOwnAddresses(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 
-	for _, name := range []string{"deploy", "auth"} {
+	for _, name := range []string{"deploy", "auth", "db"} {
 		_, stderr, code := createApplication(t, url, cli.Dependencies{}, "--name", name, "--kind", "web-service")
 		if code == 0 || !strings.Contains(stderr, "reserved") {
 			t.Errorf("--name %s: exit code = %d, stderr = %q, want it refused as reserved", name, code, stderr)

@@ -119,6 +119,18 @@ func (c Config) DeployGateURL() string {
 	return "https://" + DeployGateHostLabel + "." + c.BaseDomain
 }
 
+// DatabaseTunnelHostLabel is the label under baseDomain the database
+// tunnel is served at: https://db.<baseDomain>, under the Platform's
+// wildcard certificate. The bootstrap chart builds the tunnel's Ingress
+// host the same way (bootstrap/components/db-tunnel).
+const DatabaseTunnelHostLabel = "db"
+
+// DatabaseTunnelURL is the database tunnel's address, where iidp app db
+// connect opens its connections.
+func (c Config) DatabaseTunnelURL() string {
+	return "https://" + DatabaseTunnelHostLabel + "." + c.BaseDomain
+}
+
 // Chart splits ChartRepository into the registry path ArgoCD wants as
 // repoURL (without the oci:// scheme) and the chart name.
 func (c Config) Chart() (repoURL, name string, err error) {

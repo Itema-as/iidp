@@ -69,11 +69,13 @@ func ValidateName(name string) error {
 }
 
 // ReservedNames are the labels under baseDomain the Platform serves itself:
-// the Deploy gate at deploy.<baseDomain> and the Itema login's oauth2-proxy
-// at auth.<baseDomain>. An Application of one of these names would have the
-// same address, and one serving deploy.<baseDomain> could receive the OIDC
-// tokens other Applications' workflows mint for the gate.
-var ReservedNames = []string{DeployGateHostLabel, "auth"}
+// the Deploy gate at deploy.<baseDomain>, the Itema login's oauth2-proxy at
+// auth.<baseDomain> and the database tunnel at db.<baseDomain>. An
+// Application of one of these names would have the same address. One
+// serving deploy.<baseDomain> could receive the OIDC tokens other
+// Applications' workflows mint for the gate, and one serving
+// db.<baseDomain> the GitHub tokens developers send the tunnel.
+var ReservedNames = []string{DeployGateHostLabel, "auth", DatabaseTunnelHostLabel}
 
 // ValidateNewName is ValidateName for an Application about to be created:
 // it also refuses the ReservedNames.
