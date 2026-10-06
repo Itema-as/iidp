@@ -83,8 +83,7 @@ func (t *Tunnel) serve(ctx context.Context, client net.Conn, req Request) {
 			writeMessages(client, errorResponse(pgErr))
 			return
 		}
-		t.log().Warn("the database tunnel could not log in to the database", "login", grant.Login, "application", grant.Application,
-			"environment", grant.Environment, "role", grant.Role, "error", err.Error())
+		t.log().Warn("the database tunnel could not log in to the database", append(grant.logAttrs(), "error", err.Error())...)
 		t.refused(grant, "connect", errors.New("the database tunnel could not reach the database"))
 		writeMessages(client, &pgproto3.ErrorResponse{Severity: "FATAL", SeverityUnlocalized: "FATAL", Code: "08006",
 			Message: fmt.Sprintf("the database tunnel could not reach %s %s's database; try again in a moment", grant.Application, grant.Environment)})
@@ -163,15 +162,20 @@ func unsupportedOptions(parameters map[string]string) []string {
 	return options
 }
 
+// postgresAddress is where grant's database listens: its Cluster's -rw
+// Service, or PostgresAddress's answer.
+func (t *Tunnel) postgresAddress(g Grant) string {
+	if t.PostgresAddress != nil {
+		return t.PostgresAddress(g.Namespace, g.Cluster)
+	}
+	return net.JoinHostPort(g.Cluster+"-rw."+g.Namespace+".svc", "5432")
+}
+
 // login logs in to the Environment's database as the grant's role, with
 // SCRAM-SHA-256 alone, and hands over the connection, idle and ready for
 // the client's first query.
 func (t *Tunnel) login(ctx context.Context, grant Grant, client map[string]string) (*pgconn.HijackedConn, error) {
-	address := grant.Cluster + "-rw." + grant.Namespace + ".svc:5432"
-	if t.PostgresAddress != nil {
-		address = t.PostgresAddress(grant.Namespace, grant.Cluster)
-	}
-	host, port, err := net.SplitHostPort(address)
+	host, port, err := net.SplitHostPort(t.postgresAddress(grant))
 	if err != nil {
 		return nil, err
 	}
@@ -367,23 +371,18 @@ func (t *Tunnel) cancel(ctx context.Context, req Request, msg *pgproto3.CancelRe
 	defer cancel()
 	grant, err := t.Check(ctx, req)
 	if err != nil {
-		t.log().Info("a cancel request was dropped", "login", grant.Login, "application", req.Application, "environment", req.Environment, "error", err.Error())
+		t.log().Info("a cancel request was dropped", append(grant.logAttrs(), "error", err.Error())...)
 		return
 	}
 	session, ok := t.live.get(cancelKey(msg.ProcessID, msg.SecretKey))
 	if !ok || session.Login != grant.Login || session.Application != grant.Application || session.Environment != grant.Environment {
-		t.log().Info("a cancel request was dropped", "login", grant.Login, "application", grant.Application, "environment", grant.Environment,
-			"error", "it names no session of this developer on this Environment")
+		t.log().Info("a cancel request was dropped", append(grant.logAttrs(), "error", "it names no session of this developer on this Environment")...)
 		return
 	}
-	address := session.Cluster + "-rw." + session.Namespace + ".svc:5432"
-	if t.PostgresAddress != nil {
-		address = t.PostgresAddress(session.Namespace, session.Cluster)
-	}
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", address)
+	conn, err := d.DialContext(ctx, "tcp", t.postgresAddress(session))
 	if err != nil {
-		t.log().Warn("a cancel request could not reach the database", "login", grant.Login, "application", grant.Application, "environment", grant.Environment, "error", err.Error())
+		t.log().Warn("a cancel request could not reach the database", append(grant.logAttrs(), "error", err.Error())...)
 		return
 	}
 	defer conn.Close()
@@ -392,10 +391,10 @@ func (t *Tunnel) cancel(ctx context.Context, req Request, msg *pgproto3.CancelRe
 		_, err = conn.Write(packet)
 	}
 	if err != nil {
-		t.log().Warn("a cancel request could not reach the database", "login", grant.Login, "application", grant.Application, "environment", grant.Environment, "error", err.Error())
+		t.log().Warn("a cancel request could not reach the database", append(grant.logAttrs(), "error", err.Error())...)
 		return
 	}
 	// Postgres closes the connection once it has the request.
 	_, _ = io.Copy(io.Discard, io.LimitReader(conn, 1))
-	t.log().Info("a cancel request was passed on", "login", grant.Login, "application", grant.Application, "environment", grant.Environment, "role", session.Role)
+	t.log().Info("a cancel request was passed on", session.logAttrs()...)
 }

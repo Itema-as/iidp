@@ -128,8 +128,7 @@ func (t *Tunnel) serveCheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, api.ErrorResponse{Error: err.Error()})
 		return
 	}
-	t.log().Info("database access checked", "login", grant.Login, "application", grant.Application, "environment", grant.Environment,
-		"role", grant.Role, "access", grant.Access, "duration", time.Since(start).Round(time.Millisecond).String())
+	t.log().Info("database access checked", append(grant.logAttrs(), "duration", time.Since(start).Round(time.Millisecond).String())...)
 	writeJSON(w, http.StatusOK, api.Grant{
 		Login: grant.Login, Application: grant.Application, Environment: grant.Environment,
 		Access: grant.Access, Role: grant.Role, Database: grant.Application,
@@ -144,7 +143,7 @@ func (t *Tunnel) serveConnect(w http.ResponseWriter, r *http.Request) {
 	t.init()
 	req := requestOf(r)
 	if req.Token == "" {
-		writeJSON(w, http.StatusUnauthorized, api.ErrorResponse{Error: "no GitHub token: send your own as Authorization: Bearer <token>, which iidp app db connect takes from gh auth"})
+		writeJSON(w, http.StatusUnauthorized, api.ErrorResponse{Error: noToken})
 		return
 	}
 	if t.stop.Err() != nil {

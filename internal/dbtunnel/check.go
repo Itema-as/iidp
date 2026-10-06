@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -76,7 +75,8 @@ func refuse(status int, format string, args ...any) *Refusal {
 // purpose words the repository check for the tunnel.
 var purpose = repoaccess.Purpose{Service: "the database tunnel", Action: "reach %s databases"}
 
-var previewEnvironment = regexp.MustCompile(`^pr-[1-9][0-9]{0,8}$`)
+// noToken refuses a call that carries no GitHub token.
+const noToken = "no GitHub token: send your own as Authorization: Bearer <token>, which iidp app db connect takes from gh auth"
 
 // check runs the full check for one connection, in order: the
 // developer's GitHub login; their permission on the Application
@@ -90,12 +90,12 @@ func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 		return grant, refuse(http.StatusBadRequest, "%v", err)
 	}
 	switch env := req.Environment; {
-	case env == "prod", env == "staging", env == api.EnvironmentAuto, previewEnvironment.MatchString(env):
+	case env == "prod", env == "staging", env == api.EnvironmentAuto, platformstate.IsPreview(env):
 	default:
 		return grant, refuse(http.StatusBadRequest, "unknown Environment %q: must be prod, staging or pr-<pull request number>", env)
 	}
 	if req.Token == "" {
-		return grant, refuse(http.StatusUnauthorized, "no GitHub token: send your own as Authorization: Bearer <token>, which iidp app db connect takes from gh auth")
+		return grant, refuse(http.StatusUnauthorized, noToken)
 	}
 
 	gh := &github.Client{Token: req.Token, BaseURL: t.GitHubAPI}
@@ -140,7 +140,7 @@ func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 	if grant.Environment == "prod" {
 		grant.Cluster = req.Application + "-db"
 	}
-	preview := previewEnvironment.MatchString(grant.Environment)
+	preview := platformstate.IsPreview(grant.Environment)
 	if !preview && !slices.Contains(environments, grant.Environment) {
 		return grant, refuse(http.StatusNotFound, "unknown Environment: %s has no %s Environment", req.Application, grant.Environment)
 	}
