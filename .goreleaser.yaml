@@ -1,6 +1,6 @@
 # GoReleaser configuration for the iidp CLI and the Deploy gate's, Argus's and
-# the database tunnel's images. Run by .github/workflows/release.yaml on every v* tag. Verify
-# locally with:
+# the database tunnel's images. Run by .github/workflows/release.yaml on every
+# v* tag. Verify locally with:
 #   goreleaser check
 #   goreleaser build --snapshot --clean --single-target
 version: 2
