@@ -133,8 +133,10 @@ func (g *Gate) status(ctx context.Context, r *http.Request, application string) 
 
 // databaseAccess is an Environment's database access, from its values file
 // in the clone at dir. A Preview Environment has staging's, since it
-// renders from staging's values file. It is nil without Postgres, and when
-// the file cannot be read or holds levels the chart would refuse.
+// renders from staging's values file. A level is set up when it is none or
+// the file names its role's password Secret, as the chart needs to open
+// the role. It is nil without Postgres, and when the file cannot be read
+// or holds levels the chart would refuse.
 func databaseAccess(dir, application, environment string) *platformstate.DatabaseAccess {
 	if environment != "prod" {
 		environment = "staging"
@@ -147,7 +149,15 @@ func databaseAccess(dir, application, environment string) *platformstate.Databas
 	if err != nil || !db.Enabled {
 		return nil
 	}
-	return &platformstate.DatabaseAccess{ReadWrite: db.Access.ReadWrite, ReadOnly: db.Access.ReadOnly}
+	setUp := func(role render.AccessRole) bool {
+		return role.Level(db.Access) == render.AccessNone || db.PasswordSecret(role) != ""
+	}
+	return &platformstate.DatabaseAccess{
+		ReadWrite:      db.Access.ReadWrite,
+		ReadOnly:       db.Access.ReadOnly,
+		ReadWriteSetUp: setUp(render.ReadWriteRole),
+		ReadOnlySetUp:  setUp(render.ReadOnlyRole),
+	}
 }
 
 // cloneRefusal words a failed clone of the Platform repository with the

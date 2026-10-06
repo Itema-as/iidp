@@ -11,7 +11,7 @@ const prod = {
   image: { repository: 'ghcr.io/itema-as/shop', tag: '1.0.1', deployedAt: '2026-09-28T11:50:00Z' },
   pods: { ready: 1, total: 1, restarts: 2 },
   migration: { result: 'succeeded', finishedAt: '2026-09-28T11:49:00Z' },
-  databaseAccess: { readWrite: 'none', readOnly: 'maintain' },
+  databaseAccess: { readWrite: 'none', readOnly: 'maintain', readWriteSetUp: true, readOnlySetUp: true },
   tasks: [{ name: 'report', schedule: '0 3 * * *', lastRun: { result: 'failed', finishedAt: '2026-09-28T03:01:00Z' } }],
   addresses: ['https://shop.app.itma.no'],
   links: { argocd: 'https://argocd.example.test/applications/argocd/shop-prod', grafana: 'https://itema.grafana.net/explore?x' },
@@ -47,8 +47,9 @@ test("an Environment's card: state, hops, facts, Capabilities, links and its fee
 });
 
 test("a Preview Environment's card shows the database access it has from staging, and an older chart's none", () => {
-  const preview = environmentCard('shop', { ...prod, name: 'pr-4', databaseAccess: { readWrite: 'push', readOnly: 'none' } }, { feed, platform, nowMs: now });
-  assert.deepEqual(preview.sections.find((s) => s.title === 'Database').rows.at(-1), ['Developer access', 'read-write push · read-only none']);
+  const preview = environmentCard('shop', { ...prod, name: 'pr-4', databaseAccess: { readWrite: 'push', readOnly: 'none', readWriteSetUp: false, readOnlySetUp: true } }, { feed, platform, nowMs: now });
+  assert.deepEqual(preview.sections.find((s) => s.title === 'Database').rows.at(-1),
+    ['Developer access', 'read-write push (not set up: run iidp app db access shop --env staging) · read-only none']);
   const older = environmentCard('shop', { ...prod, databaseAccess: undefined }, { feed, platform, nowMs: now });
   assert.deepEqual(older.sections.find((s) => s.title === 'Database').rows.map((r) => r[0]), ['Last migration', 'Backups']);
 });

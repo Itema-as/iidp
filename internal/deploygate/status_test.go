@@ -483,14 +483,25 @@ func TestStatusShowsEachEnvironmentsDatabaseAccess(t *testing.T) {
 		"applications/shop/prod/values.yaml":    withPostgres("prod", "  access:\n    readWrite: none\n    readOnly: maintain\n"),
 		"applications/shop/staging/values.yaml": withPostgres("staging", ""),
 	})
+	// No password is named yet, so neither open level is set up.
 	got := statusOf()
 	for name, want := range map[string]platformstate.DatabaseAccess{
-		"prod":    {ReadWrite: "none", ReadOnly: "maintain"},
-		"staging": {ReadWrite: "push", ReadOnly: "none"},
-		"pr-7":    {ReadWrite: "push", ReadOnly: "none"},
+		"prod":    {ReadWrite: "none", ReadOnly: "maintain", ReadWriteSetUp: true},
+		"staging": {ReadWrite: "push", ReadOnly: "none", ReadOnlySetUp: true},
+		"pr-7":    {ReadWrite: "push", ReadOnly: "none", ReadOnlySetUp: true},
 	} {
 		if got[name] == nil || *got[name] != want {
 			t.Errorf("%s database access = %+v, want %+v", name, got[name], want)
+		}
+	}
+
+	pushCommit(t, e.platform, "iidp app db access shop --env staging", map[string]string{
+		"applications/shop/staging/values.yaml": withPostgres("staging", "  readWritePasswordSecret: shop-staging-db-write\n"),
+	})
+	got = statusOf()
+	for _, name := range []string{"staging", "pr-7"} {
+		if want := (platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none", ReadWriteSetUp: true, ReadOnlySetUp: true}); got[name] == nil || *got[name] != want {
+			t.Errorf("%s database access = %+v, want %+v once staging's password is written", name, got[name], want)
 		}
 	}
 }

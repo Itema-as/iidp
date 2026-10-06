@@ -170,25 +170,31 @@ func TestOnlyArgusLinksClientGo(t *testing.T) {
 // nothing more than the Clusters it already watches.
 func TestAnEnvironmentsDatabaseAccessComesFromItsCluster(t *testing.T) {
 	s, _ := newStore(t)
-	cluster := func(ns, name, readWrite, readOnly string) obj {
+	cluster := func(ns, name, readWrite, readOnly string, open ...string) obj {
+		var roles []any
+		for _, role := range open {
+			roles = append(roles, obj{"name": role, "ensure": "present"})
+		}
 		return obj{"kind": "Cluster", "metadata": obj{"name": name, "namespace": ns, "creationTimestamp": at(-time.Hour),
 			"labels": obj{platformstate.ApplicationLabel: "shop"},
 			"annotations": obj{
 				platformstate.DatabaseAccessReadWriteAnnotation: readWrite,
 				platformstate.DatabaseAccessReadOnlyAnnotation:  readOnly,
-			}}}
+			}},
+			"spec": obj{"managed": obj{"roles": roles}}}
 	}
 	put(t, s, servingShop()...)
 	put(t, s, argoApp("shop", "pr-4"), envDeployment("shop", "pr-4", "abc"),
-		cluster("shop-prod", "shop-db", "none", "maintain"), cluster("shop-pr-4", "shop-pr-4-db", "push", "none"))
+		cluster("shop-prod", "shop-db", "none", "maintain", "shop_read"), cluster("shop-pr-4", "shop-pr-4-db", "push", "none"))
 	s.Seed()
 	envs := map[string]*platformstate.DatabaseAccess{}
 	for _, env := range s.Snapshot().Applications[0].Environments {
 		envs[env.Name] = env.DatabaseAccess
 	}
 	for name, want := range map[string]platformstate.DatabaseAccess{
-		"prod": {ReadWrite: "none", ReadOnly: "maintain"},
-		"pr-4": {ReadWrite: "push", ReadOnly: "none"},
+		"prod": {ReadWrite: "none", ReadOnly: "maintain", ReadWriteSetUp: true, ReadOnlySetUp: true},
+		// staging's read-write password was never written.
+		"pr-4": {ReadWrite: "push", ReadOnly: "none", ReadOnlySetUp: true},
 	} {
 		if envs[name] == nil || *envs[name] != want {
 			t.Errorf("%s database access = %+v, want %+v", name, envs[name], want)

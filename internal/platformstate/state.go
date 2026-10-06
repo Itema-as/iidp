@@ -93,6 +93,11 @@ type Environment struct {
 type DatabaseAccess struct {
 	ReadWrite string `json:"readWrite"`
 	ReadOnly  string `json:"readOnly"`
+	// ReadWriteSetUp and ReadOnlySetUp are false when the level is not
+	// none but its role's password has not been written yet, so nobody
+	// gets in at that level; true otherwise.
+	ReadWriteSetUp bool `json:"readWriteSetUp"`
+	ReadOnlySetUp  bool `json:"readOnlySetUp"`
 }
 
 // The annotations the application chart sets on an Environment's Cluster
@@ -102,14 +107,27 @@ const (
 	DatabaseAccessReadOnlyAnnotation  = "iidp.itema.no/db-access-read-only"
 )
 
-// databaseAccessOf is the database access the chart set on an
-// Environment's Cluster, or nil when it has none or no Cluster.
-func databaseAccessOf(clusters []PostgresCluster) *DatabaseAccess {
+// databaseAccessOf is the database access the chart set on application's
+// Cluster, or nil when it has none or no Cluster. A level is set up when
+// it is none or its role, <application>_write or <application>_read, is
+// present among the Cluster's managed roles.
+func databaseAccessOf(application string, clusters []PostgresCluster) *DatabaseAccess {
 	for _, c := range clusters {
 		readWrite, rw := c.Metadata.Annotations[DatabaseAccessReadWriteAnnotation]
 		readOnly, ro := c.Metadata.Annotations[DatabaseAccessReadOnlyAnnotation]
-		if rw && ro {
-			return &DatabaseAccess{ReadWrite: readWrite, ReadOnly: readOnly}
+		if !rw || !ro {
+			continue
+		}
+		present := map[string]bool{}
+		for _, role := range c.Spec.Managed.Roles {
+			// CloudNativePG's default for ensure is present.
+			present[role.Name] = role.Ensure == "" || role.Ensure == "present"
+		}
+		return &DatabaseAccess{
+			ReadWrite:      readWrite,
+			ReadOnly:       readOnly,
+			ReadWriteSetUp: readWrite == "none" || present[application+"_write"],
+			ReadOnlySetUp:  readOnly == "none" || present[application+"_read"],
 		}
 	}
 	return nil
@@ -244,7 +262,7 @@ func environmentOf(application string, o Objects, now time.Time) (Environment, [
 		ArgoCD:         argoCDOf(o.ArgoCD),
 		Tasks:          []Task{},
 		Addresses:      addressesOf(o.ArgoCD.Status.Summary.ExternalURLs),
-		DatabaseAccess: databaseAccessOf(o.PostgresClusters),
+		DatabaseAccess: databaseAccessOf(application, o.PostgresClusters),
 	}
 	if d, ok := workload(o.Deployments); ok {
 		if len(d.Spec.Template.Spec.Containers) > 0 {

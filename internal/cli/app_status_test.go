@@ -88,7 +88,7 @@ func shopStatus() platformstate.Status {
 				Image:          &platformstate.Image{Repository: "ghcr.io/itema-as/shop", Tag: "1.0.1", DeployedAt: tp("2026-09-21T10:00:00Z")},
 				Pods:           platformstate.Pods{Ready: 1, Total: 1, Restarts: 1},
 				Migration:      &platformstate.Run{Result: "succeeded", StartedAt: tp("2026-09-21T10:01:00Z"), FinishedAt: tp("2026-09-21T10:02:00Z")},
-				DatabaseAccess: &platformstate.DatabaseAccess{ReadWrite: "none", ReadOnly: "maintain"},
+				DatabaseAccess: &platformstate.DatabaseAccess{ReadWrite: "none", ReadOnly: "maintain", ReadWriteSetUp: true, ReadOnlySetUp: true},
 				Tasks: []platformstate.Task{
 					{Name: "cleanup", Schedule: "0 3 * * *", LastRun: &platformstate.Run{Result: "failed", FinishedAt: tp("2026-09-22T01:00:30Z")}},
 					{Name: "report", Schedule: "*/5 * * * *"},
@@ -104,7 +104,7 @@ func shopStatus() platformstate.Status {
 				ArgoCD:         &platformstate.ArgoCD{Application: "shop-staging", Sync: "OutOfSync", Health: "Degraded", Operation: &platformstate.Operation{Phase: "Failed", Message: "one or more objects failed to apply", FinishedAt: tp("2026-09-23T10:00:00Z")}},
 				Image:          &platformstate.Image{Repository: "ghcr.io/itema-as/shop", Tag: "sha-1"},
 				Pods:           platformstate.Pods{Ready: 0, Total: 1, Restarts: 7},
-				DatabaseAccess: &platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none"},
+				DatabaseAccess: &platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none", ReadOnlySetUp: true},
 				Tasks:          []platformstate.Task{},
 				Addresses:      []string{"https://shop-staging.app.example.test"},
 				Condition:      &platformstate.Condition{State: "Degraded", Reason: "shop-staging-a is in CrashLoopBackOff"},
@@ -116,7 +116,7 @@ func shopStatus() platformstate.Status {
 			{Name: "pr-2", Namespace: "shop-pr-2", ArgoCD: &platformstate.ArgoCD{Application: "shop-pr-2", Sync: "OutOfSync", Health: "Missing",
 				Operation: &platformstate.Operation{Phase: "Running", StartedAt: tp("2026-09-29T09:40:00Z")}},
 				Migration:      &platformstate.Run{Result: "pending", StartedAt: tp("2026-09-29T09:41:00Z")},
-				DatabaseAccess: &platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none"},
+				DatabaseAccess: &platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none", ReadOnlySetUp: true},
 				Tasks:          []platformstate.Task{{Name: "heartbeat", Schedule: "*/10 * * * *", LastRun: &platformstate.Run{Result: "pending", StartedAt: tp("2026-09-29T10:00:00Z")}}},
 				Addresses:      []string{},
 				Condition:      &platformstate.Condition{State: "Healthy"},
@@ -173,7 +173,7 @@ staging
   Status:    OutOfSync, Degraded, last sync Failed 2026-09-23 10:00 UTC: one or more objects failed to apply
   Image:     ghcr.io/itema-as/shop:sha-1
   Pods:      0/1 ready, 7 restarts
-  Database:  read-write push · read-only none
+  Database:  read-write push (not set up: run iidp app db access shop --env staging) · read-only none
   Addresses: https://shop-staging.app.example.test
 
 pr-2
@@ -182,7 +182,7 @@ pr-2
   Status:    OutOfSync, Missing, last sync Running, started 2026-09-29 09:40 UTC
   Image:     none yet: nothing has been deployed
   Migration: last run pending since 2026-09-29 09:41 UTC
-  Database:  read-write push · read-only none
+  Database:  read-write push (not set up: run iidp app db access shop --env staging) · read-only none
   Tasks:     heartbeat (*/10 * * * *): last run pending since 2026-09-29 10:00 UTC
 
 pr-7
@@ -219,7 +219,7 @@ func TestAppStatusJSONIsTheGatesAnswer(t *testing.T) {
 	// The keys, spelled as README.md spells them.
 	for _, key := range []string{`"application": "shop"`, `"repository"`, `"environments"`, `"argocd"`, `"sync": "Synced"`, `"health"`, `"operation"`, `"image"`, `"deployedAt": "2026-09-21T10:00:00Z"`, `"pods"`, `"ready"`, `"restarts"`, `"migration"`, `"tasks"`, `"lastRun"`, `"addresses"`, `"links"`, `"grafana"`,
 		`"condition": {`, `"state": "Degraded"`, `"reason": "shop-staging-a is in CrashLoopBackOff"`, `"activity": {`, `"stuck": true`,
-		`"databaseAccess": {`, `"readWrite": "none"`, `"readOnly": "maintain"`, `"deploy": {`, `"hop": "RollingOut"`, `"promote": true`, `"tag": "sha-2"`, `"activity": null`} {
+		`"databaseAccess": {`, `"readWrite": "none"`, `"readOnly": "maintain"`, `"readWriteSetUp": true`, `"readOnlySetUp": true`, `"deploy": {`, `"hop": "RollingOut"`, `"promote": true`, `"tag": "sha-2"`, `"activity": null`} {
 		if !strings.Contains(stdout, key) {
 			t.Errorf("--json lacks %s", key)
 		}

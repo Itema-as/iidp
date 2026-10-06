@@ -16,7 +16,6 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/platformstate"
-	"github.com/Itema-as/iidp/internal/render"
 )
 
 type statusOptions struct {
@@ -194,7 +193,7 @@ func printStatus(out io.Writer, status platformstate.Status) {
 			line("Migration", "last run "+runText(*env.Migration))
 		}
 		if a := env.DatabaseAccess; a != nil {
-			line("Database", databaseAccessText(render.DatabaseAccess{ReadWrite: a.ReadWrite, ReadOnly: a.ReadOnly}))
+			line("Database", statusAccessText(status.Application, env.Name, *a))
 		}
 		label := "Tasks"
 		for _, task := range env.Tasks {
@@ -217,6 +216,23 @@ func printStatus(out io.Writer, status platformstate.Status) {
 			line("Logs", env.Links.Grafana)
 		}
 	}
+}
+
+// statusAccessText is an Environment's database access in words, with how
+// to set up a level whose password has not been written. A Preview
+// Environment's levels are staging's, so it is staging that is set up.
+func statusAccessText(application, environment string, a platformstate.DatabaseAccess) string {
+	if environment != "prod" {
+		environment = "staging"
+	}
+	level := func(words, level string, setUp bool) string {
+		text := words + " " + level
+		if !setUp {
+			text += " (not set up: run iidp app db access " + application + " --env " + environment + ")"
+		}
+		return text
+	}
+	return level("read-write", a.ReadWrite, a.ReadWriteSetUp) + " · " + level("read-only", a.ReadOnly, a.ReadOnlySetUp)
 }
 
 // hopText is a Deploy's hop in words.

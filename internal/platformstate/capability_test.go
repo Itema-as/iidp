@@ -519,17 +519,31 @@ func TestDatabaseAccessComesFromTheClustersAnnotations(t *testing.T) {
 		"iidp.itema.no/db-access-read-write": "push",
 		"iidp.itema.no/db-access-read-only":  "none",
 	}
+	// shop_write is open; read-only is none, so its role is absent and
+	// there is nothing to set up.
+	cluster["spec"] = obj{"managed": obj{"roles": []any{
+		obj{"name": "shop_write", "ensure": "present", "passwordSecret": obj{"name": "shop-db-write"}},
+		obj{"name": "shop_read", "ensure": "absent"},
+	}}}
 	f.clusters = []obj{cluster}
 	got := f.state(t)
-	if got.DatabaseAccess == nil || *got.DatabaseAccess != (platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none"}) {
-		t.Errorf("DatabaseAccess = %+v, want read-write push and read-only none", got.DatabaseAccess)
+	if want := (platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none", ReadWriteSetUp: true, ReadOnlySetUp: true}); got.DatabaseAccess == nil || *got.DatabaseAccess != want {
+		t.Errorf("DatabaseAccess = %+v, want %+v", got.DatabaseAccess, want)
 	}
 	data, err := json.Marshal(got.Environment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"databaseAccess":{"readWrite":"push","readOnly":"none"}`) {
+	if !strings.Contains(string(data), `"databaseAccess":{"readWrite":"push","readOnly":"none","readWriteSetUp":true,"readOnlySetUp":true}`) {
 		t.Errorf("JSON = %s, want databaseAccess", data)
+	}
+
+	// A level whose role is not open, because its password was never
+	// written, is not set up.
+	cluster["metadata"].(obj)["annotations"].(obj)["iidp.itema.no/db-access-read-only"] = "pull"
+	cluster["spec"] = obj{"managed": obj{"roles": []any{obj{"name": "shop_write", "ensure": "absent"}, obj{"name": "shop_read", "ensure": "absent"}}}}
+	if want := (platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "pull"}); *f.state(t).DatabaseAccess != want {
+		t.Errorf("DatabaseAccess = %+v, want %+v: neither level set up", *f.state(t).DatabaseAccess, want)
 	}
 
 	// A chart from before database access sets no annotations, and an

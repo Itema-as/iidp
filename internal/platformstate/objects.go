@@ -213,7 +213,17 @@ type CronJob struct {
 // Environment's Postgres.
 type PostgresCluster struct {
 	Metadata ObjectMeta `json:"metadata"`
-	Status   struct {
+	Spec     struct {
+		// Managed.Roles are the database access roles the chart renders,
+		// each present or absent.
+		Managed struct {
+			Roles []struct {
+				Name   string `json:"name"`
+				Ensure string `json:"ensure"`
+			} `json:"roles"`
+		} `json:"managed"`
+	} `json:"spec"`
+	Status struct {
 		// Phase is CNPG's summary, such as "Cluster in healthy state" or
 		// "Setting up primary".
 		Phase string `json:"phase"`
