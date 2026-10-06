@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -53,14 +54,44 @@ func selfSignedCertificate(host string) (certPEM, keyPEM, der []byte, err error)
 // CheckCertificateServedForCallback proves Traefik presents a custom
 // domain's certificate, whose Secret is in the Environment's namespace, on
 // https://host/oauth2/callback, which an Ingress in the oauth2-proxy
-// namespace routes and which names no secret. kind can issue no certificate
-// for host, so it writes a self-signed one into namespace/secret, the
-// Secret the chart's HTTP-01 Ingress names for host, as cert-manager would.
-// The connection sends host as SNI, as a browser does.
-func (c *Cluster) CheckCertificateServedForCallback(ctx context.Context, namespace, secret, host string, timeout time.Duration) error {
+// namespace routes and which names no secret. The connection sends host as
+// SNI, as a browser does.
+//
+// kind can issue no certificate, so it writes a self-signed one into every
+// Secret the Environment's HTTP-01 Ingress names, as cert-manager would.
+// Every one is needed: Traefik stops loading an Ingress's certificates at
+// the first Secret that does not exist.
+func (c *Cluster) CheckCertificateServedForCallback(ctx context.Context, namespace, ingress, host string, timeout time.Duration) error {
+	out, err := c.Kubectl(ctx, "-n", namespace, "get", "ingress", ingress, "-o", `jsonpath={range .spec.tls[*]}{.secretName} {.hosts[0]}{"\n"}{end}`)
+	if err != nil {
+		return fmt.Errorf("TLS entries of Ingress %s/%s: %w\n%s", namespace, ingress, err, out)
+	}
+	var want []byte
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		secret, tlsHost, ok := strings.Cut(line, " ")
+		if !ok {
+			return fmt.Errorf("Ingress %s/%s has a TLS entry without a secret or a host: %q", namespace, ingress, line)
+		}
+		der, err := c.writeSelfSignedSecret(ctx, namespace, secret, tlsHost)
+		if err != nil {
+			return err
+		}
+		if tlsHost == host {
+			want = der
+		}
+	}
+	if want == nil {
+		return fmt.Errorf("Ingress %s/%s names no TLS Secret for %s", namespace, ingress, host)
+	}
+	return c.checkServedCertificate(ctx, host, "/oauth2/callback", want, timeout)
+}
+
+// writeSelfSignedSecret writes a self-signed certificate for host into the
+// TLS Secret namespace/secret, returning its DER bytes.
+func (c *Cluster) writeSelfSignedSecret(ctx context.Context, namespace, secret, host string) ([]byte, error) {
 	certPEM, keyPEM, der, err := selfSignedCertificate(host)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	manifest := fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -73,9 +104,9 @@ data:
   tls.key: %s
 `, secret, namespace, base64.StdEncoding.EncodeToString(certPEM), base64.StdEncoding.EncodeToString(keyPEM))
 	if err := c.Apply(ctx, manifest); err != nil {
-		return fmt.Errorf("writing the TLS Secret %s/%s: %w", namespace, secret, err)
+		return nil, fmt.Errorf("writing the TLS Secret %s/%s: %w", namespace, secret, err)
 	}
-	return c.checkServedCertificate(ctx, host, "/oauth2/callback", der, timeout)
+	return der, nil
 }
 
 // checkServedCertificate GETs path on host through Traefik's websecure
@@ -84,8 +115,14 @@ data:
 func (c *Cluster) checkServedCertificate(ctx context.Context, host, path string, want []byte, timeout time.Duration) error {
 	url := fmt.Sprintf("https://127.0.0.1:%d%s", c.HTTPSPort, path)
 	client := &http.Client{
-		Timeout:       10 * time.Second,
-		Transport:     &http.Transport{TLSClientConfig: &tls.Config{ServerName: host, InsecureSkipVerify: true}}, //nolint:gosec // the certificate is compared byte for byte below
+		Timeout: 10 * time.Second,
+		// A new connection for every poll: a reused one keeps the
+		// certificate of its first handshake, from before Traefik loaded
+		// the Secret.
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			TLSClientConfig:   &tls.Config{ServerName: host, InsecureSkipVerify: true}, //nolint:gosec // the certificate is compared byte for byte below
+		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	var lastErr error
@@ -105,7 +142,11 @@ func (c *Cluster) checkServedCertificate(ctx context.Context, host, path string,
 			if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 || !bytes.Equal(resp.TLS.PeerCertificates[0].Raw, want) {
 				// Traefik loads a new Secret on its next configuration
 				// reload; until then it presents its default certificate.
-				lastErr = fmt.Errorf("GET %s (SNI and Host: %s): presented a certificate other than %s's", url, host, host)
+				presented := "none"
+				if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+					presented = resp.TLS.PeerCertificates[0].Subject.String()
+				}
+				lastErr = fmt.Errorf("GET %s (SNI and Host: %s): presented a certificate other than %s's (%s)", url, host, host, presented)
 				return false, nil
 			}
 			ok, retry, message := loginCallbackAnswer(resp)

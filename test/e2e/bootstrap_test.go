@@ -581,7 +581,7 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 	// The callback's route is in oauth2-proxy's namespace and names no
 	// secret; Traefik must still present the host's own certificate, from
 	// the Environment's HTTP-01 Ingress.
-	if err := cluster.CheckCertificateServedForCallback(ctx, "shop-staging", "shop-staging-shop-staging-other-test-tls", shopStagingHostOnlyDomain, 2*time.Minute); err != nil {
+	if err := cluster.CheckCertificateServedForCallback(ctx, "shop-staging", "shop-staging-http01", shopStagingHostOnlyDomain, 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err := cluster.CheckACMEChallengeBypassesLogin(ctx, "shop-staging", shopStagingHostOnlyDomain, "shop-staging", 8080, 2*time.Minute); err != nil {

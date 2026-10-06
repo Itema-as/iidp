@@ -150,22 +150,34 @@ func TestCheckServedCertificate(t *testing.T) {
 	}
 	errorPage := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }
 	for _, tc := range []struct {
-		name    string
-		cert    *tls.Certificate
-		wantErr string
+		name string
+		// fromHandshake is the first handshake that presents the host's
+		// certificate; 0 means none does.
+		fromHandshake int
+		wantErr       string
 	}{
-		{"the host's certificate", &pair, ""},
-		{"the default certificate", nil, "presented a certificate other than"},
+		{"the host's certificate", 1, ""},
+		// Traefik loads the Secret after the first poll: a reused
+		// connection would keep the default certificate.
+		{"the host's certificate once loaded", 2, ""},
+		{"the default certificate", 0, "presented a certificate other than"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewUnstartedServer(http.HandlerFunc(errorPage))
-			if tc.cert != nil {
-				server.TLS = &tls.Config{Certificates: []tls.Certificate{*tc.cert}}
-			}
 			server.StartTLS()
+			defaultCert := server.TLS.Certificates[0]
+			handshakes := 0
+			server.TLS.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+				handshakes++
+				if tc.fromHandshake > 0 && handshakes >= tc.fromHandshake {
+					return &pair, nil
+				}
+				return &defaultCert, nil
+			}
+			server.TLS.Certificates = nil
 			defer server.Close()
 			cluster := &Cluster{HTTPSPort: serverPort(t, server.URL), Log: t.Logf}
-			err := cluster.checkServedCertificate(context.Background(), host, "/oauth2/callback", der, time.Second)
+			err := cluster.checkServedCertificate(context.Background(), host, "/oauth2/callback", der, 5*time.Second)
 			switch {
 			case tc.wantErr == "" && err != nil:
 				t.Fatalf("got %v, want no error", err)
