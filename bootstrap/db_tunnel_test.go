@@ -137,7 +137,7 @@ func TestDatabaseTunnelComponentRendersTheTunnel(t *testing.T) {
 	}
 }
 
-// list and get on CloudNativePG Clusters everywhere, and create on Events
+// get on CloudNativePG Clusters everywhere, and create on Events
 // in argocd only, bound to no one but the tunnel. The Secrets it reads are
 // granted Environment by Environment, by the application chart.
 func TestDatabaseTunnelHasExactlyItsRBAC(t *testing.T) {
@@ -183,7 +183,7 @@ func TestDatabaseTunnelHasExactlyItsRBAC(t *testing.T) {
 	}
 	sort.Strings(grants)
 	want := []string{
-		"ClusterRole/iidp-db-tunnel in every namespace: postgresql.cnpg.io/clusters get,list",
+		"ClusterRole/iidp-db-tunnel in every namespace: postgresql.cnpg.io/clusters get",
 		"Role/iidp-db-tunnel-events in argocd: events.k8s.io/events create",
 	}
 	if strings.Join(grants, "\n") != strings.Join(want, "\n") {
