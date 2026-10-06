@@ -47,6 +47,7 @@ import (
 	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/github"
 	"github.com/Itema-as/iidp/internal/githubapp"
+	"github.com/Itema-as/iidp/internal/kubeevent"
 	"github.com/Itema-as/iidp/internal/oidc"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
@@ -171,7 +172,7 @@ type Gate struct {
 	// skips the refresh: ArgoCD's poll still picks the commit up.
 	ArgoCD Patcher
 	// Events records Deploys as Kubernetes Events. Nil records nothing.
-	Events EventSink
+	Events kubeevent.Sink
 	// Log gets one line per call, and a warning when a refresh or an Event
 	// fails; nil discards.
 	Log *slog.Logger

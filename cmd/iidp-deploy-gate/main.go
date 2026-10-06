@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/Itema-as/iidp/internal/deploygate"
+	"github.com/Itema-as/iidp/internal/kubeevent"
 	"github.com/Itema-as/iidp/internal/oidc"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformstate"
@@ -103,7 +104,7 @@ func run(log *slog.Logger) error {
 	} else {
 		gate.Cluster = cluster
 		gate.ArgoCD = deploygate.KubePatcher{Kube: cluster}
-		gate.Events = &deploygate.KubeEvents{Kube: cluster}
+		gate.Events = &kubeevent.Kube{Kube: cluster}
 	}
 
 	server := &http.Server{
