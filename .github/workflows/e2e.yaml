@@ -1,8 +1,10 @@
 name: e2e
 
 # The kind end-to-end test (test/e2e). The paths filter does not apply to
-# tag pushes, so every release tag runs it. The Deploy gate's paths include
-# the packages it uses, since the harness builds it from source.
+# tag pushes, so every release tag runs it. The Deploy gate's and the
+# database tunnel's paths include the packages they use, since the harness
+# builds them from source, and the CLI's, since the test runs iidp app db
+# connect in-process.
 on:
   pull_request:
     paths:
@@ -19,6 +21,11 @@ on:
       - "internal/github/**"
       - "internal/githubapp/**"
       - "internal/platformstate/**"
+      - "cmd/iidp-db-tunnel/**"
+      - "internal/dbtunnel/**"
+      - "internal/repoaccess/**"
+      - "internal/kubeevent/**"
+      - "internal/cli/**"
       - ".github/workflows/e2e.yaml"
   push:
     branches: [main]
@@ -38,6 +45,11 @@ on:
       - "internal/github/**"
       - "internal/githubapp/**"
       - "internal/platformstate/**"
+      - "cmd/iidp-db-tunnel/**"
+      - "internal/dbtunnel/**"
+      - "internal/repoaccess/**"
+      - "internal/kubeevent/**"
+      - "internal/cli/**"
       - ".github/workflows/e2e.yaml"
 
 permissions:
@@ -64,6 +76,7 @@ jobs:
           helm lint --strict bootstrap/components/tls
           helm lint --strict bootstrap/components/deploy-gate --set bootstrapRevision=v0.0.0
           helm lint --strict bootstrap/components/argus --set bootstrapRevision=v0.0.0
+          helm lint --strict bootstrap/components/db-tunnel --set bootstrapRevision=v0.0.0
           helm lint --strict bootstrap/components/guardrails
       # The render tests, and the harness's reading of images from the
       # pinned charts, skip without helm (the Go job of ci.yaml has none);
