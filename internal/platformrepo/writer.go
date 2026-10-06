@@ -387,7 +387,7 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 				files = append(files, path.Join(sopsDir, "backups-credentials.enc.yaml"), path.Join(sopsDir, "kustomization.yaml"), path.Join(sopsDir, "ksops.yaml"))
 				for _, role := range render.AccessRoles {
 					if role.Level(render.DefaultDatabaseAccess(environment)) != render.AccessNone && cfg.AgePublicKey != "" {
-						files = append(files, path.Join(sopsDir, passwordSlug(role)+".enc.yaml"))
+						files = append(files, path.Join(sopsDir, role.PasswordSlug()+".enc.yaml"))
 					}
 				}
 			}

@@ -19,21 +19,12 @@ import (
 // the Postgres Capability.
 var ErrNoDatabase = errors.New("the Environment has no database")
 
-// passwordSlug is the key-slug part of a database access role's password
-// Secret name and file name, as SecretSlug is for a secret's KEY. Each is
-// a slug iidp secret set refuses (ValidateSecretKey), so neither can be
-// overwritten by a secret of the same name.
-func passwordSlug(role render.AccessRole) string {
-	if role == render.ReadOnlyRole {
-		return "db-read"
-	}
-	return "db-write"
-}
-
 // PasswordSecretName is the Secret holding role's password in an
-// Environment: <fullname>-db-write or <fullname>-db-read.
+// Environment: <fullname>-db-write or <fullname>-db-read. iidp secret set
+// refuses a KEY with the same slug (ValidateSecretKey), so a secret never
+// overwrites it.
 func PasswordSecretName(application, environment string, role render.AccessRole) string {
-	return chartFullname(application, environment) + "-" + passwordSlug(role)
+	return chartFullname(application, environment) + "-" + role.PasswordSlug()
 }
 
 // DatabaseAccessResult is what SetDatabaseAccess wrote.
@@ -165,7 +156,7 @@ func (w *Writer) writeDatabaseAccess(ctx context.Context, dir string, cfg Config
 
 	var files []string
 	for _, role := range render.AccessRoles {
-		fileRelPath := path.Join(sopsDir, passwordSlug(role)+".enc.yaml")
+		fileRelPath := path.Join(sopsDir, role.PasswordSlug()+".enc.yaml")
 		fileAbs := filepath.Join(dir, filepath.FromSlash(fileRelPath))
 		_, statErr := os.Stat(fileAbs)
 		present := statErr == nil

@@ -102,22 +102,29 @@ const (
 // AccessRoles are both roles, read-write first.
 var AccessRoles = []AccessRole{ReadWriteRole, ReadOnlyRole}
 
-// String is the role's level in words: read-write or read-only.
-func (r AccessRole) String() string {
-	if r == ReadOnlyRole {
-		return "read-only"
-	}
-	return "read-write"
+// accessRoles describes each AccessRole, indexed by it.
+var accessRoles = [...]struct {
+	// words is the role's level in words; suffix makes its Postgres name;
+	// key is the key under postgres naming its password Secret; slug
+	// names that Secret and its file in the Platform repository.
+	words, suffix, key, slug string
+}{
+	ReadWriteRole: {"read-write", "_write", "readWritePasswordSecret", "db-write"},
+	ReadOnlyRole:  {"read-only", "_read", "readOnlyPasswordSecret", "db-read"},
 }
+
+// String is the role's level in words: read-write or read-only.
+func (r AccessRole) String() string { return accessRoles[r].words }
 
 // PostgresRole is the role's name in the Application's database, the
 // same in every Environment.
 func (r AccessRole) PostgresRole(application string) string {
-	if r == ReadOnlyRole {
-		return application + "_read"
-	}
-	return application + "_write"
+	return application + accessRoles[r].suffix
 }
+
+// PasswordSlug names the role's password Secret and its file in an
+// Environment's sops/ directory, the way a secret's KEY slug does.
+func (r AccessRole) PasswordSlug() string { return accessRoles[r].slug }
 
 // Level is the role's level in access.
 func (r AccessRole) Level(access DatabaseAccess) string {
@@ -127,14 +134,7 @@ func (r AccessRole) Level(access DatabaseAccess) string {
 	return access.ReadWrite
 }
 
-// passwordSecretKey is the key under postgres that names the role's
-// password Secret.
-func (r AccessRole) passwordSecretKey() string {
-	if r == ReadOnlyRole {
-		return "readOnlyPasswordSecret"
-	}
-	return "readWritePasswordSecret"
-}
+func (r AccessRole) passwordSecretKey() string { return accessRoles[r].key }
 
 // Database is the Postgres Capability as an Environment's values.yaml
 // holds it.

@@ -57,8 +57,8 @@ func ValidateSecretKey(key string) error {
 		return fmt.Errorf("%w: %q must be letters, digits and underscores, and not start with a digit", ErrInvalidSecretKey, key)
 	}
 	for _, role := range render.AccessRoles {
-		if SecretSlug(key) == passwordSlug(role) {
-			return fmt.Errorf("%w: %q would be stored as %s.enc.yaml, where iidp app db access keeps the %s database password; choose another KEY", ErrInvalidSecretKey, key, passwordSlug(role), role)
+		if SecretSlug(key) == role.PasswordSlug() {
+			return fmt.Errorf("%w: %q would be stored as %s.enc.yaml, where iidp app db access keeps the %s database password; choose another KEY", ErrInvalidSecretKey, key, role.PasswordSlug(), role)
 		}
 	}
 	return nil
