@@ -14,6 +14,11 @@ metadata:
     # rendering it; the Application shows OutOfSync until someone deletes it
     # deliberately.
     {{- include "application.postgres.keepOnPrune" . | nindent 4 }}
+    # The levels the database tunnel lets developers in at, set even when
+    # both are none.
+    {{- $access := include "application.postgres.access" . | fromJson }}
+    iidp.itema.no/db-access-read-write: {{ $access.readWrite | quote }}
+    iidp.itema.no/db-access-read-only: {{ $access.readOnly | quote }}
 spec:
   # One instance: the Platform is a single node, and durability comes from
   # the continuous backup, not from replicas.
@@ -29,6 +34,30 @@ spec:
     initdb:
       database: {{ include "application.name" . }}
       owner: {{ include "application.name" . }}
+  {{- with (include "application.postgres.accessRoles" . | fromJson).roles }}
+  # The roles database access opens; the owner and postgres are never
+  # handed out. They read and write data but change no schema, which stays
+  # with the migrations, and hold at most three connections each, so
+  # developers never take much of the small instance.
+  managed:
+    roles:
+      {{- range . }}
+      - name: {{ .name }}
+        ensure: present
+        login: true
+        inherit: true
+        superuser: false
+        createdb: false
+        createrole: false
+        replication: false
+        bypassrls: false
+        connectionLimit: 3
+        inRoles:
+          {{- toYaml .inRoles | nindent 10 }}
+        passwordSecret:
+          name: {{ .secret }}
+      {{- end }}
+  {{- end }}
   storage:
     size: 5Gi
   # A fixed size whatever the Application's size. CPU is requested at a

@@ -30,6 +30,11 @@ platform:
   # secret key (key ACCESS_SECRET_KEY) the backups are written with. It must
   # exist in the namespace the Environment is installed into.
   backupsCredentialsSecret: backups-credentials
+  # The ServiceAccount the database tunnel runs as. Each Environment whose
+  # database is open grants it get on the access roles' password Secrets.
+  databaseTunnel:
+    serviceAccount: iidp-db-tunnel
+    namespace: iidp-db-tunnel
 
 # web-service (a container listening on port) or static-site (an nginx
 # image listening on 8080). Either must run as a non-root user with a
@@ -87,6 +92,22 @@ postgres:
   # Environments set it. platform.backupsBucket and objectStorageEndpoint are
   # then not needed.
   backups: true
+  # Who among the Application's developers may reach the database, by their
+  # permission on the Application repository: none, pull, push, maintain or
+  # admin, each including the ones before it. readWrite opens the role
+  # <name>_write, readOnly the role <name>_read. An unset level defaults to
+  # push for readWrite on staging (and so on a Preview Environment), and to
+  # none otherwise. readOnly must not need more than readWrite unless one of
+  # them is none.
+  #   access:
+  #     readWrite: push
+  #     readOnly: none
+  access: {}
+  # The Secrets holding <name>_write's and <name>_read's passwords,
+  # kubernetes.io/basic-auth, which the CLI writes. A role exists only when
+  # its level is not none and its Secret is named here.
+  readWritePasswordSecret: ""
+  readOnlyPasswordSecret: ""
 
 # Scheduled tasks, for a Web service only: each is a CronJob that runs
 # command with sh -c on schedule (five cron fields, Europe/Oslo time) from

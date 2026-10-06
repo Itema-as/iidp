@@ -67,6 +67,7 @@ so the refusal happens whichever object Helm renders first. No output.
 {{- end -}}
 {{- $_ = include "application.tasks.check" . -}}
 {{- $_ = include "application.login.groups" . -}}
+{{- $_ = include "application.postgres.access" . -}}
 {{- if and .Values.postgres.enabled (hasKey .Values.postgres "finalBackupTimeout") (not (regexMatch "^[1-9][0-9]*$" (.Values.postgres.finalBackupTimeout | toString))) -}}
 {{- fail (printf "postgres.finalBackupTimeout must be a positive whole number of seconds, got %v" .Values.postgres.finalBackupTimeout) -}}
 {{- end -}}
@@ -157,6 +158,81 @@ the whole DATABASE_URL.
 */}}
 {{- define "application.postgres.appSecret" -}}
 {{- printf "%s-app" (include "application.postgres.cluster" .) -}}
+{{- end -}}
+
+{{/*
+The database access levels, as JSON {"readWrite": ..., "readOnly": ...}.
+Each is the lowest permission on the Application repository that qualifies
+for it (admin, maintain, push, pull), or none. An unset level takes the
+Environment's default: push for read-write on staging, and so on a Preview
+Environment, which renders from staging's values file; none otherwise.
+
+Refuses an unknown level, a level other than none without Postgres, and a
+read-only level needing more permission than the read-write one when
+neither is none. internal/render's ResolveDatabaseAccess refuses the same,
+with the same messages, for the CLI.
+*/}}
+{{- define "application.postgres.access" -}}
+{{- $levels := list "none" "pull" "push" "maintain" "admin" -}}
+{{- $explicit := .Values.postgres.access | default dict -}}
+{{- if not (kindIs "map" $explicit) -}}
+{{- fail (printf "postgres.access must be a mapping with readWrite and readOnly, got %v" $explicit) -}}
+{{- end -}}
+{{- range $key := list "readWrite" "readOnly" -}}
+{{- if and (hasKey $explicit $key) (not (has (get $explicit $key | toString) $levels)) -}}
+{{- fail (printf "postgres.access.%s must be none, pull, push, maintain or admin, got %q" $key (get $explicit $key | toString)) -}}
+{{- end -}}
+{{- end -}}
+{{- range $key := list "readWrite" "readOnly" -}}
+{{- if and (hasKey $explicit $key) (ne (get $explicit $key | toString) "none") (not $.Values.postgres.enabled) -}}
+{{- fail (printf "postgres.access.%s: %s needs postgres.enabled: true; there is no database to give access to" $key (get $explicit $key | toString)) -}}
+{{- end -}}
+{{- end -}}
+{{- $access := dict "readWrite" "push" "readOnly" "none" -}}
+{{- if eq (include "application.environment" .) "prod" -}}
+{{- $_ := set $access "readWrite" "none" -}}
+{{- end -}}
+{{- range $key := list "readWrite" "readOnly" -}}
+{{- if hasKey $explicit $key -}}
+{{- $_ := set $access $key (get $explicit $key | toString) -}}
+{{- end -}}
+{{- end -}}
+{{- $rank := dict -}}
+{{- range $i, $level := $levels -}}
+{{- $_ := set $rank $level $i -}}
+{{- end -}}
+{{- if and (ne $access.readWrite "none") (ne $access.readOnly "none") (gt (get $rank $access.readOnly) (get $rank $access.readWrite)) -}}
+{{- fail (printf "postgres.access.readOnly: %s needs more permission than postgres.access.readWrite: %s; whoever may write may also read, so readOnly must need no more permission than readWrite" $access.readOnly $access.readWrite) -}}
+{{- end -}}
+{{- $access | toJson -}}
+{{- end -}}
+
+{{/*
+The database access roles that render, as JSON {"roles": [...]}, each with
+its Postgres name, its password Secret and the predefined roles it is a
+member of. A role renders only when its level is not none and the values
+file names its password Secret, which the CLI writes: an Environment
+without one is closed, whatever its level says.
+*/}}
+{{- define "application.postgres.accessRoles" -}}
+{{- $access := include "application.postgres.access" . | fromJson -}}
+{{- $name := include "application.name" . -}}
+{{- $roles := list -}}
+{{- if and (ne $access.readWrite "none") .Values.postgres.readWritePasswordSecret -}}
+{{- $roles = append $roles (dict "name" (printf "%s_write" $name) "secret" (.Values.postgres.readWritePasswordSecret | toString) "inRoles" (list "pg_read_all_data" "pg_write_all_data")) -}}
+{{- end -}}
+{{- if and (ne $access.readOnly "none") .Values.postgres.readOnlyPasswordSecret -}}
+{{- $roles = append $roles (dict "name" (printf "%s_read" $name) "secret" (.Values.postgres.readOnlyPasswordSecret | toString) "inRoles" (list "pg_read_all_data")) -}}
+{{- end -}}
+{{- dict "roles" $roles | toJson -}}
+{{- end -}}
+
+{{/*
+The name of the Role and RoleBinding that let the database tunnel read the
+access roles' password Secrets.
+*/}}
+{{- define "application.postgres.tunnelRole" -}}
+{{- printf "%s-db-tunnel" (include "application.fullname" .) -}}
 {{- end -}}
 
 {{- define "application.postgres.databaseURLEnv" -}}
