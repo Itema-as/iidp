@@ -30,9 +30,9 @@ platform:
   # secret key (key ACCESS_SECRET_KEY) the backups are written with. It must
   # exist in the namespace the Environment is installed into.
   backupsCredentialsSecret: backups-credentials
-  # The ServiceAccount the database tunnel runs as, once the Platform has
-  # one. Each Environment whose database is open grants it get on the
-  # access roles' password Secrets.
+  # The ServiceAccount the database tunnel runs as (the bootstrap's
+  # db-tunnel component). Each Environment whose database is open grants it
+  # get on the access roles' password Secrets.
   databaseTunnel:
     serviceAccount: iidp-db-tunnel
     namespace: iidp-db-tunnel
