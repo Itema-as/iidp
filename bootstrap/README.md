@@ -97,7 +97,7 @@ To add or change it by hand: write the Secret in the clear at `bootstrap/templat
 | `deployGate.githubAPI`, `deployGate.platformRepository`, `deployGate.appSecret` | bootstrap | The GitHub API, the Platform repository the gate writes, and the Secret with the App credential (default `platform-repo-github-app`); only a test cluster changes them |
 | `argus.enabled` | bootstrap | Whether the Platform runs [Argus](#argus) (default `true`); `false` renders none of it |
 | `argus.image.*` | bootstrap | Argus's image; `tag` empty (the default) means the version of the bootstrap release `platform-components.yaml` pins |
-| `agePublicKey` | CLI | What `iidp secret set` encrypts with; the private key exists only in the cluster |
+| `agePublicKey` | CLI | What `iidp secret set` and the database access passwords are encrypted with; the private key exists only in the cluster |
 | `backupsBucket` | CLI | The Object Storage bucket for CloudNativePG backups. Required for `--postgres` |
 | `objectStorageEndpoint` | CLI | The S3 endpoint of `backupsBucket`'s location, for example `https://hel1.your-objectstorage.com`. Required for `--postgres` |
 | `acme.email` | bootstrap | Optional; where Let's Encrypt sends expiry warnings |

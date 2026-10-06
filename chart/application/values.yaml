@@ -106,7 +106,8 @@ postgres:
   access: {}
   # The Secrets holding <name>_write's and <name>_read's passwords,
   # kubernetes.io/basic-auth, which the CLI writes. A role exists only when
-  # its level is not none and its Secret is named here.
+  # its level is not none and its Secret is named here; otherwise it is
+  # dropped from the database.
   readWritePasswordSecret: ""
   readOnlyPasswordSecret: ""
 
