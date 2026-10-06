@@ -130,7 +130,7 @@ func TestPlatformComponents(t *testing.T) {
 }
 
 // Only cmd/iidp-argus links client-go, and only its dynamic client: the
-// CLI, the Deploy gate and the database tunnel keep their standard-library
+// CLI, the Deploy gate and the Database tunnel keep their standard-library
 // Kubernetes client.
 func TestOnlyArgusLinksClientGo(t *testing.T) {
 	gobin, err := exec.LookPath("go")
@@ -149,7 +149,7 @@ func TestOnlyArgusLinksClientGo(t *testing.T) {
 	}
 	sort.Strings(k8s)
 	if len(k8s) > 0 {
-		t.Errorf("the CLI, the Deploy gate, the database tunnel or internal/argus link %v; only cmd/iidp-argus may", k8s)
+		t.Errorf("the CLI, the Deploy gate, the Database tunnel or internal/argus link %v; only cmd/iidp-argus may", k8s)
 	}
 
 	// And Argus itself none of the typed clientsets or API types.

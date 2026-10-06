@@ -81,7 +81,7 @@ argus:
     tag: ""
     pullPolicy: IfNotPresent
 
-# The database tunnel, served at https://db.<baseDomain>, through which
+# The Database tunnel, served at https://db.<baseDomain>, through which
 # developers reach an Environment's database with iidp app db connect. It
 # reuses deployGate's githubOrgId, githubAPI and platformRepository.
 dbTunnel:

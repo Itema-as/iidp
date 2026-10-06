@@ -403,7 +403,7 @@ func TestAppCreateRefusesDomainEqualToAPlatformAddress(t *testing.T) {
 }
 
 // deploy.<baseDomain> is the Deploy gate, auth.<baseDomain> the Itema
-// login and db.<baseDomain> the database tunnel. An Application serving the
+// login and db.<baseDomain> the Database tunnel. An Application serving the
 // gate's address could receive the OIDC tokens other Applications'
 // workflows mint for it, and one serving the tunnel's the developers' GitHub
 // tokens.

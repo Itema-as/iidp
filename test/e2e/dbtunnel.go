@@ -17,7 +17,7 @@ import (
 	"github.com/Itema-as/iidp/internal/dbtunnel/api"
 )
 
-// The bootstrap installs the database tunnel; the harness builds its image
+// The bootstrap installs the Database tunnel; the harness builds its image
 // from this working tree, as it does the Deploy gate's. iidp app db
 // connect runs in-process, with the fake GitHub's developer token, and
 // reaches the tunnel through Traefik's host port.
@@ -34,7 +34,7 @@ const (
 // BuildDatabaseTunnelImage builds and loads the tunnel's image. It must
 // run before the root Application, so the tunnel's first pod finds it.
 func (c *Cluster) BuildDatabaseTunnelImage(ctx context.Context) error {
-	c.Log("building the database tunnel image with %s", c.Provider)
+	c.Log("building the Database tunnel image with %s", c.Provider)
 	return c.BuildLocalImage(ctx, dbTunnelImage, "./cmd/iidp-db-tunnel", "iidp-db-tunnel", filepath.Join("cmd", "iidp-db-tunnel", "Dockerfile"))
 }
 
@@ -66,7 +66,7 @@ func (c *Cluster) WaitForDatabaseTunnel(ctx context.Context, timeout time.Durati
 			return resp.StatusCode == http.StatusOK, nil
 		},
 		func() error {
-			return fmt.Errorf("the database tunnel at %s did not answer /healthz within %s: %s", DatabaseTunnelHost, timeout, last)
+			return fmt.Errorf("the Database tunnel at %s did not answer /healthz within %s: %s", DatabaseTunnelHost, timeout, last)
 		})
 }
 

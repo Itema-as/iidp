@@ -71,7 +71,7 @@ const (
 
 // Kube lists and gets objects from the Kubernetes API with the standard
 // library, authenticated as the pod's service account. It does only what
-// Lister and the database tunnel's reads need, which keeps client-go out of
+// Lister and the Database tunnel's reads need, which keeps client-go out of
 // the Deploy gate and the tunnel.
 type Kube struct {
 	// BaseURL is the API server, https://<host>:<port>.

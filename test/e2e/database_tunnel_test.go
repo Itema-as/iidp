@@ -15,7 +15,7 @@ import (
 )
 
 // testDatabaseTunnel proves iidp app db connect reaches shop's databases
-// through the database tunnel, Traefik and a WebSocket, logged in as the
+// through the Database tunnel, Traefik and a WebSocket, logged in as the
 // role the developer's permission gives them (push, in the fake GitHub):
 //   - on staging, read-write for push, it connects as shop_write and
 //     inserts a row, and the session outlives Traefik's 60-second read
@@ -32,7 +32,7 @@ import (
 func testDatabaseTunnel(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 	if _, err := exec.LookPath("psql"); err != nil {
-		t.Fatal("the database tunnel's test needs psql on PATH, as a developer's machine has it")
+		t.Fatal("the Database tunnel's test needs psql on PATH, as a developer's machine has it")
 	}
 	if err := cluster.WaitForDatabaseTunnel(ctx, 3*time.Minute); err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func testDatabaseTunnel(ctx context.Context, t *testing.T, cluster *Cluster) {
 			t.Errorf("an Event names %q, want the developer's login %s: %+v", e.Metadata.Annotations["iidp.itema.no/login"], DeveloperLogin, e)
 		}
 	}
-	t.Logf("the database tunnel's Events: %v", seen)
+	t.Logf("the Database tunnel's Events: %v", seen)
 	for _, want := range []string{
 		"DatabaseSessionStarted shop-staging shop_write",
 		"DatabaseSessionEnded shop-staging shop_write",
@@ -229,7 +229,7 @@ type tunnelEvent struct {
 	Note string `json:"note"`
 }
 
-// tunnelEvents waits for at least n of the database tunnel's Events in
+// tunnelEvents waits for at least n of the Database tunnel's Events in
 // argocd and returns them all.
 func tunnelEvents(ctx context.Context, t *testing.T, cluster *Cluster, n int) []tunnelEvent {
 	t.Helper()
@@ -253,7 +253,7 @@ func tunnelEvents(ctx context.Context, t *testing.T, cluster *Cluster, n int) []
 		}
 		return len(events) >= n, nil
 	}, func() error {
-		return fmt.Errorf("the database tunnel recorded %d Events in argocd, want at least %d: %+v; its logs say why (kubectl -n iidp-db-tunnel logs deploy/iidp-db-tunnel)", len(events), n, events)
+		return fmt.Errorf("the Database tunnel recorded %d Events in argocd, want at least %d: %+v; its logs say why (kubectl -n iidp-db-tunnel logs deploy/iidp-db-tunnel)", len(events), n, events)
 	})
 	if err != nil {
 		t.Fatal(err)

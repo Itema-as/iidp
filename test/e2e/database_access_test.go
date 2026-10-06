@@ -24,7 +24,7 @@ import (
 // shop_write the developer writes a row, as shop_read reads it, and
 // neither changes the schema. Closing read-only then drops shop_read. It logs in over TCP through the database's
 // -rw Service with each role's own password, from its Secret, as the
-// database tunnel will.
+// Database tunnel will.
 func testDatabaseAccess(ctx context.Context, t *testing.T, cluster *Cluster) {
 	t.Helper()
 	const namespace, db = "shop-prod", "shop-db"
@@ -82,7 +82,7 @@ func testDatabaseAccess(ctx context.Context, t *testing.T, cluster *Cluster) {
 		}
 	}
 
-	// The database tunnel may read exactly the two password Secrets.
+	// The Database tunnel may read exactly the two password Secrets.
 	checkTunnelSecrets(ctx, t, cluster, namespace, map[string]string{"shop-db-write": "yes", "shop-db-read": "yes", "shop-db-app": "no", "backups-credentials": "no"})
 
 	// Closing read-only the way iidp app db access --read-only none does
@@ -140,7 +140,7 @@ func testDatabaseAccess(ctx context.Context, t *testing.T, cluster *Cluster) {
 	err = pollUntil(ctx, 3*time.Minute, 5*time.Second, func() (bool, error) {
 		return tunnelMayGet(ctx, cluster, namespace, "shop-db-read") == "no", nil
 	}, func() error {
-		return errors.New("the database tunnel may still get shop-db-read after read-only was closed")
+		return errors.New("the Database tunnel may still get shop-db-read after read-only was closed")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -154,13 +154,13 @@ func checkTunnelSecrets(ctx context.Context, t *testing.T, cluster *Cluster, nam
 	t.Helper()
 	for secret, want := range want {
 		if got := tunnelMayGet(ctx, cluster, namespace, secret); got != want {
-			t.Errorf("the database tunnel may get %s: %q, want %q", secret, got, want)
+			t.Errorf("the Database tunnel may get %s: %q, want %q", secret, got, want)
 		}
 	}
 }
 
 // tunnelMayGet is kubectl auth can-i's answer, "yes" or "no", to whether
-// the database tunnel's ServiceAccount may get secret in namespace.
+// the Database tunnel's ServiceAccount may get secret in namespace.
 func tunnelMayGet(ctx context.Context, cluster *Cluster, namespace, secret string) string {
 	out, _ := cluster.Kubectl(ctx, "auth", "can-i", "get", "secret/"+secret, "-n", namespace, "--as", "system:serviceaccount:iidp-db-tunnel:iidp-db-tunnel")
 	return strings.TrimSpace(out)

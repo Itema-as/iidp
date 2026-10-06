@@ -208,7 +208,7 @@
 //	 "seam": true}                       the one "since Argus restarted at
 //	                                     hh:mm" entry
 //
-// A note about a database session, from the database tunnel's Events,
+// A note about a database session, from the Database tunnel's Events,
 // says in the tunnel's own words who connected to which Environment's
 // database as which role, when the session ended and why, or why it was
 // refused.

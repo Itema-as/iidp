@@ -39,7 +39,7 @@ type Dependencies struct {
 	// Context is what commands run in; nil means context.Background().
 	// Tests cancel it where a developer would press Ctrl-C.
 	Context context.Context
-	// DatabaseTunnel is how app db connect reaches the database tunnel at
+	// DatabaseTunnel is how app db connect reaches the Database tunnel at
 	// url with the developer's token; nil means its WebSocket client.
 	DatabaseTunnel func(url, token string) DatabaseTunnel
 }

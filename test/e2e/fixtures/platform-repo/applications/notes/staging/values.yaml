@@ -26,7 +26,7 @@ postgres:
     test -n "$DATABASE_URL" && echo "migrated: DATABASE_URL set"
   backupRetention: 30d
   # Staging's default levels, read-write for push, with the password a
-  # preview's database tunnel session logs in with.
+  # preview's Database tunnel session logs in with.
   readWritePasswordSecret: notes-staging-db-write
 tasks:
   - name: heartbeat

@@ -24,7 +24,7 @@ import (
 //     failed or is running;
 //   - each Deploy the Deploy gate's Events still show, accepted or
 //     refused;
-//   - each session the database tunnel's Events still show, its start,
+//   - each session the Database tunnel's Events still show, its start,
 //     its end or its refusal;
 //   - the Warning Events of the last hour, except the gate's refusals,
 //     which are the Deploys above, and the tunnel's.

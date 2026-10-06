@@ -1,6 +1,6 @@
 // Package repoaccess checks a developer's permission on an Application's
 // repository with their own GitHub token, for the services that answer
-// developers: the Deploy gate's status endpoint and the database tunnel.
+// developers: the Deploy gate's status endpoint and the Database tunnel.
 // Both read the Application's binding (ADR-0005) from a clone of the
 // Platform repository made with that token, and ask GitHub for the token's
 // permission on the bound repository by its numeric id.

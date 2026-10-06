@@ -1,6 +1,6 @@
 // Package kubeevent records events.k8s.io/v1 Events through the Kubernetes
 // API with the standard library: the Deploy gate's Deploy Events and the
-// database tunnel's session Events. Each regards an Environment's ArgoCD
+// Database tunnel's session Events. Each regards an Environment's ArgoCD
 // Application, and an Event lives in the namespace of the object it points
 // at, so both are in argocd.
 package kubeevent

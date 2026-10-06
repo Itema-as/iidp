@@ -43,7 +43,7 @@ const (
 	kindPromote = "promote"
 )
 
-// The database tunnel's Events: an events.k8s.io/v1 Event in argocd
+// The Database tunnel's Events: an events.k8s.io/v1 Event in argocd
 // regarding the Environment's ArgoCD Application when a developer's session
 // on its database starts, when it ends, and when one is refused, with
 // AnnotationApplication, AnnotationEnvironment and these annotations.

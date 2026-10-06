@@ -13,7 +13,7 @@ func TestDatabaseTunnelIsOnByDefaultAndOffRendersNothing(t *testing.T) {
 		"--set", "bootstrap.repoURL=https://example.test/iidp.git", "--set", "bootstrap.targetRevision=v9.9.9"}
 	tunnel, ok := renderApplications(t, args...)["db-tunnel"]
 	if !ok {
-		t.Fatal("values.yaml renders no db-tunnel Application; the database tunnel is on by default")
+		t.Fatal("values.yaml renders no db-tunnel Application; the Database tunnel is on by default")
 	}
 	for path, want := range map[string]string{
 		"repoURL":        "https://example.test/iidp.git",
@@ -59,11 +59,11 @@ func TestDatabaseTunnelIsOnByDefaultAndOffRendersNothing(t *testing.T) {
 	on := renderApplications(t, args...)
 	off := renderApplications(t, append(append([]string{}, args...), "--set", "dbTunnel.enabled=false")...)
 	if rendered := renderText(t, append(append([]string{}, args...), "--set", "dbTunnel.enabled=false")...); strings.Contains(rendered, "tunnel") {
-		t.Errorf("with the database tunnel off, the bootstrap still renders it:\n%s", rendered)
+		t.Errorf("with the Database tunnel off, the bootstrap still renders it:\n%s", rendered)
 	}
 	delete(on, "db-tunnel")
 	if fmt.Sprint(on) != fmt.Sprint(off) {
-		t.Errorf("turning the database tunnel off changes the other components")
+		t.Errorf("turning the Database tunnel off changes the other components")
 	}
 }
 

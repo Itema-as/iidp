@@ -1,4 +1,4 @@
-// Command iidp-db-tunnel is the database tunnel: the part of the Platform
+// Command iidp-db-tunnel is the Database tunnel: the part of the Platform
 // through which a developer reaches an Environment's database from their
 // own machine, with iidp app db connect. It is configured entirely from
 // the environment:
@@ -37,7 +37,7 @@ import (
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(log); err != nil {
-		log.Error("the database tunnel stopped", "error", err.Error())
+		log.Error("the Database tunnel stopped", "error", err.Error())
 		os.Exit(1)
 	}
 }
@@ -59,7 +59,7 @@ func run(log *slog.Logger) error {
 	}
 	cluster, err := platformstate.InCluster()
 	if err != nil {
-		return fmt.Errorf("the database tunnel cannot reach the cluster: %w", err)
+		return fmt.Errorf("the Database tunnel cannot reach the cluster: %w", err)
 	}
 
 	tunnel := &dbtunnel.Tunnel{
@@ -82,7 +82,7 @@ func run(log *slog.Logger) error {
 	defer stop()
 	errs := make(chan error, 1)
 	go func() { errs <- server.ListenAndServe() }()
-	log.Info("the database tunnel is listening", "address", server.Addr, "version", version.Version,
+	log.Info("the Database tunnel is listening", "address", server.Addr, "version", version.Version,
 		"org_id", orgID, "platform_repository", tunnel.PlatformRepo,
 		"idle_limit", dbtunnel.IdleLimit.String(), "max_session", dbtunnel.MaxSession.String())
 

@@ -24,7 +24,7 @@ const previewHeadSHA = "5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f"
 //   - runs its image in a namespace the guardrails bind to, with a database
 //     and staging's migration and secrets but no backups and no Scheduled
 //     task, behind Itema login;
-//   - lets a developer reach its database through the database tunnel with
+//   - lets a developer reach its database through the Database tunnel with
 //     staging's levels;
 //   - deletes the preview, its database and namespace when the pull request
 //     closes.

@@ -1,4 +1,4 @@
-// Package dbtunnel is the database tunnel: the part of the Platform
+// Package dbtunnel is the Database tunnel: the part of the Platform
 // through which a developer reaches an Environment's database from their
 // own machine (ADR-0009). iidp app db connect opens one WebSocket per
 // Postgres connection (internal/dbtunnel/api). On each, the tunnel checks
@@ -28,7 +28,7 @@ import (
 	"github.com/Itema-as/iidp/internal/kubeevent"
 )
 
-// Tunnel is the database tunnel's HTTP service.
+// Tunnel is the Database tunnel's HTTP service.
 type Tunnel struct {
 	// OrgID is the numeric id of the org every Application repository
 	// must belong to.
@@ -147,7 +147,7 @@ func (t *Tunnel) serveConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if t.stop.Err() != nil {
-		writeJSON(w, http.StatusServiceUnavailable, api.ErrorResponse{Error: "the database tunnel is stopping; connect again in a moment"})
+		writeJSON(w, http.StatusServiceUnavailable, api.ErrorResponse{Error: "the Database tunnel is stopping; connect again in a moment"})
 		return
 	}
 	t.sessions.Add(1)

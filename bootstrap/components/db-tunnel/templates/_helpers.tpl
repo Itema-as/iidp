@@ -13,7 +13,7 @@ rendering fails; only this Application fails, not the rest of the bootstrap.
 {{- else if regexMatch "^v[0-9]+\\.[0-9]+\\.[0-9]+" (toString .Values.bootstrapRevision) -}}
 {{- trimPrefix "v" (toString .Values.bootstrapRevision) -}}
 {{- else -}}
-{{- fail (printf "the database tunnel's image tag cannot be derived from the bootstrap revision %q, which is not a v* release tag: pin the bootstrap to a release, or set dbTunnel.image.tag in platform.yaml" (toString .Values.bootstrapRevision)) -}}
+{{- fail (printf "the Database tunnel's image tag cannot be derived from the bootstrap revision %q, which is not a v* release tag: pin the bootstrap to a release, or set dbTunnel.image.tag in platform.yaml" (toString .Values.bootstrapRevision)) -}}
 {{- end -}}
 {{- end -}}
 

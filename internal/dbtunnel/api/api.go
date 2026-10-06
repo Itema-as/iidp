@@ -1,4 +1,4 @@
-// Package api is the database tunnel's contract with iidp app db connect:
+// Package api is the Database tunnel's contract with iidp app db connect:
 // its two calls, what they answer, and a client for them. It is apart from
 // internal/dbtunnel so that the CLI does not link the tunnel's Postgres
 // driver.
@@ -76,7 +76,7 @@ type Refused struct {
 
 func (r *Refused) Error() string { return r.Message }
 
-// Client calls the database tunnel at URL with a developer's token.
+// Client calls the Database tunnel at URL with a developer's token.
 type Client struct {
 	// URL is the tunnel's address, https://db.<baseDomain>.
 	URL   string
@@ -104,21 +104,21 @@ func (c *Client) Check(ctx context.Context, application, environment string, rea
 	client := &http.Client{Timeout: time.Minute, Transport: &http.Transport{DialContext: c.dial, TLSClientConfig: c.TLSConfig}}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Grant{}, fmt.Errorf("the database tunnel at %s cannot be reached: %w", c.URL, err)
+		return Grant{}, fmt.Errorf("the Database tunnel at %s cannot be reached: %w", c.URL, err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusOK {
 		var grant Grant
 		if err := json.Unmarshal(data, &grant); err != nil || grant.Role == "" {
-			return Grant{}, fmt.Errorf("the database tunnel at %s answered with something other than a check: %s", c.URL, strings.TrimSpace(string(data)))
+			return Grant{}, fmt.Errorf("the Database tunnel at %s answered with something other than a check: %s", c.URL, strings.TrimSpace(string(data)))
 		}
 		return grant, nil
 	}
 	var refusal ErrorResponse
 	if json.Unmarshal(data, &refusal) != nil || refusal.Error == "" {
 		// Not the tunnel's own answer: a proxy's error page, or no tunnel.
-		return Grant{}, fmt.Errorf("the database tunnel at %s is unavailable: HTTP %d: %s", c.URL, resp.StatusCode, strings.TrimSpace(string(data)))
+		return Grant{}, fmt.Errorf("the Database tunnel at %s is unavailable: HTTP %d: %s", c.URL, resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return Grant{}, &Refused{Status: resp.StatusCode, Message: refusal.Error}
 }
@@ -136,7 +136,7 @@ func (c *Client) Connect(ctx context.Context, application, environment string, r
 	}
 	raw, err := c.dial(ctx, "tcp", net.JoinHostPort(u.Hostname(), port))
 	if err != nil {
-		return nil, fmt.Errorf("the database tunnel at %s cannot be reached: %w", c.URL, err)
+		return nil, fmt.Errorf("the Database tunnel at %s cannot be reached: %w", c.URL, err)
 	}
 	tlsConfig := &tls.Config{ServerName: u.Hostname(), MinVersion: tls.VersionTLS12}
 	if c.TLSConfig != nil {
@@ -148,7 +148,7 @@ func (c *Client) Connect(ctx context.Context, application, environment string, r
 	conn := tls.Client(raw, tlsConfig)
 	if err := conn.HandshakeContext(ctx); err != nil {
 		raw.Close()
-		return nil, fmt.Errorf("the database tunnel at %s cannot be reached: %w", c.URL, err)
+		return nil, fmt.Errorf("the Database tunnel at %s cannot be reached: %w", c.URL, err)
 	}
 	u.Scheme = "wss"
 	config, err := websocket.NewConfig(u.String(), c.URL)
@@ -164,9 +164,9 @@ func (c *Client) Connect(ctx context.Context, application, environment string, r
 	if err != nil {
 		conn.Close()
 		if errors.Is(err, websocket.ErrBadStatus) {
-			return nil, fmt.Errorf("the database tunnel at %s refused the connection; run iidp app db connect again to see why", c.URL)
+			return nil, fmt.Errorf("the Database tunnel at %s refused the connection; run iidp app db connect again to see why", c.URL)
 		}
-		return nil, fmt.Errorf("the database tunnel at %s cannot be reached: %w", c.URL, err)
+		return nil, fmt.Errorf("the Database tunnel at %s cannot be reached: %w", c.URL, err)
 	}
 	_ = conn.SetDeadline(time.Time{})
 	ws.PayloadType = websocket.BinaryFrame
@@ -176,7 +176,7 @@ func (c *Client) Connect(ctx context.Context, application, environment string, r
 func (c *Client) callURL(path, application, environment string, readOnly bool) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSuffix(c.URL, "/") + path + url.PathEscape(application) + "/" + url.PathEscape(environment))
 	if err != nil {
-		return nil, fmt.Errorf("the database tunnel's address %q: %w", c.URL, err)
+		return nil, fmt.Errorf("the Database tunnel's address %q: %w", c.URL, err)
 	}
 	if readOnly {
 		u.RawQuery = ReadOnlyParam + "=true"

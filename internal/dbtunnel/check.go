@@ -73,7 +73,7 @@ func refuse(status int, format string, args ...any) *Refusal {
 }
 
 // purpose words the repository check for the tunnel.
-var purpose = repoaccess.Purpose{Service: "the database tunnel", Action: "reach %s databases"}
+var purpose = repoaccess.Purpose{Service: "the Database tunnel", Action: "reach %s databases"}
 
 // noToken refuses a call that carries no GitHub token.
 const noToken = "no GitHub token: send your own as Authorization: Bearer <token>, which iidp app db connect takes from gh auth"
@@ -106,7 +106,7 @@ func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 	case github.IsUnauthorized(err):
 		return grant, refuse(http.StatusUnauthorized, "GitHub does not accept your token; run gh auth login again")
 	case err != nil:
-		return grant, refuse(http.StatusBadGateway, "the database tunnel could not ask GitHub who you are: %v", err)
+		return grant, refuse(http.StatusBadGateway, "the Database tunnel could not ask GitHub who you are: %v", err)
 	}
 	grant.Login = login
 
@@ -160,7 +160,7 @@ func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 		}
 		return grant, refuse(http.StatusConflict, "%s %s has no database; add one with iidp app add-capability %s --postgres", req.Application, grant.Environment, req.Application)
 	case err != nil:
-		return grant, refuse(http.StatusServiceUnavailable, "the database tunnel cannot read the cluster right now: %v", err)
+		return grant, refuse(http.StatusServiceUnavailable, "the Database tunnel cannot read the cluster right now: %v", err)
 	}
 	grant.known = true
 

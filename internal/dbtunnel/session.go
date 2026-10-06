@@ -83,10 +83,10 @@ func (t *Tunnel) serve(ctx context.Context, client net.Conn, req Request) {
 			writeMessages(client, errorResponse(pgErr))
 			return
 		}
-		t.log().Warn("the database tunnel could not log in to the database", append(grant.logAttrs(), "error", err.Error())...)
-		t.refused(grant, "connect", errors.New("the database tunnel could not reach the database"))
+		t.log().Warn("the Database tunnel could not log in to the database", append(grant.logAttrs(), "error", err.Error())...)
+		t.refused(grant, "connect", errors.New("the Database tunnel could not reach the database"))
 		writeMessages(client, &pgproto3.ErrorResponse{Severity: "FATAL", SeverityUnlocalized: "FATAL", Code: "08006",
-			Message: fmt.Sprintf("the database tunnel could not reach %s %s's database; try again in a moment", grant.Application, grant.Environment)})
+			Message: fmt.Sprintf("the Database tunnel could not reach %s %s's database; try again in a moment", grant.Application, grant.Environment)})
 		return
 	}
 	defer server.Conn.Close()
@@ -249,7 +249,7 @@ const (
 	EndedByDatabase = "the database closed it"
 	EndedIdle       = "30 minutes without traffic"
 	EndedMaxSession = "the 8-hour limit"
-	EndedShutdown   = "the database tunnel stopped"
+	EndedShutdown   = "the Database tunnel stopped"
 )
 
 // Clock is what Relay times the limits with.

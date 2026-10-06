@@ -1,5 +1,5 @@
 # GoReleaser configuration for the iidp CLI and the Deploy gate's, Argus's and
-# the database tunnel's images. Run by .github/workflows/release.yaml on every
+# the Database tunnel's images. Run by .github/workflows/release.yaml on every
 # v* tag. Verify locally with:
 #   goreleaser check
 #   goreleaser build --snapshot --clean --single-target
@@ -133,7 +133,7 @@ dockers_v2:
       - linux/amd64
     labels:
       "org.opencontainers.image.source": '{{ trimsuffix .GitURL ".git" }}'
-      "org.opencontainers.image.description": "The iidp database tunnel"
+      "org.opencontainers.image.description": "The iidp Database tunnel"
       "org.opencontainers.image.version": "{{ .Version }}"
       "org.opencontainers.image.revision": "{{ .FullCommit }}"
     sbom: false

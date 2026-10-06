@@ -7,7 +7,7 @@
 //   - under /api/v3, GitHub Enterprise's API path, the calls ArgoCD's Pull
 //     Request generator makes;
 //   - GET /api/repositories/{id} and GET /api/user, which the Deploy
-//     gate's status endpoint and the database tunnel call with a
+//     gate's status endpoint and the Database tunnel call with a
 //     developer's token to check their permission on the repository and
 //     who they are;
 //   - PUT /e2e/pulls/{owner}/{repo}, which the test calls to set the pull
@@ -43,7 +43,7 @@ const (
 	BotUserID         = 41898282
 
 	// DeveloperToken is the gh auth token test/e2e sends to the gate's
-	// status endpoint and the database tunnel, and DeveloperLogin the
+	// status endpoint and the Database tunnel, and DeveloperLogin the
 	// account it belongs to.
 	DeveloperToken = "e2e-developer-token"
 	DeveloperLogin = "e2e-developer"

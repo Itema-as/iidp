@@ -22,7 +22,7 @@ import (
 	"github.com/Itema-as/iidp/internal/render"
 )
 
-// DatabaseTunnel is what app db connect needs of the database tunnel: its
+// DatabaseTunnel is what app db connect needs of the Database tunnel: its
 // check, and one connection per local connection.
 type DatabaseTunnel interface {
 	Check(ctx context.Context, application, environment string, readOnly bool) (api.Grant, error)
@@ -41,9 +41,9 @@ func newAppDBConnectCommand(deps Dependencies) *cobra.Command {
 	var opts dbConnectOptions
 	cmd := &cobra.Command{
 		Use:   "connect <name> [--env staging|prod] [--pr <number>] [--read-only] [--psql]",
-		Short: "Reach an Environment's database from this machine through the database tunnel",
+		Short: "Reach an Environment's database from this machine through the Database tunnel",
 		Long: "Reach the database of one of an Application's Environments from this machine,\n" +
-			"through the database tunnel at https://db.<baseDomain> (baseDomain from the\n" +
+			"through the Database tunnel at https://db.<baseDomain> (baseDomain from the\n" +
 			"Platform repository's platform.yaml). The Environment is staging when the\n" +
 			"Application has one, else prod; --env picks one, and --pr a Preview\n" +
 			"Environment by its pull request's number.\n\n" +
@@ -100,7 +100,7 @@ func runAppDBConnect(cmd *cobra.Command, name string, opts dbConnectOptions, dep
 	}
 	token, err := deps.TokenSource.Token()
 	if err != nil {
-		return fmt.Errorf("not logged in to GitHub, and the database tunnel needs your GitHub token to let you in: %w", err)
+		return fmt.Errorf("not logged in to GitHub, and the Database tunnel needs your GitHub token to let you in: %w", err)
 	}
 	// The tunnel's address follows platform.yaml's baseDomain. If the
 	// Platform repository cannot be read, Itema's Platform is assumed: the
@@ -145,7 +145,7 @@ func runAppDBConnect(cmd *cobra.Command, name string, opts dbConnectOptions, dep
 	defer stop()
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Connected to %s %s's database through the database tunnel at %s:\n\n  %s\n\n", grant.Application, grant.Environment, url, conninfo)
+	fmt.Fprintf(out, "Connected to %s %s's database through the Database tunnel at %s:\n\n  %s\n\n", grant.Application, grant.Environment, url, conninfo)
 	fmt.Fprintf(out, "%s %s, %s as %s. Each connection is checked again and recorded; a session ends after 30 minutes without traffic and after 8 hours.\n",
 		grant.Application, grant.Environment, grant.Access, grant.Role)
 

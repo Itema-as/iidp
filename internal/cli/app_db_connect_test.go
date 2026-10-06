@@ -18,7 +18,7 @@ import (
 	"github.com/Itema-as/iidp/internal/dbtunnel/api"
 )
 
-// fakeTunnel stands in for the database tunnel: a check answers grant or
+// fakeTunnel stands in for the Database tunnel: a check answers grant or
 // refusal, and each connection is an echo of what the client sends.
 type fakeTunnel struct {
 	url, token string

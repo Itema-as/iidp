@@ -1,5 +1,5 @@
 {{- if .Values.dbTunnel.enabled }}
-# The database tunnel, through which developers reach an Environment's
+# The Database tunnel, through which developers reach an Environment's
 # database with iidp app db connect. Its namespace and ServiceAccount are
 # the ones the application chart's Roles grant the access roles' password
 # Secrets to (platform.databaseTunnel in chart/application).

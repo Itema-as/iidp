@@ -433,7 +433,7 @@ func eventNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplication) 
 }
 
 // eventFeedNote is the feed entry an Event makes of its own, if any: one
-// of the database tunnel's, or any other Warning but the Deploy gate's
+// of the Database tunnel's, or any other Warning but the Deploy gate's
 // refusals, which are their Deploy's own note. warning is true for the
 // second.
 func eventFeedNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplication) (n Note, warning, ok bool) {
@@ -446,7 +446,7 @@ func eventFeedNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplicati
 	return Note{}, false, false
 }
 
-// sessionNote is the feed entry for one of the database tunnel's Events,
+// sessionNote is the feed entry for one of the Database tunnel's Events,
 // in the tunnel's own words. A session's end only reports something
 // finished.
 func sessionNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplication) Note {

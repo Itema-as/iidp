@@ -54,7 +54,7 @@ func TestKubeListsWithTheTokenAndTheSelector(t *testing.T) {
 	}
 }
 
-// Get is how the database tunnel reads one Cluster and one Secret: the
+// Get is how the Database tunnel reads one Cluster and one Secret: the
 // object itself, and a missing one as the API server's 404.
 func TestKubeGetsOneObject(t *testing.T) {
 	var gotAuth string

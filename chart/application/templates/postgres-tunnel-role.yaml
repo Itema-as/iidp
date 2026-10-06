@@ -7,7 +7,7 @@
 {{- end -}}
 {{- if and (include "application.released" .) (include "application.postgres.enabled" .) $open }}
 {{- /*
-Lets the database tunnel read the password of each open database access
+Lets the Database tunnel read the password of each open database access
 role, so it can log in as that role for a developer. resourceNames keeps it
 to exactly those Secrets.
 */}}

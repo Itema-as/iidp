@@ -125,7 +125,7 @@ func (c Config) DeployGateURL() string {
 // host the same way (bootstrap/components/db-tunnel).
 const DatabaseTunnelHostLabel = "db"
 
-// DatabaseTunnelURL is the database tunnel's address, where iidp app db
+// DatabaseTunnelURL is the Database tunnel's address, where iidp app db
 // connect opens its connections.
 func (c Config) DatabaseTunnelURL() string {
 	return "https://" + DatabaseTunnelHostLabel + "." + c.BaseDomain

@@ -122,7 +122,7 @@ func TestSeedFillsTheFeedAndMarksTheSeam(t *testing.T) {
 	}
 }
 
-// sessionEvent is the database tunnel's Event about a session on app's
+// sessionEvent is the Database tunnel's Event about a session on app's
 // env at d from t0.
 func sessionEvent(app, env, reason, note string, d time.Duration) obj {
 	typ := "Normal"
@@ -139,7 +139,7 @@ func sessionEvent(app, env, reason, note string, d time.Duration) obj {
 	}
 }
 
-// The database tunnel's sessions are in their Environment's activity, with
+// The Database tunnel's sessions are in their Environment's activity, with
 // the tunnel's own words: seeded from the Events still there, and each new
 // one as it comes. A refusal is not also a Warning note, and an end is
 // feed-only.

@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # To push the Deploy gate's, Argus's and the database tunnel's images
+      # To push the Deploy gate's, Argus's and the Database tunnel's images
       # to GHCR.
       packages: write
     steps:

@@ -65,7 +65,7 @@ deployGate:
   githubAPI: http://fake-github.iidp-e2e.svc.cluster.local/api
   platformRepository: http://git-server.iidp-e2e.svc.cluster.local/git/iidp-platform.git
 
-# The database tunnel runs the image the harness builds; it takes the Deploy
+# The Database tunnel runs the image the harness builds; it takes the Deploy
 # gate's githubAPI and platformRepository above.
 dbTunnel:
   image:

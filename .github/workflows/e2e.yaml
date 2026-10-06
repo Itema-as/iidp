@@ -2,7 +2,7 @@ name: e2e
 
 # The kind end-to-end test (test/e2e). The paths filter does not apply to
 # tag pushes, so every release tag runs it. The Deploy gate's and the
-# database tunnel's paths include the packages they use, since the harness
+# Database tunnel's paths include the packages they use, since the harness
 # builds them from source, and the CLI's, since the test runs iidp app db
 # connect in-process.
 on:
