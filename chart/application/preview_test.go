@@ -281,6 +281,12 @@ func TestAPreviewsDatabaseHasNoBackupsAndKeepsStagingsMigration(t *testing.T) {
 			t.Errorf("rendered %v, want no backup objects", found)
 		}
 	}
+	// The only RBAC a preview renders is the database tunnel's.
+	for _, kind := range []string{"Role", "RoleBinding"} {
+		if found := objectsOfKind(objects, kind); !slices.Equal(found, []string{kind + "/shop-pr-42-db-tunnel"}) {
+			t.Errorf("rendered %v, want only %s/shop-pr-42-db-tunnel", found, kind)
+		}
+	}
 	for key := range objects {
 		if strings.Contains(key, "final-backup") {
 			t.Errorf("rendered %s, want no final backup on delete", key)
