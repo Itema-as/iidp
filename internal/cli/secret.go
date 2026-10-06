@@ -92,6 +92,7 @@ func runSecretSet(cmd *cobra.Command, opts secretSetOptions, deps Dependencies) 
 		URL:        opts.platformRepo,
 		Auth:       git.Auth{Token: token},
 		BeforePush: deps.BeforePush,
+		Encryptor:  deps.Encryptor,
 	}
 	res, err := writer.SetSecrets(cmd.Context(), opts.application, opts.environment, secrets)
 	if err != nil {

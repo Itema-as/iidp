@@ -11,6 +11,7 @@ import (
 
 	"github.com/Itema-as/iidp/internal/github"
 	"github.com/Itema-as/iidp/internal/platform"
+	"github.com/Itema-as/iidp/internal/sops"
 	"github.com/Itema-as/iidp/internal/version"
 )
 
@@ -30,6 +31,9 @@ type Dependencies struct {
 	// HTTPClient is what app status calls the Deploy gate with; nil means a
 	// client with a one-minute timeout.
 	HTTPClient *http.Client
+	// Encryptor encrypts what the CLI writes to the Platform repository's
+	// sops/ directories; nil means the sops binary on PATH.
+	Encryptor sops.Encryptor
 }
 
 // Run executes the CLI with args (excluding the program name) and returns

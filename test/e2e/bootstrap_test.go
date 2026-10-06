@@ -127,6 +127,7 @@ func TestBootstrap(t *testing.T) {
 	}
 
 	testFixtureApplication(ctx, t, cluster)
+	testDatabaseAccess(ctx, t, cluster)
 	testUnreleasedEnvironments(ctx, t, cluster)
 	testDeleteEnvironment(ctx, t, cluster)
 	// The order matters. Workloads added later (brochure-prod's first image,

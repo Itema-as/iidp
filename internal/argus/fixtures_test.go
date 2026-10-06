@@ -81,6 +81,8 @@ func put(t *testing.T, s *Store, objects ...obj) {
 			s.Put("certificates", key, decode[platformstate.Certificate](t, o))
 		case "Ingress":
 			s.Put("ingresses", key, decode[platformstate.Ingress](t, o))
+		case "Cluster":
+			s.Put("clusters", key, decode[platformstate.PostgresCluster](t, o))
 		case "Event":
 			s.Put("events", key, decode[platformstate.Event](t, o))
 		case "Node":

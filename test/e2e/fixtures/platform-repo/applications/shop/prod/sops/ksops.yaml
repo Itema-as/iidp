@@ -8,3 +8,5 @@ metadata:
               path: ksops
 files:
     - backups-credentials.enc.yaml
+    - db-read.enc.yaml
+    - db-write.enc.yaml

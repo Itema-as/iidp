@@ -85,9 +85,10 @@ func shopStatus() platformstate.Status {
 				Name: "prod", Namespace: "shop-prod",
 				ArgoCD: &platformstate.ArgoCD{Application: "shop-prod", Sync: "Synced", Health: "Healthy",
 					Operation: &platformstate.Operation{Phase: "Succeeded", FinishedAt: tp("2026-09-21T10:03:00Z")}},
-				Image:     &platformstate.Image{Repository: "ghcr.io/itema-as/shop", Tag: "1.0.1", DeployedAt: tp("2026-09-21T10:00:00Z")},
-				Pods:      platformstate.Pods{Ready: 1, Total: 1, Restarts: 1},
-				Migration: &platformstate.Run{Result: "succeeded", StartedAt: tp("2026-09-21T10:01:00Z"), FinishedAt: tp("2026-09-21T10:02:00Z")},
+				Image:          &platformstate.Image{Repository: "ghcr.io/itema-as/shop", Tag: "1.0.1", DeployedAt: tp("2026-09-21T10:00:00Z")},
+				Pods:           platformstate.Pods{Ready: 1, Total: 1, Restarts: 1},
+				Migration:      &platformstate.Run{Result: "succeeded", StartedAt: tp("2026-09-21T10:01:00Z"), FinishedAt: tp("2026-09-21T10:02:00Z")},
+				DatabaseAccess: &platformstate.DatabaseAccess{ReadWrite: "none", ReadOnly: "maintain", ReadWriteSetUp: true, ReadOnlySetUp: true},
 				Tasks: []platformstate.Task{
 					{Name: "cleanup", Schedule: "0 3 * * *", LastRun: &platformstate.Run{Result: "failed", FinishedAt: tp("2026-09-22T01:00:30Z")}},
 					{Name: "report", Schedule: "*/5 * * * *"},
@@ -100,12 +101,13 @@ func shopStatus() platformstate.Status {
 			},
 			{
 				Name: "staging", Namespace: "shop-staging",
-				ArgoCD:    &platformstate.ArgoCD{Application: "shop-staging", Sync: "OutOfSync", Health: "Degraded", Operation: &platformstate.Operation{Phase: "Failed", Message: "one or more objects failed to apply", FinishedAt: tp("2026-09-23T10:00:00Z")}},
-				Image:     &platformstate.Image{Repository: "ghcr.io/itema-as/shop", Tag: "sha-1"},
-				Pods:      platformstate.Pods{Ready: 0, Total: 1, Restarts: 7},
-				Tasks:     []platformstate.Task{},
-				Addresses: []string{"https://shop-staging.app.example.test"},
-				Condition: &platformstate.Condition{State: "Degraded", Reason: "shop-staging-a is in CrashLoopBackOff"},
+				ArgoCD:         &platformstate.ArgoCD{Application: "shop-staging", Sync: "OutOfSync", Health: "Degraded", Operation: &platformstate.Operation{Phase: "Failed", Message: "one or more objects failed to apply", FinishedAt: tp("2026-09-23T10:00:00Z")}},
+				Image:          &platformstate.Image{Repository: "ghcr.io/itema-as/shop", Tag: "sha-1"},
+				Pods:           platformstate.Pods{Ready: 0, Total: 1, Restarts: 7},
+				DatabaseAccess: &platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none", ReadOnlySetUp: true},
+				Tasks:          []platformstate.Task{},
+				Addresses:      []string{"https://shop-staging.app.example.test"},
+				Condition:      &platformstate.Condition{State: "Degraded", Reason: "shop-staging-a is in CrashLoopBackOff"},
 				Activity: &platformstate.Activity{State: "Deploying", Stuck: true, Reason: "the migration failed",
 					Deploy: &platformstate.Deploy{Tag: "sha-2", Hop: platformstate.HopApplying, Stuck: true, Reason: "the migration failed"}},
 			},
@@ -113,10 +115,11 @@ func shopStatus() platformstate.Status {
 			// scheduled.
 			{Name: "pr-2", Namespace: "shop-pr-2", ArgoCD: &platformstate.ArgoCD{Application: "shop-pr-2", Sync: "OutOfSync", Health: "Missing",
 				Operation: &platformstate.Operation{Phase: "Running", StartedAt: tp("2026-09-29T09:40:00Z")}},
-				Migration: &platformstate.Run{Result: "pending", StartedAt: tp("2026-09-29T09:41:00Z")},
-				Tasks:     []platformstate.Task{{Name: "heartbeat", Schedule: "*/10 * * * *", LastRun: &platformstate.Run{Result: "pending", StartedAt: tp("2026-09-29T10:00:00Z")}}},
-				Addresses: []string{},
-				Condition: &platformstate.Condition{State: "Healthy"},
+				Migration:      &platformstate.Run{Result: "pending", StartedAt: tp("2026-09-29T09:41:00Z")},
+				DatabaseAccess: &platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none", ReadOnlySetUp: true},
+				Tasks:          []platformstate.Task{{Name: "heartbeat", Schedule: "*/10 * * * *", LastRun: &platformstate.Run{Result: "pending", StartedAt: tp("2026-09-29T10:00:00Z")}}},
+				Addresses:      []string{},
+				Condition:      &platformstate.Condition{State: "Healthy"},
 				Activity: &platformstate.Activity{State: "Arriving", Stuck: true, Reason: "the migration's Pod shop-pr-2-migrate-x is Unschedulable: 0/1 nodes are available: 1 Insufficient cpu.",
 					Deploy: &platformstate.Deploy{Tag: "sha-3", Preview: true, Hop: platformstate.HopApplying, Stuck: true}}},
 			{Name: "pr-7", Namespace: "shop-pr-7", ArgoCD: &platformstate.ArgoCD{Application: "shop-pr-7", Sync: "Synced", Health: "Healthy"}, Tasks: []platformstate.Task{}, Addresses: []string{},
@@ -156,6 +159,7 @@ prod
   Image:     ghcr.io/itema-as/shop:1.0.1, deployed 2026-09-21 10:00 UTC
   Pods:      1/1 ready, 1 restart
   Migration: last run succeeded 2026-09-21 10:02 UTC
+  Database:  read-write none · read-only maintain
   Tasks:     cleanup (0 3 * * *): last run failed 2026-09-22 01:00 UTC
              report (*/5 * * * *): no run yet
   Addresses: https://shop.app.example.test
@@ -169,6 +173,7 @@ staging
   Status:    OutOfSync, Degraded, last sync Failed 2026-09-23 10:00 UTC: one or more objects failed to apply
   Image:     ghcr.io/itema-as/shop:sha-1
   Pods:      0/1 ready, 7 restarts
+  Database:  read-write push (not set up: run iidp app db access shop --env staging) · read-only none
   Addresses: https://shop-staging.app.example.test
 
 pr-2
@@ -177,6 +182,7 @@ pr-2
   Status:    OutOfSync, Missing, last sync Running, started 2026-09-29 09:40 UTC
   Image:     none yet: nothing has been deployed
   Migration: last run pending since 2026-09-29 09:41 UTC
+  Database:  read-write push (not set up: run iidp app db access shop --env staging) · read-only none
   Tasks:     heartbeat (*/10 * * * *): last run pending since 2026-09-29 10:00 UTC
 
 pr-7
@@ -213,7 +219,7 @@ func TestAppStatusJSONIsTheGatesAnswer(t *testing.T) {
 	// The keys, spelled as README.md spells them.
 	for _, key := range []string{`"application": "shop"`, `"repository"`, `"environments"`, `"argocd"`, `"sync": "Synced"`, `"health"`, `"operation"`, `"image"`, `"deployedAt": "2026-09-21T10:00:00Z"`, `"pods"`, `"ready"`, `"restarts"`, `"migration"`, `"tasks"`, `"lastRun"`, `"addresses"`, `"links"`, `"grafana"`,
 		`"condition": {`, `"state": "Degraded"`, `"reason": "shop-staging-a is in CrashLoopBackOff"`, `"activity": {`, `"stuck": true`,
-		`"deploy": {`, `"hop": "RollingOut"`, `"promote": true`, `"tag": "sha-2"`, `"activity": null`} {
+		`"databaseAccess": {`, `"readWrite": "none"`, `"readOnly": "maintain"`, `"readWriteSetUp": true`, `"readOnlySetUp": true`, `"deploy": {`, `"hop": "RollingOut"`, `"promote": true`, `"tag": "sha-2"`, `"activity": null`} {
 		if !strings.Contains(stdout, key) {
 			t.Errorf("--json lacks %s", key)
 		}

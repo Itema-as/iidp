@@ -110,6 +110,15 @@ func previewFixture(t *testing.T) (stagingValues string, applicationSet map[stri
 			return valuesrender.SetTasks(v, []appconfig.Task{{Name: "nightly-cleanup", Schedule: "0 3 * * *", Command: "node cleanup.js"}})
 		},
 		func(v []byte) ([]byte, bool, error) { return valuesrender.AddSecretName(v, "shop-staging-api-key") },
+		func(v []byte) ([]byte, bool, error) {
+			return valuesrender.SetDatabaseAccess(v, valuesrender.DatabaseAccess{ReadWrite: "push", ReadOnly: "pull"})
+		},
+		func(v []byte) ([]byte, bool, error) {
+			return valuesrender.SetPasswordSecret(v, valuesrender.ReadWriteRole, "shop-staging-db-write")
+		},
+		func(v []byte) ([]byte, bool, error) {
+			return valuesrender.SetPasswordSecret(v, valuesrender.ReadOnlyRole, "shop-staging-db-read")
+		},
 		// The CLI writes custom domains for prod only; a hand-edited
 		// staging with one must still give previews none.
 		func(v []byte) ([]byte, bool, error) { return valuesrender.AddDomain(v, "staging.shop.example.com") },
@@ -267,9 +276,15 @@ func TestAPreviewsDatabaseHasNoBackupsAndKeepsStagingsMigration(t *testing.T) {
 	if plugins, ok := get[map[string]any](t, cluster, "spec")["plugins"]; ok {
 		t.Errorf("Cluster plugins = %v, want no WAL archiving", plugins)
 	}
-	for _, kind := range []string{"ObjectStore", "ScheduledBackup", "ServiceAccount", "Role", "RoleBinding"} {
+	for _, kind := range []string{"ObjectStore", "ScheduledBackup", "ServiceAccount"} {
 		if found := objectsOfKind(objects, kind); len(found) != 0 {
 			t.Errorf("rendered %v, want no backup objects", found)
+		}
+	}
+	// The only RBAC a preview renders is the database tunnel's.
+	for _, kind := range []string{"Role", "RoleBinding"} {
+		if found := objectsOfKind(objects, kind); !slices.Equal(found, []string{kind + "/shop-pr-42-db-tunnel"}) {
+			t.Errorf("rendered %v, want only %s/shop-pr-42-db-tunnel", found, kind)
 		}
 	}
 	for key := range objects {
@@ -299,6 +314,36 @@ func TestAPreviewGetsStagingsSecretsThroughTheSameSource(t *testing.T) {
 	envFrom := get[[]any](t, c, "envFrom")
 	if len(envFrom) != 1 || get[string](t, envFrom[0], "secretRef", "name") != "shop-staging-api-key" {
 		t.Errorf("envFrom = %v, want staging's Secret shop-staging-api-key", envFrom)
+	}
+}
+
+// A preview opens its database to the same developers as staging, with
+// staging's password Secrets, which staging's sops/ source applies in the
+// preview's namespace.
+func TestAPreviewHasStagingsDatabaseAccessAndPasswords(t *testing.T) {
+	_, manifests := renderPreview(t)
+	objects := parseObjects(t, manifests)
+	cluster := mustObject(t, objects, "Cluster/shop-pr-42-db")
+	if got := annotationsOf(t, cluster); got[readWriteAnnotation] != "push" || got[readOnlyAnnotation] != "pull" {
+		t.Errorf("annotations = %v, want staging's push and pull", got)
+	}
+	present, _ := managedRoles(t, cluster)
+	roles := map[string]string{}
+	for name, role := range present {
+		roles[name] = get[string](t, role, "passwordSecret", "name")
+	}
+	if want := map[string]string{"shop_write": "shop-staging-db-write", "shop_read": "shop-staging-db-read"}; !mapsEqual(roles, want) {
+		t.Errorf("managed roles = %v, want %v", roles, want)
+	}
+	role, binding := tunnelRole(t, objects, "shop-pr-42")
+	if role == nil {
+		t.Fatalf("no Role/shop-pr-42-db-tunnel; got %v", keys(objects))
+	}
+	if got := tunnelSecrets(t, role); !slices.Equal(got, []string{"shop-staging-db-read", "shop-staging-db-write"}) {
+		t.Errorf("the database tunnel may get %v, want staging's two password Secrets", got)
+	}
+	if ns := get[map[string]any](t, binding, "metadata")["namespace"]; ns != nil && ns != "shop-pr-42" {
+		t.Errorf("RoleBinding namespace = %v, want the preview's", ns)
 	}
 }
 

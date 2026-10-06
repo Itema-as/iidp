@@ -419,7 +419,7 @@ const crdSchemas = "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main
 func TestPostgresManifestsPassKubeconformWithTheCRDSchemas(t *testing.T) {
 	requireTool(t, "kubeconform")
 	version := kubernetesVersion(t)
-	for _, fixture := range []string{"postgres-prod.yaml", "postgres-staging.yaml"} {
+	for _, fixture := range []string{"postgres-prod.yaml", "postgres-staging.yaml", "db-access-staging-default.yaml", "db-access-prod-read-only.yaml"} {
 		t.Run(fixture, func(t *testing.T) {
 			manifests, err := helmTemplate(t, fixture)
 			if err != nil {

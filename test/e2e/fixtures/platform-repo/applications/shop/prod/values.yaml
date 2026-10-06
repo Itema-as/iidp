@@ -26,3 +26,10 @@ postgres:
   # accepts connections.
   migrationCommand: >-
     test -n "$DATABASE_URL" && nc -z -w 5 shop-db-rw 5432 && echo "migrated: DATABASE_URL set, shop-db-rw:5432 reachable"
+  # Open to the fixture's developers, so the kind test can log in as both
+  # roles with the passwords in sops/.
+  access:
+    readWrite: admin
+    readOnly: pull
+  readWritePasswordSecret: shop-db-write
+  readOnlyPasswordSecret: shop-db-read
