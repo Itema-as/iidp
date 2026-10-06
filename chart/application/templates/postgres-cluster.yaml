@@ -34,14 +34,15 @@ spec:
     initdb:
       database: {{ include "application.name" . }}
       owner: {{ include "application.name" . }}
-  {{- with (include "application.postgres.accessRoles" . | fromJson).roles }}
   # The roles database access opens; the owner and postgres are never
-  # handed out. They read and write data but change no schema, which stays
-  # with the migrations, and hold at most three connections each, so
-  # developers never take much of the small instance.
+  # handed out. An open role reads and writes data but changes no schema,
+  # which stays with the migrations, and holds at most three connections,
+  # so developers never take much of the small instance. A closed role is
+  # absent: CloudNativePG drops it, or never creates it.
   managed:
     roles:
-      {{- range . }}
+      {{- range (include "application.postgres.accessRoles" . | fromJson).roles }}
+      {{- if .open }}
       - name: {{ .name }}
         ensure: present
         login: true
@@ -56,8 +57,11 @@ spec:
           {{- toYaml .inRoles | nindent 10 }}
         passwordSecret:
           name: {{ .secret }}
+      {{- else }}
+      - name: {{ .name }}
+        ensure: absent
       {{- end }}
-  {{- end }}
+      {{- end }}
   storage:
     size: 5Gi
   # A fixed size whatever the Application's size. CPU is requested at a

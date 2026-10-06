@@ -214,21 +214,20 @@ with the same messages, for the CLI.
 {{- end -}}
 
 {{/*
-The database access roles that render, as JSON {"roles": [...]}, each with
-its Postgres name, its password Secret and the predefined roles it is a
-member of. A role renders only when its level is not none and the values
-file names its password Secret, which the CLI writes: an Environment
-without one is closed, whatever its level says.
+Both database access roles, as JSON {"roles": [...]}, each with its
+Postgres name, whether it is open, and for an open one its password Secret
+and the predefined roles it is a member of. A role is open only when its
+level is not none and the values file names its password Secret, which the
+CLI writes: an Environment without one is closed, whatever its level says.
 */}}
 {{- define "application.postgres.accessRoles" -}}
 {{- $access := include "application.postgres.access" . | fromJson -}}
 {{- $name := include "application.name" . -}}
-{{- $roles := list -}}
-{{- if and (ne $access.readWrite "none") .Values.postgres.readWritePasswordSecret -}}
-{{- $roles = append $roles (dict "name" (printf "%s_write" $name) "secret" (.Values.postgres.readWritePasswordSecret | toString) "inRoles" (list "pg_read_all_data" "pg_write_all_data")) -}}
-{{- end -}}
-{{- if and (ne $access.readOnly "none") .Values.postgres.readOnlyPasswordSecret -}}
-{{- $roles = append $roles (dict "name" (printf "%s_read" $name) "secret" (.Values.postgres.readOnlyPasswordSecret | toString) "inRoles" (list "pg_read_all_data")) -}}
+{{- $roles := list
+  (dict "name" (printf "%s_write" $name) "level" $access.readWrite "secret" (.Values.postgres.readWritePasswordSecret | default "" | toString) "inRoles" (list "pg_read_all_data" "pg_write_all_data"))
+  (dict "name" (printf "%s_read" $name) "level" $access.readOnly "secret" (.Values.postgres.readOnlyPasswordSecret | default "" | toString) "inRoles" (list "pg_read_all_data")) -}}
+{{- range $roles -}}
+{{- $_ := set . "open" (and (ne .level "none") (ne .secret "")) -}}
 {{- end -}}
 {{- dict "roles" $roles | toJson -}}
 {{- end -}}

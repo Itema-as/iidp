@@ -7,17 +7,21 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Itema-as/iidp/internal/render"
 )
 
 // testDatabaseAccess proves the roles database access opens on shop-prod,
 // whose fixture opens read-write for admin and read-only for pull: as
 // shop_write the developer writes a row, as shop_read reads it, and
-// neither changes the schema. It logs in over TCP through the database's
+// neither changes the schema. Closing read-only then drops shop_read. It logs in over TCP through the database's
 // -rw Service with each role's own password, from its Secret, as the
 // database tunnel will.
 func testDatabaseAccess(ctx context.Context, t *testing.T, cluster *Cluster) {
@@ -78,7 +82,65 @@ func testDatabaseAccess(ctx context.Context, t *testing.T, cluster *Cluster) {
 	}
 
 	// The database tunnel may read exactly the two password Secrets.
-	for secret, want := range map[string]string{"shop-db-write": "yes", "shop-db-read": "yes", "shop-db-app": "no", "backups-credentials": "no"} {
+	checkTunnelSecrets(ctx, t, cluster, namespace, map[string]string{"shop-db-write": "yes", "shop-db-read": "yes", "shop-db-app": "no", "backups-credentials": "no"})
+
+	// Closing read-only the way iidp app db access --read-only none does
+	// drops shop_read from the database and takes the tunnel's access to
+	// its password away.
+	err = cluster.PushToRepository(ctx, "iidp-platform", "test: iidp app db access shop --env prod --read-only none", func(dir string) (bool, error) {
+		prod := filepath.Join(dir, "applications", "shop", "prod")
+		values, err := os.ReadFile(filepath.Join(prod, "values.yaml"))
+		if err != nil {
+			return false, err
+		}
+		values, _, err = render.SetDatabaseAccess(values, render.DatabaseAccess{ReadWrite: "admin", ReadOnly: "none"})
+		if err != nil {
+			return false, err
+		}
+		if values, _, err = render.SetPasswordSecret(values, render.ReadOnlyRole, ""); err != nil {
+			return false, err
+		}
+		if err := os.WriteFile(filepath.Join(prod, "values.yaml"), values, 0o644); err != nil {
+			return false, err
+		}
+		if err := os.Remove(filepath.Join(prod, "sops", "db-read.enc.yaml")); err != nil {
+			return false, err
+		}
+		return true, os.WriteFile(filepath.Join(prod, "sops", "ksops.yaml"), render.KsopsGenerator("shop-secrets", []string{"backups-credentials.enc.yaml", "db-write.enc.yaml"}), 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.RefreshApplication(ctx, "shop-prod"); err != nil {
+		t.Fatal(err)
+	}
+	var count string
+	err = pollUntil(ctx, 3*time.Minute, 5*time.Second, func() (bool, error) {
+		out, err := cluster.Kubectl(ctx, "-n", namespace, "exec", db+"-1", "-c", "postgres", "--",
+			"psql", "-d", "shop", "-At", "-c", "SELECT count(*) FROM pg_roles WHERE rolname = 'shop_read'")
+		if err != nil {
+			return false, fmt.Errorf("counting shop_read: %w\n%s", err, out)
+		}
+		count = strings.TrimSpace(out)
+		return count == "0", nil
+	}, func() error {
+		out, _ := cluster.Kubectl(ctx, "-n", namespace, "get", "clusters.postgresql.cnpg.io", db, "-o", "jsonpath={.spec.managed.roles} {.status.managedRolesStatus}")
+		return fmt.Errorf("shop_read still exists (%s) after its level was closed; the Cluster: %s", count, out)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := psqlAs(ctx, cluster, namespace, db, "shop_write", "SELECT count(*) FROM e2e_access"); err != nil {
+		t.Errorf("shop_write cannot read after read-only closed: %v", err)
+	}
+	checkTunnelSecrets(ctx, t, cluster, namespace, map[string]string{"shop-db-write": "yes", "shop-db-read": "no"})
+}
+
+// checkTunnelSecrets checks which Secrets in namespace the database
+// tunnel's ServiceAccount may get, "yes" or "no" for each.
+func checkTunnelSecrets(ctx context.Context, t *testing.T, cluster *Cluster, namespace string, want map[string]string) {
+	t.Helper()
+	for secret, want := range want {
 		out, _ := cluster.Kubectl(ctx, "auth", "can-i", "get", "secret/"+secret, "-n", namespace, "--as", "system:serviceaccount:iidp-db-tunnel:iidp-db-tunnel")
 		if got := strings.TrimSpace(out); got != want {
 			t.Errorf("the database tunnel may get %s: %q, want %q", secret, got, want)

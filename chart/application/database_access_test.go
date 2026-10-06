@@ -20,19 +20,28 @@ const (
 	readOnlyAnnotation  = platformstate.DatabaseAccessReadOnlyAnnotation
 )
 
-// managedRoles returns the Cluster's spec.managed.roles, keyed by name.
-func managedRoles(t *testing.T, cluster object) map[string]map[string]any {
+// managedRoles returns the Cluster's spec.managed.roles that are present,
+// keyed by name, and the names of those that are absent, sorted.
+func managedRoles(t *testing.T, cluster object) (present map[string]map[string]any, absent []string) {
 	t.Helper()
-	roles := map[string]map[string]any{}
+	present = map[string]map[string]any{}
 	managed, ok := get[map[string]any](t, cluster, "spec")["managed"].(map[string]any)
 	if !ok {
-		return roles
+		return present, nil
 	}
 	for _, r := range get[[]any](t, managed, "roles") {
 		role := r.(map[string]any)
-		roles[get[string](t, role, "name")] = role
+		switch ensure := get[string](t, role, "ensure"); ensure {
+		case "present":
+			present[get[string](t, role, "name")] = role
+		case "absent":
+			absent = append(absent, get[string](t, role, "name"))
+		default:
+			t.Fatalf("role %v: ensure = %q, want present or absent", role, ensure)
+		}
 	}
-	return roles
+	slices.Sort(absent)
+	return present, absent
 }
 
 // tunnelRole returns the Environment's Role and RoleBinding for the
@@ -75,17 +84,19 @@ func TestDatabaseAccessOpensOnlyTheRolesWithALevelAndANamedPassword(t *testing.T
 	for _, tc := range []struct {
 		fixture, fullname   string
 		readWrite, readOnly string
-		// roles maps each rendered role to its password Secret.
-		roles map[string]string
+		// roles maps each open role to its password Secret; absent are the
+		// closed ones, which must not exist in the database.
+		roles  map[string]string
+		absent []string
 	}{
 		// staging defaults to read-write for push and read-only for none, so
 		// the named read-only password opens nothing.
-		{"db-access-staging-default.yaml", "shop-staging", "push", "none", map[string]string{"shop_write": "shop-staging-db-write"}},
+		{"db-access-staging-default.yaml", "shop-staging", "push", "none", map[string]string{"shop_write": "shop-staging-db-write"}, []string{"shop_read"}},
 		// prod defaults to closed.
-		{"postgres-prod.yaml", "shop", "none", "none", map[string]string{}},
-		{"db-access-prod-read-only.yaml", "shop", "none", "maintain", map[string]string{"shop_read": "shop-db-read"}},
-		// Levels without passwords: not set up yet, so effectively closed.
-		{"db-access-password-not-named.yaml", "shop-staging", "push", "pull", map[string]string{}},
+		{"postgres-prod.yaml", "shop", "none", "none", map[string]string{}, []string{"shop_read", "shop_write"}},
+		{"db-access-prod-read-only.yaml", "shop", "none", "maintain", map[string]string{"shop_read": "shop-db-read"}, []string{"shop_write"}},
+		// Levels without passwords: not set up yet, so closed.
+		{"db-access-password-not-named.yaml", "shop-staging", "push", "pull", map[string]string{}, []string{"shop_read", "shop_write"}},
 	} {
 		t.Run(tc.fixture, func(t *testing.T) {
 			objects := render(t, tc.fixture)
@@ -99,12 +110,16 @@ func TestDatabaseAccessOpensOnlyTheRolesWithALevelAndANamedPassword(t *testing.T
 				t.Errorf("%s = %v, want %q", readOnlyAnnotation, got, tc.readOnly)
 			}
 
+			present, absent := managedRoles(t, cluster)
 			roles := map[string]string{}
-			for name, role := range managedRoles(t, cluster) {
+			for name, role := range present {
 				roles[name] = get[string](t, role, "passwordSecret", "name")
 			}
 			if !mapsEqual(roles, tc.roles) {
-				t.Errorf("managed roles and their password Secrets = %v, want %v", roles, tc.roles)
+				t.Errorf("open roles and their password Secrets = %v, want %v", roles, tc.roles)
+			}
+			if !slices.Equal(absent, tc.absent) {
+				t.Errorf("absent roles = %v, want %v", absent, tc.absent)
 			}
 
 			role, binding := tunnelRole(t, objects, tc.fullname)
@@ -160,7 +175,8 @@ func TestTheAccessRolesAreMembersOfThePredefinedRolesOnly(t *testing.T) {
 		if enabled, set := get[map[string]any](t, cluster, "spec")["enableSuperuserAccess"]; set && enabled != false {
 			t.Errorf("%s: enableSuperuserAccess = %v, want the postgres superuser disabled", fixture, enabled)
 		}
-		for name, role := range managedRoles(t, cluster) {
+		present, _ := managedRoles(t, cluster)
+		for name, role := range present {
 			seen[name] = true
 			if got := anyStrings(get[[]any](t, role, "inRoles")); !slices.Equal(got, wantInRoles[name]) {
 				t.Errorf("%s: %s inRoles = %v, want exactly %v", fixture, name, got, wantInRoles[name])

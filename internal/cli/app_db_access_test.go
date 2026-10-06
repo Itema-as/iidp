@@ -334,8 +334,8 @@ func TestSecretSetRefusesTheKeysOfTheDatabasePasswords(t *testing.T) {
 	}
 }
 
-// renderEnvironment renders an Environment's committed values.yaml through
-// the chart with an image tag, as its first deploy would, and returns the
+// renderedRoles renders an Environment's committed values.yaml through the
+// chart with an image tag, as its first deploy would, and returns the open
 // managed roles of its Cluster by name. It skips without helm.
 func renderedRoles(t *testing.T, clone, environment, cluster string) map[string]any {
 	t.Helper()
@@ -359,8 +359,9 @@ func renderedRoles(t *testing.T, clone, environment, cluster string) map[string]
 		roles := map[string]any{}
 		if managed, ok := obj["spec"].(map[string]any)["managed"].(map[string]any); ok {
 			for _, r := range managed["roles"].([]any) {
-				role := r.(map[string]any)
-				roles[role["name"].(string)] = role
+				if role := r.(map[string]any); role["ensure"] == "present" {
+					roles[role["name"].(string)] = role
+				}
 			}
 		}
 		return roles

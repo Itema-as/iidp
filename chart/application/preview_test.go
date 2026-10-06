@@ -321,8 +321,9 @@ func TestAPreviewHasStagingsDatabaseAccessAndPasswords(t *testing.T) {
 	if got := annotationsOf(t, cluster); got[readWriteAnnotation] != "push" || got[readOnlyAnnotation] != "pull" {
 		t.Errorf("annotations = %v, want staging's push and pull", got)
 	}
+	present, _ := managedRoles(t, cluster)
 	roles := map[string]string{}
-	for name, role := range managedRoles(t, cluster) {
+	for name, role := range present {
 		roles[name] = get[string](t, role, "passwordSecret", "name")
 	}
 	if want := map[string]string{"shop_write": "shop-staging-db-write", "shop_read": "shop-staging-db-read"}; !mapsEqual(roles, want) {
