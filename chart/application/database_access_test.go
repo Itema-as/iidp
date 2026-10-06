@@ -12,7 +12,7 @@ import (
 )
 
 // Database access: postgres.access's levels, the <app>_read and <app>_write
-// roles they open, and what the database tunnel is granted to log in as
+// roles they open, and what the Database tunnel is granted to log in as
 // them.
 
 const (
@@ -45,25 +45,25 @@ func managedRoles(t *testing.T, cluster object) (present map[string]map[string]a
 }
 
 // tunnelRole returns the Environment's Role and RoleBinding for the
-// database tunnel, or nils when neither renders. It fails when only one
+// Database tunnel, or nils when neither renders. It fails when only one
 // does.
 func tunnelRole(t *testing.T, objects map[string]object, fullname string) (role, binding object) {
 	t.Helper()
 	role, roleOK := objects["Role/"+fullname+"-db-tunnel"]
 	binding, bindingOK := objects["RoleBinding/"+fullname+"-db-tunnel"]
 	if roleOK != bindingOK {
-		t.Fatalf("rendered Role %v and RoleBinding %v for the database tunnel; want both or neither", roleOK, bindingOK)
+		t.Fatalf("rendered Role %v and RoleBinding %v for the Database tunnel; want both or neither", roleOK, bindingOK)
 	}
 	return role, binding
 }
 
-// tunnelSecrets returns the Secrets the database tunnel's Role lets it get,
+// tunnelSecrets returns the Secrets the Database tunnel's Role lets it get,
 // checking that it grants nothing else.
 func tunnelSecrets(t *testing.T, role object) []string {
 	t.Helper()
 	rules := get[[]any](t, role, "rules")
 	if len(rules) != 1 {
-		t.Fatalf("the database tunnel's Role has %d rules, want 1: %v", len(rules), rules)
+		t.Fatalf("the Database tunnel's Role has %d rules, want 1: %v", len(rules), rules)
 	}
 	rule := rules[0]
 	if groups := anyStrings(get[[]any](t, rule, "apiGroups")); !slices.Equal(groups, []string{""}) {
@@ -125,7 +125,7 @@ func TestDatabaseAccessOpensOnlyTheRolesWithALevelAndANamedPassword(t *testing.T
 			role, binding := tunnelRole(t, objects, tc.fullname)
 			if len(tc.roles) == 0 {
 				if role != nil {
-					t.Errorf("rendered the database tunnel's Role with no role to log in as: %v", role)
+					t.Errorf("rendered the Database tunnel's Role with no role to log in as: %v", role)
 				}
 				return
 			}
@@ -138,7 +138,7 @@ func TestDatabaseAccessOpensOnlyTheRolesWithALevelAndANamedPassword(t *testing.T
 			}
 			slices.Sort(want)
 			if got := tunnelSecrets(t, role); !slices.Equal(got, want) {
-				t.Errorf("the database tunnel may get %v, want exactly %v", got, want)
+				t.Errorf("the Database tunnel may get %v, want exactly %v", got, want)
 			}
 			if ref := get[map[string]any](t, binding, "roleRef"); ref["kind"] != "Role" || ref["name"] != tc.fullname+"-db-tunnel" || ref["apiGroup"] != "rbac.authorization.k8s.io" {
 				t.Errorf("roleRef = %v, want Role %s-db-tunnel", ref, tc.fullname)

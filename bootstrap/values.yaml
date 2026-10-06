@@ -81,6 +81,18 @@ argus:
     tag: ""
     pullPolicy: IfNotPresent
 
+# The Database tunnel, served at https://db.<baseDomain>, through which
+# developers reach an Environment's database with iidp app db connect. It
+# reuses deployGate's githubOrgId, githubAPI and platformRepository.
+dbTunnel:
+  enabled: true
+  image:
+    repository: ghcr.io/itema-as/iidp-db-tunnel
+    # Empty: the version of the bootstrap release pinned in the Platform
+    # repository's platform-components.yaml (v1.2.3 runs 1.2.3).
+    tag: ""
+    pullPolicy: IfNotPresent
+
 # The guardrails on Application namespaces (see README.md, "Guardrails").
 guardrails:
   # What the policy bindings do when a check fails. Warn and Audit let the

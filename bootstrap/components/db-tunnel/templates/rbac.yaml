@@ -1,0 +1,73 @@
+# The tunnel reads each Environment's Cluster for its access levels and
+# roles, and records sessions as Events. The access roles' password Secrets
+# are granted Environment by Environment, by a Role the application chart
+# renders (postgres-tunnel-role.yaml) for exactly the open roles' Secrets.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: iidp-db-tunnel
+  labels:
+    {{- include "db-tunnel.labels" . | nindent 4 }}
+# Not mounted into every pod that uses this service account; the tunnel's
+# Deployment asks for the token itself.
+automountServiceAccountToken: false
+---
+# Cluster-wide because Environment namespaces come and go and RBAC cannot
+# select namespaces by label; the tunnel only gets the Cluster of the
+# Environment a connection names.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: iidp-db-tunnel
+  labels:
+    {{- include "db-tunnel.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: iidp-db-tunnel
+  labels:
+    {{- include "db-tunnel.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: iidp-db-tunnel
+subjects:
+  - kind: ServiceAccount
+    name: iidp-db-tunnel
+    namespace: {{ .Release.Namespace }}
+---
+# An Event for each session start, session end and refusal. An Event lives
+# in the namespace of the object it points at, the Environment's ArgoCD
+# Application, so this is limited to argocd.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: iidp-db-tunnel-events
+  namespace: argocd
+  labels:
+    {{- include "db-tunnel.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: iidp-db-tunnel-events
+  namespace: argocd
+  labels:
+    {{- include "db-tunnel.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: iidp-db-tunnel-events
+subjects:
+  - kind: ServiceAccount
+    name: iidp-db-tunnel
+    namespace: {{ .Release.Namespace }}

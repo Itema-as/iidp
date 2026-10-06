@@ -233,3 +233,19 @@ func HasEnvironment(dir, application, environment string) (bool, error) {
 		return false, fmt.Errorf("checking for the %s Environment: %w", environment, err)
 	}
 }
+
+// LiveEnvironments are the Environments the clone at dir has for
+// application, those of Environments with a live application.yaml.
+func LiveEnvironments(dir, application string) ([]string, error) {
+	var out []string
+	for _, environment := range Environments {
+		live, err := HasEnvironment(dir, application, environment)
+		if err != nil {
+			return nil, err
+		}
+		if live {
+			out = append(out, environment)
+		}
+	}
+	return out, nil
+}

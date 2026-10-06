@@ -1,0 +1,5 @@
+apiVersion: v2
+name: db-tunnel
+description: The Database tunnel - through which developers reach an Environment's database with iidp app db connect, served at db.<baseDomain>. Rendered by the db-tunnel Application of the bootstrap when dbTunnel.enabled is true.
+type: application
+version: 0.1.0

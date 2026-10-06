@@ -233,7 +233,7 @@ CLI writes: an Environment without one is closed, whatever its level says.
 {{- end -}}
 
 {{/*
-The name of the Role and RoleBinding that let the database tunnel read the
+The name of the Role and RoleBinding that let the Database tunnel read the
 access roles' password Secrets.
 */}}
 {{- define "application.postgres.tunnelRole" -}}

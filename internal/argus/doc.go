@@ -208,6 +208,11 @@
 //	 "seam": true}                       the one "since Argus restarted at
 //	                                     hh:mm" entry
 //
+// A note about a database session, from the Database tunnel's Events,
+// says in the tunnel's own words who connected to which Environment's
+// database as which role, when the session ended and why, or why it was
+// refused.
+//
 // feed.go lists which changes are loud, normal and quiet. The feed keeps
 // the last 200 notes or 24 hours of them, whichever is fewer; a browser
 // that keeps its own feed from note messages should drop the same.

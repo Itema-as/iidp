@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/Itema-as/iidp/internal/render"
 )
 
 // DefaultBaseURL is the GitHub REST API root.
@@ -162,10 +164,31 @@ func (c *Client) GetRepository(ctx context.Context, owner, name string) (Reposit
 }
 
 // ReadableRepository is what RepositoryByID reads: the repository's
-// current name and whether the token may read it.
+// current name and the token's permissions on it. GitHub's triage
+// permission is not kept: it only ever comes with pull.
 type ReadableRepository struct {
-	FullName string
-	CanPull  bool
+	FullName    string
+	CanPull     bool
+	CanPush     bool
+	CanMaintain bool
+	CanAdmin    bool
+}
+
+// Permission is the token's highest permission on the repository, in the
+// words of the database access levels: render.AccessAdmin, AccessMaintain,
+// AccessPush or AccessPull, or "" for none.
+func (r ReadableRepository) Permission() string {
+	switch {
+	case r.CanAdmin:
+		return render.AccessAdmin
+	case r.CanMaintain:
+		return render.AccessMaintain
+	case r.CanPush:
+		return render.AccessPush
+	case r.CanPull:
+		return render.AccessPull
+	}
+	return ""
 }
 
 // RepositoryByID reads a repository by its numeric id, which survives
@@ -175,13 +198,36 @@ func (c *Client) RepositoryByID(ctx context.Context, id int64) (ReadableReposito
 	var repo struct {
 		FullName    string `json:"full_name"`
 		Permissions struct {
-			Pull bool `json:"pull"`
+			Pull     bool `json:"pull"`
+			Push     bool `json:"push"`
+			Maintain bool `json:"maintain"`
+			Admin    bool `json:"admin"`
 		} `json:"permissions"`
 	}
 	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repositories/%d", id), nil, &repo); err != nil {
 		return ReadableRepository{}, fmt.Errorf("reading repository id %d: %w", id, err)
 	}
-	return ReadableRepository{FullName: repo.FullName, CanPull: repo.Permissions.Pull}, nil
+	return ReadableRepository{
+		FullName:    repo.FullName,
+		CanPull:     repo.Permissions.Pull,
+		CanPush:     repo.Permissions.Push,
+		CanMaintain: repo.Permissions.Maintain,
+		CanAdmin:    repo.Permissions.Admin,
+	}, nil
+}
+
+// AuthenticatedLogin reads the login of the user the token belongs to.
+func (c *Client) AuthenticatedLogin(ctx context.Context) (string, error) {
+	var user struct {
+		Login string `json:"login"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/user", nil, &user); err != nil {
+		return "", fmt.Errorf("reading the GitHub account of your token: %w", err)
+	}
+	if user.Login == "" {
+		return "", errors.New("reading the GitHub account of your token: GitHub returned no login")
+	}
+	return user.Login, nil
 }
 
 // IsUnauthorized reports whether err is GitHub's 401: a token it does not

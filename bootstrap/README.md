@@ -15,6 +15,7 @@ The ArgoCD app-of-apps that installs every Phase 1 Platform component. It is a H
 | `guardrails` | [`components/guardrails`](components/guardrails): four ValidatingAdmissionPolicies and their bindings on Application namespaces (image origin, container limits, Service types, Ingress hosts). See [Guardrails](#guardrails) | cluster-scoped |
 | `deploy-gate` | [`components/deploy-gate`](components/deploy-gate): the Deploy gate (`cmd/iidp-deploy-gate`), the one way an Application repository's CI deploys and promotes, served at `deploy.<baseDomain>` through an Ingress covered by the wildcard (below) | `argocd` |
 | `argus` | [`components/argus`](components/argus): Argus (`cmd/iidp-argus`), the live, read-only view of the Platform, served at `argus.<baseDomain>` behind Itema login. Only with `argus.enabled` (below) | `argus` |
+| `db-tunnel` | [`components/db-tunnel`](components/db-tunnel): the Database tunnel (`cmd/iidp-db-tunnel`), through which a developer reaches an Environment's database with `iidp app db connect`, served at `db.<baseDomain>` through an Ingress covered by the wildcard, not behind Itema login. Only with `dbTunnel.enabled` (below) | `iidp-db-tunnel` |
 
 Every version is pinned in [`versions.yaml`](versions.yaml). The Applications share one sync policy (`templates/_helpers.tpl`): automated with prune and self-heal, server-side apply, and unlimited retries, so a component that needs another one's CRDs or namespace converges on its own. Each retry syncs the newest commit (`retry.refresh: true`), so a fix pushed while a sync keeps failing applies on the next retry instead of waiting for someone to terminate the operation. No Application carries the resources finalizer: removing a component from the bootstrap leaves what it installed in the cluster, to be deleted by hand, rather than cascading into the deletion of CRDs and everything defined with them.
 
@@ -97,6 +98,8 @@ To add or change it by hand: write the Secret in the clear at `bootstrap/templat
 | `deployGate.githubAPI`, `deployGate.platformRepository`, `deployGate.appSecret` | bootstrap | The GitHub API, the Platform repository the gate writes, and the Secret with the App credential (default `platform-repo-github-app`); only a test cluster changes them |
 | `argus.enabled` | bootstrap | Whether the Platform runs [Argus](#argus) (default `true`); `false` renders none of it |
 | `argus.image.*` | bootstrap | Argus's image; `tag` empty (the default) means the version of the bootstrap release `platform-components.yaml` pins |
+| `dbTunnel.enabled` | bootstrap | Whether the Platform runs [the Database tunnel](#the-database-tunnel) (default `true`); `false` renders none of it |
+| `dbTunnel.image.*` | bootstrap | The tunnel's image; `tag` empty (the default) means the version of the bootstrap release `platform-components.yaml` pins |
 | `agePublicKey` | CLI | What `iidp secret set` and the database access passwords are encrypted with; the private key exists only in the cluster |
 | `backupsBucket` | CLI | The Object Storage bucket for CloudNativePG backups. Required for `--postgres` |
 | `objectStorageEndpoint` | CLI | The S3 endpoint of `backupsBucket`'s location, for example `https://hel1.your-objectstorage.com`. Required for `--postgres` |
@@ -218,6 +221,22 @@ It is cluster-wide because Environment namespaces come and go; the informers nar
 
 Its detail card links out, read-only, to ArgoCD, Grafana Cloud, the Platform repository and this repository. The `argus` Application passes it `platform.yaml`'s `argocdURL` and `grafanaURL`, `deployGate.platformRepository`, and `bootstrap.repoURL` with the pinned revision, as the component's `links.*` values and from there as `IIDP_ARGUS_*` environment variables; a link whose address is empty is left out. The page itself loads nothing from outside Argus: the frontend, three.js included, is embedded in the binary, and a Content-Security-Policy allows nothing else ([`docs/implementation-notes/119-argus-frontend.md`](../docs/implementation-notes/119-argus-frontend.md)).
 
+## The Database tunnel
+
+With `dbTunnel.enabled` (the default), the `db-tunnel` Application renders [`components/db-tunnel`](components/db-tunnel) at the same pin as this chart, into the namespace `iidp-db-tunnel`, which it labels for Pod Security `restricted` (enforce, warn and audit): a Deployment of one replica, a Service, the ServiceAccount `iidp-db-tunnel` with the RBAC below, and an Ingress at `db.<baseDomain>`. The Ingress has TLS with no secret of its own, so Traefik serves the wildcard, and external-dns makes its DNS record. It is not behind Itema login: `iidp app db connect` is no browser, and the developer's own GitHub token is what lets them in. It runs the image `ghcr.io/itema-as/iidp-db-tunnel:<version>`, which the release workflow publishes for every `v*` tag next to the gate's; `<version>` is the pinned bootstrap revision without its `v`, and a pin that is not a release tag fails only this Application. It takes `deployGate.githubOrgId`, `deployGate.githubAPI` and `deployGate.platformRepository` from `platform.yaml`. With `dbTunnel.enabled: false` the bootstrap renders none of it, and nothing else changes: the application chart's Roles (below) then bind a ServiceAccount that does not exist, and grant nothing.
+
+`iidp app db connect` opens one WebSocket to it per Postgres connection, with the developer's token, and every one runs the whole check: the developer's login and their permission on the Application repository from GitHub, the way the Deploy gate's status endpoint reads it (a clone of the Platform repository with that token, the Application's binding, `GET /repositories/<id>`); the Environment's access levels from the annotations on its `Cluster`; the role for their permission; and that role's password. The tunnel then logs in to the Environment's `<cluster>-rw` Service as that role itself, with SCRAM-SHA-256 over TLS, so no password leaves the cluster, and copies bytes both ways until either side closes, the session has had no traffic for 30 minutes, or it has lasted 8 hours. It holds no GitHub credential of its own. Each session's start and end, and each refusal, is an `events.k8s.io/v1` Event regarding the Environment's ArgoCD Application in `argocd`, which Argus shows in the Environment's activity, and a JSON log line, which Alloy ships to Grafana Cloud; neither holds SQL, query results, passwords or tokens. The protocol and what was checked are in [`docs/implementation-notes/159-database-tunnel.md`](../docs/implementation-notes/159-database-tunnel.md), and why there is a tunnel at all in [ADR-0009](../docs/adr/0009-developers-reach-an-environments-database-through-a-database-tunnel.md).
+
+Its ServiceAccount `iidp-db-tunnel/iidp-db-tunnel` may (`components/db-tunnel/templates/rbac.yaml`):
+
+| Kind | Where | Verbs | Why |
+|---|---|---|---|
+| `clusters.postgresql.cnpg.io` | every namespace (the ClusterRole `iidp-db-tunnel`) | `get` | The Environment's `Cluster`: its access levels, and each role's name and password Secret |
+| `events` (`events.k8s.io`) | `argocd` only (the Role `iidp-db-tunnel-events`) | `create` | An Event for each session start, session end and refusal, in the namespace of the ArgoCD Application it points at |
+| `secrets` | each Environment's namespace, by name | `get` | The open access roles' password Secrets, and no others: a `Role` and `RoleBinding` `<fullname>-db-tunnel` the application chart renders with `resourceNames` ([`chart/application/README.md`](../chart/application/README.md), "Database access") |
+
+The first is cluster-wide because Environment namespaces come and go; the tunnel only gets the `Cluster` a connection names. Nothing else is granted, and `bootstrap_test.go` fails on any other grant. The application chart's `platform.databaseTunnel` defaults name this ServiceAccount, and a test keeps the two equal. It asks for 5m of CPU and 32Mi of memory, with a 128Mi memory limit, like the gate: a session is two copies of a connection's bytes, and a check is one shallow clone and a few calls. It runs one replica, since a session lives in the process that opened it and a Ctrl-C's cancel request must reach the same one.
+
 ## Verifying without a cluster
 
 ```sh
@@ -225,6 +244,7 @@ helm lint --strict bootstrap --values test/e2e/fixtures/platform-repo/platform.y
 helm lint --strict bootstrap/components/tls
 helm lint --strict bootstrap/components/deploy-gate --set bootstrapRevision=v0.0.0
 helm lint --strict bootstrap/components/argus --set bootstrapRevision=v0.0.0
+helm lint --strict bootstrap/components/db-tunnel --set bootstrapRevision=v0.0.0
 helm lint --strict bootstrap/components/guardrails
 go test ./bootstrap/...          # renders with helm template and checks the Applications and the guardrails
 ```

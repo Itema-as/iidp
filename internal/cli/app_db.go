@@ -14,9 +14,10 @@ import (
 func newAppDBCommand(deps Dependencies) *cobra.Command {
 	db := &cobra.Command{
 		Use:   "db",
-		Short: "Manage developers' access to an Application's databases",
+		Short: "Set who among an Application's developers may reach its databases, and reach them",
 	}
 	db.AddCommand(newAppDBAccessCommand(deps))
+	db.AddCommand(newAppDBConnectCommand(deps))
 	return db
 }
 

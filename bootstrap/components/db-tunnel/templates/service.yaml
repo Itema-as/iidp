@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: iidp-db-tunnel
+  labels:
+    {{- include "db-tunnel.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: iidp-db-tunnel
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# Not behind Itema login: iidp app db connect is no browser, and the
+# developer's GitHub token is what lets them in. Traefik passes the
+# WebSocket upgrade through as it is. TLS with no secret of its own: Traefik
+# serves the default store's wildcard certificate.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: iidp-db-tunnel
+  labels:
+    {{- include "db-tunnel.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ include "db-tunnel.host" . }}
+  rules:
+    - host: {{ include "db-tunnel.host" . }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: iidp-db-tunnel
+                port:
+                  name: http

@@ -196,6 +196,7 @@ export const COMPONENTS = {
   'cert-manager': ['cert-manager', 'Issues and renews the certificates'],
   'cloudnative-pg': ['CloudNativePG', 'Runs the Postgres databases'],
   'cnpg-barman-cloud': ['Barman Cloud', 'Backs the databases up to Object Storage'],
+  'db-tunnel': ['Database tunnel', "Lets developers reach an Environment's database from their own machine"],
   'deploy-gate': ['Deploy gate', 'Checks and records every Deploy and Promote'],
   'external-dns': ['external-dns', "Keeps the DNS records for the Platform's addresses"],
   guardrails: ['Guardrails', 'Admission policies on the Application namespaces'],

@@ -281,7 +281,7 @@ func TestAPreviewsDatabaseHasNoBackupsAndKeepsStagingsMigration(t *testing.T) {
 			t.Errorf("rendered %v, want no backup objects", found)
 		}
 	}
-	// The only RBAC a preview renders is the database tunnel's.
+	// The only RBAC a preview renders is the Database tunnel's.
 	for _, kind := range []string{"Role", "RoleBinding"} {
 		if found := objectsOfKind(objects, kind); !slices.Equal(found, []string{kind + "/shop-pr-42-db-tunnel"}) {
 			t.Errorf("rendered %v, want only %s/shop-pr-42-db-tunnel", found, kind)
@@ -340,7 +340,7 @@ func TestAPreviewHasStagingsDatabaseAccessAndPasswords(t *testing.T) {
 		t.Fatalf("no Role/shop-pr-42-db-tunnel; got %v", keys(objects))
 	}
 	if got := tunnelSecrets(t, role); !slices.Equal(got, []string{"shop-staging-db-read", "shop-staging-db-write"}) {
-		t.Errorf("the database tunnel may get %v, want staging's two password Secrets", got)
+		t.Errorf("the Database tunnel may get %v, want staging's two password Secrets", got)
 	}
 	if ns := get[map[string]any](t, binding, "metadata")["namespace"]; ns != nil && ns != "shop-pr-42" {
 		t.Errorf("RoleBinding namespace = %v, want the preview's", ns)

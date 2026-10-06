@@ -67,3 +67,7 @@ _Avoid_: dashboard, Platform map
 **Deploy gate**:
 The part of the Platform through which an Application repository's CI deploys and promotes. It checks that the caller is that Application's own repository and may deploy that Environment, then records the new image in the Platform repository. It is the only way an Application repository's CI can change the Platform.
 _Avoid_: deploy service, deploy API, write-back
+
+**Database tunnel**:
+The part of the Platform through which a developer reaches an Environment's database from their own machine.
+_Avoid_: DB proxy, bastion, port-forward

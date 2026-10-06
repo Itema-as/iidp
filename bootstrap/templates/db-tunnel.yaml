@@ -1,0 +1,39 @@
+{{- if .Values.dbTunnel.enabled }}
+# The Database tunnel, through which developers reach an Environment's
+# database with iidp app db connect. Its namespace and ServiceAccount are
+# the ones the application chart's Roles grant the access roles' password
+# Secrets to (platform.databaseTunnel in chart/application).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: db-tunnel
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.bootstrap.repoURL }}
+    targetRevision: {{ .Values.bootstrap.targetRevision | quote }}
+    path: bootstrap/components/db-tunnel
+    helm:
+      releaseName: db-tunnel
+      valuesObject:
+        baseDomain: {{ .Values.baseDomain }}
+        bootstrapRevision: {{ .Values.bootstrap.targetRevision | quote }}
+        githubOrgId: {{ .Values.deployGate.githubOrgId | int64 }}
+        githubAPI: {{ .Values.deployGate.githubAPI | quote }}
+        platformRepository: {{ .Values.deployGate.platformRepository | quote }}
+        image:
+          repository: {{ .Values.dbTunnel.image.repository }}
+          tag: {{ .Values.dbTunnel.image.tag | quote }}
+          pullPolicy: {{ .Values.dbTunnel.image.pullPolicy }}
+  destination:
+    {{- include "iidp-bootstrap.destination" . | nindent 4 }}
+    namespace: iidp-db-tunnel
+  syncPolicy:
+    {{- include "iidp-bootstrap.syncPolicy" (list) | nindent 4 }}
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/warn: restricted
+        pod-security.kubernetes.io/audit: restricted
+{{- end }}

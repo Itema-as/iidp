@@ -251,7 +251,44 @@ An Environment that never set a level has its default: read-write `push` and rea
 
 The command writes the levels to the Environment's values file. For each level that is not `none` it also generates the role's password and commits it SOPS-encrypted with the Platform's age key, the way `iidp secret set` does (so it needs `sops` on `PATH`); a password already there is kept. A level set to `none` removes its role's password, and the role is dropped from the database. Without `--read-write` or `--read-only` it writes the passwords the current levels need, defaults included: that is how an Environment made before database access is opened at its defaults. A role exists only while its level is not `none` and its password is written, so such an Environment stays closed until then, whatever its default says; `iidp app status` and Argus show such a level as not set up. `iidp app create --postgres` and `iidp app add-capability --postgres` or `--staging` write each new Environment's default levels and passwords from the start; on a Platform whose `platform.yaml` has no `agePublicKey`, they write the levels only and say which Environment stays closed. Whoever can write to the Platform repository can change the levels, as with every other setting; the CLI does not check permissions on the Application repository.
 
-The roles never include the database's owner, which runs the migrations, or the `postgres` superuser, which stays disabled. Each role holds at most 3 connections. A role that is closed is dropped as soon as the Environment syncs. A session still open as that role ends at its next statement, except one holding a temporary table, which keeps the role until the session ends. `iidp app status` and Argus show each Environment's levels. See [`chart/application/README.md`](chart/application/README.md).
+The roles never include the database's owner, which runs the migrations, or the `postgres` superuser, which stays disabled. Each role holds at most 3 connections. A role that is closed is dropped as soon as the Environment syncs. A session still open as that role ends at its next statement, except one holding a temporary table, which keeps the role until the session ends. `iidp app status` and Argus show each Environment's levels. Developers reach the database at those levels with `iidp app db connect` (below). See [`chart/application/README.md`](chart/application/README.md).
+
+### `app db connect`
+
+Reach an Environment's database from your own machine, with any Postgres client:
+
+```sh
+iidp app db connect shop
+iidp app db connect shop --env prod --read-only
+iidp app db connect shop --pr 42
+iidp app db connect shop --psql
+```
+
+```
+Connected to shop staging's database through the Database tunnel at https://db.app.itma.no:
+
+  postgresql://shop_write@127.0.0.1:52144/shop?sslmode=disable
+
+shop staging, read-write as shop_write. Each connection is checked again and recorded; a session ends after 30 minutes without traffic and after 8 hours.
+Press Ctrl-C to stop.
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--env` | staging when the Application has one, else prod | `prod` or `staging` |
+| `--pr` | none | The Preview Environment of this pull request; it has staging's levels. It cannot be combined with `--env` |
+| `--read-only` | off | Connect as `<name>_read` even when you qualify for read-write |
+| `--psql` | off | Run `psql` with the connection string, and exit with its status when it ends. Without `psql` on `PATH` the command says so, and suggests leaving `--psql` out |
+
+The command goes through the Database tunnel at `https://db.<baseDomain>` (`baseDomain` from `platform.yaml`; when `platform.yaml` cannot be read, it says so and asks Itema's, `https://db.app.itma.no`), with your `gh auth` token, and never talks to Kubernetes. It connects directly, not through an HTTPS proxy. It first asks the tunnel to run its check once, so a refusal comes back straight away, with the tunnel's reason and a non-zero exit. It then listens on `127.0.0.1`, on a free port, until Ctrl-C, and carries each connection to that port over a WebSocket of its own to the tunnel. On every connection the tunnel asks GitHub for your permission on the Application repository, reads the Environment's levels from its database `Cluster` (what is deployed, not what the Platform repository says), and logs in to the database itself, as `<name>_write` when you qualify for read-write and did not ask for `--read-only`, else as `<name>_read`. So you need no password, and none reaches your machine; whatever user, database and password your client sends are ignored. Of the client's startup parameters only `application_name`, `client_encoding`, `DateStyle`, `TimeZone`, `IntervalStyle`, `extra_float_digits` and `search_path` reach the database; `options` is dropped, along with anything else. Postgres's own refusals reach your client as they are, such as a role's limit of 3 connections. The refusals are:
+
+- GitHub does not accept your token, or you cannot read the Application repository;
+- the Application is bound to no repository, or to one outside `Itema-as`;
+- an unknown Environment, or a pull request with no Preview Environment;
+- you qualify for neither level: the message names the permission each level needs, and `iidp app db access` changes them;
+- you qualify, but the level's role or password is not there yet: `no database access set up for <environment> yet, run iidp app db access <name> --env <environment>`.
+
+While the command runs, any process on your machine can connect to its port without a password, as with `kubectl port-forward`, and does so as you; stop it with Ctrl-C when you are done. A session ends after 30 minutes with no traffic either way, and after 8 hours in any case; neither is a setting. Ctrl-C in `psql` cancels the running query, as it does on a direct connection. Each session's start and end, and each refusal, is recorded as a Kubernetes Event on the Environment's ArgoCD Application, which Argus shows in the Environment's activity, and as a log line in Grafana Cloud with your GitHub login, the role, and at the end its length and bytes each way. Neither records SQL, query results, passwords or tokens. Why it works this way is [ADR-0009](docs/adr/0009-developers-reach-an-environments-database-through-a-database-tunnel.md).
 
 ### `app status`
 
@@ -378,6 +415,7 @@ The layout follows [`docs/design.md`](docs/design.md). Not every directory exist
 cmd/iidp/            CLI entrypoint
 cmd/iidp-deploy-gate/  the Deploy gate, the service CI deploys through (image only)
 cmd/iidp-argus/      Argus, the live view of the Platform (image only); web/ is its page
+cmd/iidp-db-tunnel/  the Database tunnel, through which developers reach a database (image only)
 internal/            wizard, github, platformrepo, render, deploygate, oidc
 chart/application/   the generic Helm chart
 infra/               OpenTofu for the node, cloud-init for k3s
@@ -419,7 +457,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The `Release` workflow runs GoReleaser, which builds darwin and linux binaries for amd64 and arm64, publishes them with checksums to GitHub Releases, and updates the Homebrew cask in `Itema-as/homebrew-tap`. It also pushes the Deploy gate's image, `ghcr.io/itema-as/iidp-deploy-gate:<version>`, which a Platform pinned to that bootstrap release runs (`bootstrap/README.md`); the release job needs `packages: write` and a GHCR login for that, and sets `IIDP_PUBLISH_DEPLOY_GATE=true`, without which `.goreleaser.yaml` skips the image. Pre-release tags such as `v0.2.0-rc1` are published as GitHub pre-releases and do not touch the tap.
+The `Release` workflow runs GoReleaser, which builds darwin and linux binaries for amd64 and arm64, publishes them with checksums to GitHub Releases, and updates the Homebrew cask in `Itema-as/homebrew-tap`. It also pushes the Deploy gate's image, `ghcr.io/itema-as/iidp-deploy-gate:<version>`, Argus's, `ghcr.io/itema-as/iidp-argus:<version>`, and the Database tunnel's, `ghcr.io/itema-as/iidp-db-tunnel:<version>`, which a Platform pinned to that bootstrap release runs (`bootstrap/README.md`); the release job needs `packages: write` and a GHCR login for that, and sets `IIDP_PUBLISH_DEPLOY_GATE=true`, `IIDP_PUBLISH_ARGUS=true` and `IIDP_PUBLISH_DB_TUNNEL=true`, without which `.goreleaser.yaml` skips each image. Pre-release tags such as `v0.2.0-rc1` are published as GitHub pre-releases and do not touch the tap.
 
 Once a release is out, the workflow moves the major tag (`v0` for `v0.x.y`) to it, only ever forward, so every Application repository calling the reusable deploy workflow at `@v0` runs it from then on. So the next deploy of every Application picks up any change to [`.github/workflows/application-deploy.yaml`](.github/workflows/application-deploy.yaml). Anything that breaks a caller needs a new major instead: removing or renaming an input, adding a required one, needing a permission callers don't grant (today `contents: read`, `packages: write`, `id-token: write`), or needing a different trigger. Don't push `v0` by hand; the `Release` and `e2e` workflows only react to `vX.Y.Z` tags, so it would start nothing, but it would move every Application's deploy workflow at once. See `docs/implementation-notes/74-reusable-deploy-workflow.md`.
 
