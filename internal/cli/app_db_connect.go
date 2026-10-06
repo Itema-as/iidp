@@ -102,12 +102,16 @@ func runAppDBConnect(cmd *cobra.Command, name string, opts dbConnectOptions, dep
 	if err != nil {
 		return fmt.Errorf("not logged in to GitHub, and the database tunnel needs your GitHub token to let you in: %w", err)
 	}
+	// The tunnel's address follows platform.yaml's baseDomain. If the
+	// Platform repository cannot be read, Itema's Platform is assumed: the
+	// tunnel then says for itself whether the token may connect.
+	url := platform.DefaultDatabaseTunnelURL
 	writer := &platformrepo.Writer{URL: opts.platformRepo, Auth: git.Auth{Token: token}}
-	cfg, err := writer.ReadConfig(cmd.Context())
-	if err != nil {
-		return fmt.Errorf("reading the database tunnel's address from platform.yaml: %w", err)
+	if cfg, err := writer.ReadConfig(cmd.Context()); err == nil {
+		url = cfg.DatabaseTunnelURL()
+	} else {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Could not read platform.yaml, so asking the Database tunnel at %s: %v\n", url, err)
 	}
-	url := cfg.DatabaseTunnelURL()
 	var tunnel DatabaseTunnel = &api.Client{URL: url, Token: token}
 	if deps.DatabaseTunnel != nil {
 		tunnel = deps.DatabaseTunnel(url, token)

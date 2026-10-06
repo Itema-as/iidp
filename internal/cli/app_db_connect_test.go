@@ -97,7 +97,12 @@ type connectRun struct {
 // as Ctrl-C does.
 func dbConnect(t *testing.T, tunnel *fakeTunnel, args ...string) *connectRun {
 	t.Helper()
-	url := newPlatformRepository(t, statusPlatformYAML)
+	return dbConnectTo(t, newPlatformRepository(t, statusPlatformYAML), tunnel, args...)
+}
+
+// dbConnectTo is dbConnect with the Platform repository at url.
+func dbConnectTo(t *testing.T, url string, tunnel *fakeTunnel, args ...string) *connectRun {
+	t.Helper()
 	ctx, stop := context.WithCancel(context.Background())
 	run := &connectRun{stdout: &syncBuffer{}, stderr: &syncBuffer{}, done: make(chan int, 1), stop: stop}
 	deps := cli.Dependencies{
@@ -278,5 +283,22 @@ func TestDBConnectPsqlSaysWhenPsqlIsMissing(t *testing.T) {
 	}
 	if stderr := run.stderr.String(); !strings.Contains(stderr, "psql is not on your PATH") || !strings.Contains(stderr, "leave out --psql") {
 		t.Errorf("stderr = %q, want it to say psql is missing and to leave out --psql", stderr)
+	}
+}
+
+// Without platform.yaml, iidp app db connect says so and asks Itema's
+// Platform's Database tunnel, which refuses for itself whoever may not
+// connect, as iidp app status does with the Deploy gate.
+func TestDBConnectFallsBackToTheDefaultTunnelWithoutPlatformYAML(t *testing.T) {
+	tunnel := &fakeTunnel{grant: stagingGrant()}
+	run := dbConnectTo(t, "file://"+filepath.Join(t.TempDir(), "missing.git"), tunnel, "shop")
+	run.address(t)
+	run.stop()
+	run.exitCode(t)
+	if tunnel.url != "https://db.app.itma.no" {
+		t.Errorf("the tunnel is %q, want Itema's, platform.DefaultDatabaseTunnelURL", tunnel.url)
+	}
+	if !strings.Contains(run.stderr.String(), "Could not read platform.yaml, so asking the Database tunnel at https://db.app.itma.no") {
+		t.Errorf("stderr = %q, want it to say why it asks the default tunnel", run.stderr)
 	}
 }
