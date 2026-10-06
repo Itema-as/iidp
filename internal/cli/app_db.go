@@ -17,6 +17,7 @@ func newAppDBCommand(deps Dependencies) *cobra.Command {
 		Short: "Manage developers' access to an Application's databases",
 	}
 	db.AddCommand(newAppDBAccessCommand(deps))
+	db.AddCommand(newAppDBConnectCommand(deps))
 	return db
 }
 
