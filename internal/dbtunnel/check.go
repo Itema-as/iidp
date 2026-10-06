@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Itema-as/iidp/internal/dbtunnel/api"
@@ -129,7 +130,7 @@ func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 
 	if grant.Environment == api.EnvironmentAuto {
 		grant.Environment = "prod"
-		if contains(environments, "staging") {
+		if slices.Contains(environments, "staging") {
 			grant.Environment = "staging"
 		}
 	}
@@ -140,7 +141,7 @@ func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 		grant.Cluster = req.Application + "-db"
 	}
 	preview := previewEnvironment.MatchString(grant.Environment)
-	if !preview && !contains(environments, grant.Environment) {
+	if !preview && !slices.Contains(environments, grant.Environment) {
 		return grant, refuse(http.StatusNotFound, "unknown Environment: %s has no %s Environment", req.Application, grant.Environment)
 	}
 
@@ -244,23 +245,6 @@ func (t *Tunnel) password(ctx context.Context, namespace, name, role string) (st
 	return string(password), nil
 }
 
-// accessRefusal is a repository check's refusal with its HTTP status.
-func accessRefusal(err error) error {
-	var ref *repoaccess.Refusal
-	if !errors.As(err, &ref) {
-		return err
-	}
-	status := map[repoaccess.Reason]int{
-		repoaccess.TokenRejected:      http.StatusUnauthorized,
-		repoaccess.PlatformUnreadable: http.StatusForbidden,
-		repoaccess.NotBound:           http.StatusForbidden,
-		repoaccess.OutsideOrg:         http.StatusForbidden,
-		repoaccess.NoAccess:           http.StatusForbidden,
-		repoaccess.Unavailable:        http.StatusBadGateway,
-	}[ref.Reason]
-	return refuse(status, "%s", ref.Message)
-}
-
 // hasDatabase reports whether the Environment's values file in the clone
 // at dir turns Postgres on.
 func hasDatabase(dir, application, environment string) bool {
@@ -277,11 +261,11 @@ func isNotFound(err error) bool {
 	return errors.As(err, &se) && se.Status == http.StatusNotFound
 }
 
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
+// accessRefusal is a repository check's refusal with its HTTP status.
+func accessRefusal(err error) error {
+	var ref *repoaccess.Refusal
+	if errors.As(err, &ref) {
+		return refuse(ref.Status(), "%s", ref.Message)
 	}
-	return false
+	return err
 }

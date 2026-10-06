@@ -9,6 +9,7 @@ package repoaccess
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/Itema-as/iidp/internal/git"
@@ -42,6 +43,17 @@ type Refusal struct {
 }
 
 func (r *Refusal) Error() string { return r.Message }
+
+// Status is the HTTP status a service answers the refusal with.
+func (r *Refusal) Status() int {
+	switch r.Reason {
+	case TokenRejected:
+		return http.StatusUnauthorized
+	case Unavailable:
+		return http.StatusBadGateway
+	}
+	return http.StatusForbidden
+}
 
 func refuse(reason Reason, format string, args ...any) *Refusal {
 	return &Refusal{Reason: reason, Message: fmt.Sprintf(format, args...)}

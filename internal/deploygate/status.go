@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -93,7 +94,7 @@ func (g *Gate) status(ctx context.Context, r *http.Request, application string) 
 	envs = withRepositoryEnvironments(envs, environments)
 	for i := range envs {
 		env := &envs[i]
-		if env.Image == nil || !contains(environments, env.Name) {
+		if env.Image == nil || !slices.Contains(environments, env.Name) {
 			continue
 		}
 		at, ok, err := platformrepo.TagDeployedAt(ctx, repo, application, env.Name, env.Image.Tag)
@@ -147,23 +148,6 @@ func databaseAccess(dir, application, environment string) *platformstate.Databas
 // statusPurpose words the status endpoint's repository check.
 var statusPurpose = repoaccess.Purpose{Service: "the Deploy gate", Action: "see %s status"}
 
-// accessRefusal answers a repository check's refusal with its HTTP status.
-func accessRefusal(err error) error {
-	var ref *repoaccess.Refusal
-	if !errors.As(err, &ref) {
-		return err
-	}
-	status := map[repoaccess.Reason]int{
-		repoaccess.TokenRejected:      http.StatusUnauthorized,
-		repoaccess.PlatformUnreadable: http.StatusForbidden,
-		repoaccess.NotBound:           http.StatusForbidden,
-		repoaccess.OutsideOrg:         http.StatusForbidden,
-		repoaccess.NoAccess:           http.StatusForbidden,
-		repoaccess.Unavailable:        http.StatusBadGateway,
-	}[ref.Reason]
-	return refuse(status, "%s", ref.Message)
-}
-
 // withRepositoryEnvironments adds an entry, with no ArgoCD state, for each
 // Environment the Platform repository has and the cluster does not yet:
 // one just created, before ArgoCD picks it up.
@@ -181,11 +165,11 @@ func withRepositoryEnvironments(envs []platformstate.Environment, names []string
 	return envs
 }
 
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
+// accessRefusal answers a repository check's refusal with its HTTP status.
+func accessRefusal(err error) error {
+	var ref *repoaccess.Refusal
+	if errors.As(err, &ref) {
+		return refuse(ref.Status(), "%s", ref.Message)
 	}
-	return false
+	return err
 }
