@@ -55,12 +55,11 @@ func (s *Store) Seed() {
 	for _, byKey := range s.objects {
 		for _, obj := range byKey {
 			e, ok := obj.(platformstate.Event)
-			switch {
-			case !ok:
-			case platformstate.IsDatabaseSessionEvent(e):
-				notes = append(notes, sessionNote(e, argoCD))
-			case e.Type == "Warning" && e.Reason != platformstate.ReasonDeployRefused && now.Sub(e.Time()) <= seedWarningsFor:
-				notes = append(notes, eventNote(e, argoCD))
+			if !ok {
+				continue
+			}
+			if n, warning, ok := eventFeedNote(e, argoCD); ok && (!warning || now.Sub(e.Time()) <= seedWarningsFor) {
+				notes = append(notes, n)
 			}
 		}
 	}
