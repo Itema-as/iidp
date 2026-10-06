@@ -570,33 +570,55 @@ func testFixtureApplication(ctx context.Context, t *testing.T, cluster *Cluster)
 	if err := cluster.CheckACMEChallengeBypassesLogin(ctx, "shop-staging", shopStagingCustomDomain, "shop-staging", 8080, 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	// A custom domain outside the zone signs in on its own host, through
+	// the host-only proxy, whose callback must not go through ForwardAuth.
+	if err := cluster.CheckSignInRedirect(ctx, shopStagingHostOnlyDomain, signInPath, fixtureHostOnlySignIn, 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.CheckLoginCallbackServedBy(ctx, shopStagingHostOnlyDomain, "oauth2-proxy-host", "oauth2-proxy", 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// The callback's route is in oauth2-proxy's namespace and names no
+	// secret; Traefik must still present the host's own certificate, from
+	// the Environment's HTTP-01 Ingress.
+	if err := cluster.CheckCertificateServedForCallback(ctx, "shop-staging", "shop-staging-shop-staging-other-test-tls", shopStagingHostOnlyDomain, 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.CheckACMEChallengeBypassesLogin(ctx, "shop-staging", shopStagingHostOnlyDomain, "shop-staging", 8080, 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
 	if err := cluster.CheckRolloutServes(ctx, "shop-prod", "shop", "shop.app.example.test"); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// checkSignInGroupMiddleware checks that shop-staging's Middleware passes
-// its sign-in group to oauth2-proxy as allowed_groups, and both its
-// Ingresses use it.
+// checkSignInGroupMiddleware checks that shop-staging's Middlewares pass
+// its sign-in group to the shared and the host-only oauth2-proxy as
+// allowed_groups, and its Ingresses use them.
 func checkSignInGroupMiddleware(ctx context.Context, cluster *Cluster) error {
-	const (
-		address    = "http://oauth2-proxy.oauth2-proxy.svc.cluster.local/?allowed_groups=0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b"
-		annotation = "shop-staging-shop-staging-itema-login@kubernetescrd"
-	)
-	got, err := cluster.Kubectl(ctx, "-n", "shop-staging", "get", "middlewares.traefik.io", "shop-staging-itema-login", "-o", "jsonpath={.spec.forwardAuth.address}")
-	if err != nil {
-		return fmt.Errorf("shop-staging's sign-in group Middleware: %w", err)
-	}
-	if strings.TrimSpace(got) != address {
-		return fmt.Errorf("shop-staging-itema-login forwardAuth.address = %q, want %q", got, address)
-	}
-	for _, ingress := range []string{"shop-staging", "shop-staging-http01"} {
-		got, err := cluster.Kubectl(ctx, "-n", "shop-staging", "get", "ingress", ingress, "-o", `jsonpath={.metadata.annotations.traefik\.ingress\.kubernetes\.io/router\.middlewares}`)
+	for _, mw := range []struct {
+		name, address string
+		ingresses     []string
+	}{
+		{"shop-staging-itema-login", "http://oauth2-proxy.oauth2-proxy.svc.cluster.local/?allowed_groups=0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b", []string{"shop-staging", "shop-staging-http01"}},
+		{"shop-staging-itema-login-host", "http://oauth2-proxy-host.oauth2-proxy.svc.cluster.local/?allowed_groups=0f3b6a4e-8c1d-4e2f-9a7b-5c6d7e8f9a0b", []string{"shop-staging-host-login"}},
+	} {
+		got, err := cluster.Kubectl(ctx, "-n", "shop-staging", "get", "middlewares.traefik.io", mw.name, "-o", "jsonpath={.spec.forwardAuth.address}")
 		if err != nil {
-			return fmt.Errorf("Ingress %s: %w", ingress, err)
+			return fmt.Errorf("shop-staging's sign-in group Middleware %s: %w", mw.name, err)
 		}
-		if strings.TrimSpace(got) != annotation {
-			return fmt.Errorf("Ingress %s router.middlewares = %q, want %q", ingress, got, annotation)
+		if strings.TrimSpace(got) != mw.address {
+			return fmt.Errorf("%s forwardAuth.address = %q, want %q", mw.name, got, mw.address)
+		}
+		annotation := "shop-staging-" + mw.name + "@kubernetescrd"
+		for _, ingress := range mw.ingresses {
+			got, err := cluster.Kubectl(ctx, "-n", "shop-staging", "get", "ingress", ingress, "-o", `jsonpath={.metadata.annotations.traefik\.ingress\.kubernetes\.io/router\.middlewares}`)
+			if err != nil {
+				return fmt.Errorf("Ingress %s: %w", ingress, err)
+			}
+			if strings.TrimSpace(got) != annotation {
+				return fmt.Errorf("Ingress %s router.middlewares = %q, want %q", ingress, got, annotation)
+			}
 		}
 	}
 	return nil
@@ -605,6 +627,10 @@ func checkSignInGroupMiddleware(ctx context.Context, cluster *Cluster) error {
 // shopStagingCustomDomain is inside the fixture's cloudflareZone but not
 // under its baseDomain.
 const shopStagingCustomDomain = "shop-staging.example.test"
+
+// shopStagingHostOnlyDomain is outside the fixture's cloudflareZone, the
+// login cookie domain.
+const shopStagingHostOnlyDomain = "shop-staging.other.test"
 
 // signInPath is a path with a query, so the sign-in check proves both
 // survive the round trip through the provider.
@@ -618,6 +644,14 @@ var fixtureSignIn = SignIn{
 	Callback:     "https://auth.app.example.test/oauth2/callback",
 	CookieDomain: "example.test",
 	CSRFCookie:   "__Secure-itema_login_csrf",
+}
+
+// fixtureHostOnlySignIn is the host-only oauth2-proxy's sign-in redirect,
+// for a custom domain outside the login cookie domain.
+var fixtureHostOnlySignIn = SignIn{
+	LoginURL:   "https://oauth2-proxy-entra.invalid/authorize",
+	HostOnly:   true,
+	CSRFCookie: "__Host-itema_login_csrf",
 }
 
 // testDeleteEnvironment deletes shop-staging as iidp app delete does and
@@ -713,11 +747,14 @@ func testDeleteEnvironment(ctx context.Context, t *testing.T, cluster *Cluster) 
 			jobEverObserved, backupsSeen)
 	}
 
-	for _, res := range []struct{ kind, name string }{
-		{"deployment", "shop-staging"},
-		{"cluster.postgresql.cnpg.io", "shop-staging-db"},
+	for _, res := range []struct{ kind, namespace, name string }{
+		{"deployment", "shop-staging", "shop-staging"},
+		{"cluster.postgresql.cnpg.io", "shop-staging", "shop-staging-db"},
+		// The callback route for the custom domain outside the zone lives
+		// in oauth2-proxy's namespace and goes with the Environment too.
+		{"ingress", "oauth2-proxy", "shop-staging-shop-staging-oauth2"},
 	} {
-		if err := cluster.WaitForResourceGone(ctx, res.kind, "shop-staging", res.name, time.Minute); err != nil {
+		if err := cluster.WaitForResourceGone(ctx, res.kind, res.namespace, res.name, time.Minute); err != nil {
 			t.Fatal(err)
 		}
 	}

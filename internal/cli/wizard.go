@@ -23,8 +23,7 @@ import (
 // runWizard asks app create's questions, skipping any whose flag was given.
 // Answers are applied with Flags().Set, which also marks the flag Changed,
 // so the rest of the command cannot tell a typed answer from a flag.
-// loginCookieDomain is called only when custom domains were given.
-func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, loginCookieDomain func() (string, error)) error {
+func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter) error {
 	f := cmd.Flags()
 	out := cmd.OutOrStdout()
 
@@ -150,24 +149,9 @@ func runWizard(cmd *cobra.Command, opts *createOptions, p *prompt.Prompter, logi
 		}
 	}
 
-	// Login is not offered when a custom domain is outside the login cookie
-	// domain, which only platform.yaml knows.
 	if !f.Changed("login") {
-		offer := true
-		if len(opts.domains) > 0 {
-			cookieDomain, err := loginCookieDomain()
-			if err != nil {
-				return err
-			}
-			if outside := platformrepo.HostsOutsideLoginCookieDomain(opts.domains, cookieDomain); len(outside) > 0 {
-				fmt.Fprintf(out, "Itema login is not offered: its sign-in cookie is set for %s, and %s outside it.\n", cookieDomain, strings.Join(outside, ", "))
-				offer = false
-			}
-		}
-		if offer {
-			if err := askItemaLogin(f, p); err != nil {
-				return err
-			}
+		if err := askItemaLogin(f, p); err != nil {
+			return err
 		}
 	}
 	if opts.login && !f.Changed("login-group") {

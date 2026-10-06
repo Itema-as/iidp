@@ -11,7 +11,7 @@ metadata:
     # Plain HTTP is redirected to HTTPS by the Platform's Traefik.
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    {{- with include "application.login.annotation" . }}
+    {{- with include "application.login.annotation" (list . false) }}
     {{- . | nindent 4 }}
     {{- end }}
 spec:

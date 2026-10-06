@@ -1,39 +1,27 @@
 {{- $v := include "iidp-bootstrap.versions" . | fromYaml }}
 {{- $host := printf "auth.%s" .Values.baseDomain }}
 {{- $cookieDomain := printf ".%s" (include "iidp-bootstrap.loginCookieDomain" .) }}
-# The one shared oauth2-proxy behind the Itema login Capability. It issues
-# one cookie for the whole login cookie domain, so signing in once covers
-# every protected Environment. Entra ID credentials and the cookie-signing
-# secret come from the SOPS-encrypted Secret oauth2-proxy-entra.
+# The two oauth2-proxies behind the Itema login Capability, which differ only
+# in where the sign-in callback and the cookie live.
 #
-# The entra-id provider is set through alphaConfig because the issuer URL is
-# built from the tenant id, which only the Secret holds: oauth2-proxy expands
-# ${VAR} tokens in its alpha config from the container's environment (Helm
-# passes them through untouched). proxyVarsAsSecrets is off because the
-# chart's own Secret mechanism expects fixed key names this Secret doesn't use.
+# The shared one, oauth2-proxy, issues one cookie for the whole login cookie
+# domain, so signing in once covers every protected host inside it. Its
+# callback is fixed on auth.<baseDomain>. The cookie is sent to every host in
+# the zone, including ones the Platform doesn't run, which could replay a
+# session; see bootstrap/README.md. The cookie name isn't the default
+# _oauth2_proxy because browsers may still hold an older cookie of that name
+# for .<baseDomain>, and oauth2-proxy reads the first cookie of a name it
+# finds, which could loop the user through sign-in.
 #
-# --set-xauthrequest is incompatible with alphaConfig and crash-loops the
-# container, so injectResponseHeaders adds the X-Auth-Request-* headers that
-# the itema-login-auth Middleware forwards.
-#
-# skip-provider-button makes an unauthenticated request get a 302 straight to
-# Entra ID instead of oauth2-proxy's sign-in page with a 403. footer "-" keeps
-# the oauth2-proxy version off the pages that are still shown.
-#
-# The cookie is sent to every host in the zone, including ones the Platform
-# doesn't run, which could replay a session; see bootstrap/README.md. The
-# cookie name isn't the default _oauth2_proxy because browsers may still hold
-# an older cookie of that name for .<baseDomain>, and oauth2-proxy reads the
-# first cookie of a name it finds, which could loop the user through sign-in.
-#
-# session-cookie-minimal keeps the Entra tokens out of the cookie (nothing
-# needs them after sign-in). Without it the cookie is split into several parts
-# and the Cookie header can outgrow the 8 KB an nginx Static site accepts,
-# which answers 400 "Request Header Or Cookie Too Large".
-#
-# groupsClaim needs groupMembershipClaims on the Entra app registration. For a
-# user in more than 200 groups the entra-id provider reads them from Microsoft
-# Graph instead.
+# The host-only one, oauth2-proxy-host, serves custom domains outside the
+# login cookie domain, which the shared cookie never reaches. With no
+# redirect-url it builds the callback from the requested host,
+# https://<host>/oauth2/callback, and with no cookie-domain its cookies stay
+# on that host. The application chart routes each such host's /oauth2/ to it.
+# Without whitelist-domain, oauth2-proxy refuses the absolute return URL it
+# builds from the X-Forwarded-* headers, logs "Invalid redirect generated from
+# X-Forwarded-* headers", and returns to the path alone, which is on the same
+# host as the callback.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -49,94 +37,13 @@ spec:
         releaseName: oauth2-proxy
         valuesObject:
           fullnameOverride: oauth2-proxy
-          replicaCount: 1
-          resources:
-            requests:
-              cpu: 10m
-              memory: 32Mi
-            limits:
-              memory: 64Mi
-          proxyVarsAsSecrets: false
-          extraEnv:
-            - name: ENTRA_CLIENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: oauth2-proxy-entra
-                  key: clientID
-            - name: ENTRA_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: oauth2-proxy-entra
-                  key: clientSecret
-            - name: ENTRA_TENANT
-              valueFrom:
-                secretKeyRef:
-                  name: oauth2-proxy-entra
-                  key: tenant
-            - name: OAUTH2_PROXY_COOKIE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: oauth2-proxy-entra
-                  key: cookieSecret
-          alphaConfig:
-            enabled: true
-            configData:
-              providers:
-                - id: itema-entra
-                  provider: entra-id
-                  clientID: ${ENTRA_CLIENT_ID}
-                  clientSecret: ${ENTRA_CLIENT_SECRET}
-                  {{- if .Values.oauth2Proxy.skipOIDCDiscovery }}
-                  # kind only: there is no route to login.microsoftonline.com,
-                  # so skip OIDC discovery. These endpoints are never reached.
-                  # loginURL and redeemURL belong on the provider; the schema
-                  # rejects them inside oidcConfig.
-                  loginURL: https://oauth2-proxy-entra.invalid/authorize
-                  redeemURL: https://oauth2-proxy-entra.invalid/token
-                  {{- end }}
-                  oidcConfig:
-                    issuerURL: https://login.microsoftonline.com/${ENTRA_TENANT}/v2.0
-                    emailClaim: email
-                    groupsClaim: groups
-                    userIDClaim: email
-                    {{- if .Values.oauth2Proxy.skipOIDCDiscovery }}
-                    skipDiscovery: true
-                    jwksURL: https://oauth2-proxy-entra.invalid/keys
-                    {{- end }}
-                  scope: openid email profile
-              upstreamConfig:
-                upstreams:
-                  - id: itema-login
-                    path: /
-                    static: true
-                    staticCode: 200
-              injectResponseHeaders:
-                - name: X-Auth-Request-User
-                  values:
-                    - claimSource:
-                        claim: user
-                - name: X-Auth-Request-Email
-                  values:
-                    - claimSource:
-                        claim: email
-                - name: X-Auth-Request-Preferred-Username
-                  values:
-                    - claimSource:
-                        claim: preferred_username
-                - name: X-Auth-Request-Groups
-                  values:
-                    - claimSource:
-                        claim: groups
+          {{- include "iidp-bootstrap.oauth2ProxyValues" . | nindent 10 }}
           extraArgs:
-            reverse-proxy: "true"
-            skip-provider-button: "true"
-            footer: "-"
+            {{- include "iidp-bootstrap.oauth2ProxyArgs" . | nindent 12 }}
             cookie-name: __Secure-itema_login
             cookie-domain: {{ $cookieDomain | quote }}
             whitelist-domain: {{ $cookieDomain | quote }}
             redirect-url: {{ printf "https://%s/oauth2/callback" $host | quote }}
-            cookie-secure: "true"
-            session-cookie-minimal: "true"
           ingress:
             enabled: true
             className: traefik
@@ -151,6 +58,22 @@ spec:
     - repoURL: {{ .Values.bootstrap.repoURL }}
       targetRevision: {{ .Values.bootstrap.targetRevision }}
       path: bootstrap/components/oauth2-proxy-login
+    - repoURL: {{ $v.oauth2Proxy.repository }}
+      chart: oauth2-proxy
+      targetRevision: {{ $v.oauth2Proxy.chart | quote }}
+      helm:
+        releaseName: oauth2-proxy-host
+        valuesObject:
+          fullnameOverride: oauth2-proxy-host
+          {{- include "iidp-bootstrap.oauth2ProxyValues" . | nindent 10 }}
+          extraArgs:
+            {{- include "iidp-bootstrap.oauth2ProxyArgs" . | nindent 12 }}
+            # A cookie with the __Host- prefix is only accepted with Secure,
+            # Path=/ and no Domain, so a browser refuses it if it is ever
+            # set for more than its host.
+            cookie-name: __Host-itema_login
+          ingress:
+            enabled: false
   destination:
     {{- include "iidp-bootstrap.destination" . | nindent 4 }}
     namespace: oauth2-proxy

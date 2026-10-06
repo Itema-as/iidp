@@ -330,24 +330,6 @@ func TestAppAddCapabilityRefusesLoginAlreadyEnabled(t *testing.T) {
 	}
 }
 
-func TestAppAddCapabilityRefusesLoginWithDomainOutsideTheZoneGivenTogether(t *testing.T) {
-	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
-	seedApplication(t, url)
-	before := headSubject(t, url)
-
-	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login", "--domain", "x.itma.no", "--domain", "shop.example.com")
-
-	if code == 0 {
-		t.Fatalf("exit code = 0, want non-zero")
-	}
-	if !strings.Contains(stderr, "--login refused, custom domains outside itma.no: shop.example.com.") {
-		t.Errorf("stderr = %q, want it to refuse --login naming shop.example.com", stderr)
-	}
-	if got := headSubject(t, url); got != before {
-		t.Errorf("Platform repository has a new commit %q, want none", got)
-	}
-}
-
 func TestAppAddCapabilityLoginWithDomainInsideTheZoneGivenTogether(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url, "--staging")
@@ -373,20 +355,6 @@ func TestAppAddCapabilityLoginWithDomainInsideTheZoneGivenTogether(t *testing.T)
 	}
 }
 
-func TestAppAddCapabilityRefusesLoginWhenDomainOutsideTheZoneAlreadyPresent(t *testing.T) {
-	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
-	seedApplication(t, url, "--domain", "x.itma.no", "--domain", "shop.example.com")
-
-	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--login")
-
-	if code == 0 {
-		t.Fatalf("exit code = 0, want non-zero")
-	}
-	if !strings.Contains(stderr, "outside itma.no: shop.example.com.") {
-		t.Errorf("stderr = %q, want it to name the existing domain outside the zone", stderr)
-	}
-}
-
 func TestAppAddCapabilityLoginWhenDomainInsideTheZoneAlreadyPresent(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	seedApplication(t, url, "--domain", "x.itma.no")
@@ -402,26 +370,6 @@ func TestAppAddCapabilityLoginWhenDomainInsideTheZoneAlreadyPresent(t *testing.T
 	}
 	if got := lookup(t, values, "platform", "loginCookieDomain"); got != "itma.no" {
 		t.Errorf("platform.loginCookieDomain = %v, want itma.no", got)
-	}
-}
-
-// A custom domain added to an Application that already has Itema login
-// must be inside the zone too.
-func TestAppAddCapabilityRefusesDomainOutsideTheZoneWithLogin(t *testing.T) {
-	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
-	seedApplication(t, url, "--login")
-	before := headSubject(t, url)
-
-	_, stderr, code := addCapability(t, url, "shop", cli.Dependencies{}, "--domain", "shop.example.com")
-
-	if code == 0 {
-		t.Fatalf("exit code = 0, want non-zero")
-	}
-	if !strings.Contains(stderr, `--domain shop.example.com refused: "shop" has Itema login.`) {
-		t.Errorf("stderr = %q, want it to refuse the domain, naming it and the Application", stderr)
-	}
-	if got := headSubject(t, url); got != before {
-		t.Errorf("Platform repository has a new commit %q, want none", got)
 	}
 }
 

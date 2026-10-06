@@ -762,11 +762,17 @@ type SignIn struct {
 	// aside.
 	LoginURL string
 	// Callback is the redirect_uri: the Platform's auth address, whichever
-	// host was requested.
+	// host was requested. Unused with HostOnly.
 	Callback string
 	// CookieDomain is the CSRF cookie's Domain, wide enough for the
-	// callback on the auth address to read it.
+	// callback on the auth address to read it. Unused with HostOnly.
 	CookieDomain string
+	// HostOnly is the host-only proxy's redirect, for a custom domain
+	// outside the login cookie domain: the callback is on the requested
+	// host, the CSRF cookie has no Domain and is Secure with Path=/ (what
+	// a browser requires of a __Host- cookie), and the state holds only
+	// the path to return to.
+	HostOnly bool
 	// CSRFCookie is oauth2-proxy's cookie-name with _csrf appended.
 	CSRFCookie string
 }
@@ -777,7 +783,13 @@ type SignIn struct {
 // instead of following, fails it. It retries a 5xx or 404 until timeout;
 // any other answer fails at once.
 func (c *Cluster) CheckSignInRedirect(ctx context.Context, host, path string, want SignIn, timeout time.Duration) error {
-	original := "https://" + host + path
+	original, callback := "https://"+host+path, want.Callback
+	if want.HostOnly {
+		// oauth2-proxy refuses the absolute URL for a host outside its
+		// whitelist and falls back to the path, which is on the
+		// callback's host anyway.
+		original, callback = path, "https://"+host+"/oauth2/callback"
+	}
 	return c.pollGET(ctx, host, path, timeout, func(resp *http.Response) (ok, retry bool, message string) {
 		if resp.StatusCode >= 500 {
 			return false, true, resp.Status + " (oauth2-proxy is likely not up yet)"
@@ -800,8 +812,8 @@ func (c *Cluster) CheckSignInRedirect(ctx context.Context, host, path string, wa
 		if target.String() != want.LoginURL {
 			return false, false, fmt.Sprintf("%s -> %s, want a redirect to %s", resp.Status, location, want.LoginURL)
 		}
-		if got := query.Get("redirect_uri"); got != want.Callback {
-			return false, false, fmt.Sprintf("%s -> %s: redirect_uri %q, want %q", resp.Status, location, got, want.Callback)
+		if got := query.Get("redirect_uri"); got != callback {
+			return false, false, fmt.Sprintf("%s -> %s: redirect_uri %q, want %q", resp.Status, location, got, callback)
 		}
 		// oauth2-proxy's state is "<csrf hash>:<URL to return to>".
 		if state := query.Get("state"); !strings.HasSuffix(state, ":"+original) {
@@ -809,15 +821,67 @@ func (c *Cluster) CheckSignInRedirect(ctx context.Context, host, path string, wa
 		}
 		csrf := false
 		for _, cookie := range resp.Cookies() {
-			if cookie.Name == want.CSRFCookie && cookie.Domain == want.CookieDomain {
-				csrf = true
+			if cookie.Name != want.CSRFCookie {
+				continue
+			}
+			if want.HostOnly {
+				csrf = csrf || (cookie.Domain == "" && cookie.Secure && cookie.Path == "/")
+			} else {
+				csrf = csrf || cookie.Domain == want.CookieDomain
 			}
 		}
 		if !csrf {
-			return false, false, fmt.Sprintf("%s -> %s: no %s cookie for %s in %q", resp.Status, location, want.CSRFCookie, want.CookieDomain, resp.Header.Values("Set-Cookie"))
+			scope := want.CookieDomain
+			if want.HostOnly {
+				scope = "the host alone (no Domain, Secure, Path=/)"
+			}
+			return false, false, fmt.Sprintf("%s -> %s: no %s cookie for %s in %q", resp.Status, location, want.CSRFCookie, scope, resp.Header.Values("Set-Cookie"))
 		}
 		return true, false, resp.Status + " -> " + location
 	})
+}
+
+// CheckLoginCallbackServedBy proves https://host/oauth2/callback reaches the
+// oauth2-proxy Deployment proxy in the oauth2-proxy namespace, and not
+// other: the request, marked with a query only this check sends, must be in
+// proxy's request log and not in other's. Through Traefik the answer must
+// come from neither the Application (an nginx Server header) nor
+// ForwardAuth (a redirect, which would loop through sign-in).
+func (c *Cluster) CheckLoginCallbackServedBy(ctx context.Context, host, proxy, other string, timeout time.Duration) error {
+	marker := fmt.Sprintf("e2e-callback-%d", time.Now().UnixNano())
+	path := "/oauth2/callback?" + marker
+	if err := c.pollGET(ctx, host, path, timeout, loginCallbackAnswer); err != nil {
+		return err
+	}
+	for _, tc := range []struct {
+		deployment string
+		want       bool
+	}{{proxy, true}, {other, false}} {
+		logs, err := c.Kubectl(ctx, "-n", "oauth2-proxy", "logs", "deployment/"+tc.deployment, "--since=10m")
+		if err != nil {
+			return fmt.Errorf("logs of oauth2-proxy/%s: %w", tc.deployment, err)
+		}
+		if got := strings.Contains(logs, marker); got != tc.want {
+			return fmt.Errorf("GET https://%s%s: in oauth2-proxy/%s's request log = %v, want %v", host, path, tc.deployment, got, tc.want)
+		}
+	}
+	c.Log("GET https://%s%s was served by oauth2-proxy/%s", host, path, proxy)
+	return nil
+}
+
+// loginCallbackAnswer accepts oauth2-proxy's answer to a callback without
+// an OAuth state: an error page, not a redirect. A 404 or a 502 to 504
+// means Traefik has no route or no endpoint yet, so it retries.
+func loginCallbackAnswer(resp *http.Response) (ok, retry bool, message string) {
+	switch {
+	case resp.StatusCode == http.StatusNotFound || (resp.StatusCode >= 502 && resp.StatusCode <= 504):
+		return false, true, resp.Status + " (no route or endpoint for the callback yet)"
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		return false, false, fmt.Sprintf("%s -> %s, want oauth2-proxy's own answer, not a redirect", resp.Status, resp.Header.Get("Location"))
+	case strings.HasPrefix(resp.Header.Get("Server"), "nginx"):
+		return false, false, resp.Status + " from nginx: the Application answered the callback"
+	}
+	return true, false, resp.Status
 }
 
 // pollGET GETs path on host through Traefik's websecure entrypoint until

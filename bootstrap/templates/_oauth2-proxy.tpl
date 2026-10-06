@@ -1,0 +1,121 @@
+{{/*
+The values both oauth2-proxy releases share: the Entra ID provider, its
+Secret and the X-Auth-Request-* headers. Only the cookie, the callback and
+the Ingress differ between them (oauth2-proxy.yaml). Entra ID credentials
+and the cookie-signing secret come from the SOPS-encrypted Secret
+oauth2-proxy-entra.
+
+The entra-id provider is set through alphaConfig because the issuer URL is
+built from the tenant id, which only the Secret holds: oauth2-proxy expands
+${VAR} tokens in its alpha config from the container's environment (Helm
+passes them through untouched). proxyVarsAsSecrets is off because the
+chart's own Secret mechanism expects fixed key names this Secret doesn't use.
+
+--set-xauthrequest is incompatible with alphaConfig and crash-loops the
+container, so injectResponseHeaders adds the X-Auth-Request-* headers that
+the itema-login Middlewares forward.
+
+groupsClaim needs groupMembershipClaims on the Entra app registration. For a
+user in more than 200 groups the entra-id provider reads them from Microsoft
+Graph instead.
+*/}}
+{{- define "iidp-bootstrap.oauth2ProxyValues" -}}
+replicaCount: 1
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
+proxyVarsAsSecrets: false
+extraEnv:
+  - name: ENTRA_CLIENT_ID
+    valueFrom:
+      secretKeyRef:
+        name: oauth2-proxy-entra
+        key: clientID
+  - name: ENTRA_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: oauth2-proxy-entra
+        key: clientSecret
+  - name: ENTRA_TENANT
+    valueFrom:
+      secretKeyRef:
+        name: oauth2-proxy-entra
+        key: tenant
+  - name: OAUTH2_PROXY_COOKIE_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: oauth2-proxy-entra
+        key: cookieSecret
+alphaConfig:
+  enabled: true
+  configData:
+    providers:
+      - id: itema-entra
+        provider: entra-id
+        clientID: ${ENTRA_CLIENT_ID}
+        clientSecret: ${ENTRA_CLIENT_SECRET}
+        {{- if .Values.oauth2Proxy.skipOIDCDiscovery }}
+        # kind only: there is no route to login.microsoftonline.com,
+        # so skip OIDC discovery. These endpoints are never reached.
+        # loginURL and redeemURL belong on the provider; the schema
+        # rejects them inside oidcConfig.
+        loginURL: https://oauth2-proxy-entra.invalid/authorize
+        redeemURL: https://oauth2-proxy-entra.invalid/token
+        {{- end }}
+        oidcConfig:
+          issuerURL: https://login.microsoftonline.com/${ENTRA_TENANT}/v2.0
+          emailClaim: email
+          groupsClaim: groups
+          userIDClaim: email
+          {{- if .Values.oauth2Proxy.skipOIDCDiscovery }}
+          skipDiscovery: true
+          jwksURL: https://oauth2-proxy-entra.invalid/keys
+          {{- end }}
+        scope: openid email profile
+    upstreamConfig:
+      upstreams:
+        - id: itema-login
+          path: /
+          static: true
+          staticCode: 200
+    injectResponseHeaders:
+      - name: X-Auth-Request-User
+        values:
+          - claimSource:
+              claim: user
+      - name: X-Auth-Request-Email
+        values:
+          - claimSource:
+              claim: email
+      - name: X-Auth-Request-Preferred-Username
+        values:
+          - claimSource:
+              claim: preferred_username
+      - name: X-Auth-Request-Groups
+        values:
+          - claimSource:
+              claim: groups
+{{- end -}}
+
+{{/*
+The extraArgs both oauth2-proxy releases share.
+
+skip-provider-button makes an unauthenticated request get a 302 straight to
+Entra ID instead of oauth2-proxy's sign-in page with a 403. footer "-" keeps
+the oauth2-proxy version off the pages that are still shown.
+
+session-cookie-minimal keeps the Entra tokens out of the cookie (nothing
+needs them after sign-in). Without it the cookie is split into several parts
+and the Cookie header can outgrow the 8 KB an nginx Static site accepts,
+which answers 400 "Request Header Or Cookie Too Large".
+*/}}
+{{- define "iidp-bootstrap.oauth2ProxyArgs" -}}
+reverse-proxy: "true"
+skip-provider-button: "true"
+footer: "-"
+cookie-secure: "true"
+session-cookie-minimal: "true"
+{{- end -}}

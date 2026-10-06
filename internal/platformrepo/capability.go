@@ -159,17 +159,15 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 	if err != nil {
 		return Result{}, err
 	}
-	// Itema login and custom domains go together only inside the login
-	// cookie domain, whichever of the two is being added.
+	// The custom domains outside the login cookie domain that sign in on
+	// their own host from now on: all of prod's when login is turned on,
+	// otherwise only the ones added to an Application that has it.
+	var loginCallbackHosts []string
 	switch {
 	case caps.Login:
-		if err := CheckLoginDomains(cfg, append(slices.Clone(prod.Domains), caps.Domains...)); err != nil {
-			return Result{}, err
-		}
-	case prod.Login.Enabled && len(caps.Domains) > 0:
-		if err := checkDomainsForLogin(cfg, application, caps.Domains); err != nil {
-			return Result{}, err
-		}
+		loginCallbackHosts = HostsOutsideLoginCookieDomain(append(slices.Clone(prod.Domains), caps.Domains...), cfg.LoginCookieDomain())
+	case prod.Login.Enabled:
+		loginCallbackHosts = HostsOutsideLoginCookieDomain(caps.Domains, cfg.LoginCookieDomain())
 	}
 
 	envs := []string{"prod"}
@@ -255,6 +253,8 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 		Address: "https://" + application + "." + cfg.BaseDomain,
 		Domains: domainPlans,
 		Login:   caps.Login || prod.Login.Enabled,
+
+		LoginCallbackHosts: loginCallbackHosts,
 	}
 	switch {
 	case caps.SetLoginGroups:
@@ -318,8 +318,9 @@ func checkCapabilitiesAbsent(application string, caps Capabilities, prod environ
 // values.yaml for Postgres, size, login and, for prod only, domains,
 // returning the paths it wrote and the edited values.yaml. loginOn is
 // whether the Application already has Itema login: custom domains added
-// to its prod then also write platform.loginCookieDomain, which the chart
-// checks them against and older values.yaml files lack.
+// to its prod then also write platform.loginCookieDomain, which older
+// values.yaml files lack. Without it the chart would sort the domains by
+// baseDomain and send one inside the zone to the host-only login.
 func applyCapabilitiesToEnvironment(dir, application, environment string, caps Capabilities, cfg Config, loginOn bool) (files []string, newValues []byte, err error) {
 	valuesRelPath := path.Join(EnvironmentDir(application, environment), "values.yaml")
 	valuesAbsPath := filepath.Join(dir, filepath.FromSlash(valuesRelPath))

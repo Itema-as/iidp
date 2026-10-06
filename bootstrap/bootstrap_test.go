@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -181,8 +182,8 @@ func TestOauth2ProxyPointsAtThePinnedChartAndPlatformValues(t *testing.T) {
 		"--set", "bootstrap.targetRevision=v9.9.9")
 	app := apps["oauth2-proxy"]
 	sources := get[[]any](t, app, "spec", "sources")
-	if len(sources) != 2 {
-		t.Fatalf("oauth2-proxy has %d sources, want 2", len(sources))
+	if len(sources) != 3 {
+		t.Fatalf("oauth2-proxy has %d sources, want 3: the shared proxy, the Middlewares and the host-only proxy", len(sources))
 	}
 	chartSource := get[object](t, map[string]any{"s": sources[0]}, "s")
 	if got := get[string](t, chartSource, "chart"); got != "oauth2-proxy" {
@@ -276,6 +277,91 @@ func TestOauth2ProxyCookieDomain(t *testing.T) {
 	}
 }
 
+// The host-only proxy serves custom domains outside the login cookie domain.
+// It is the shared proxy apart from where the callback and the cookie live:
+// both on the requested host. Everything else, the Entra Secret included,
+// must stay the same.
+func TestHostOnlyOauth2ProxyIsTheSharedOneWithHostOnlyCookies(t *testing.T) {
+	versions := readYAML(t, "versions.yaml")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"cloudflareZone set", nil},
+		{"no cloudflareZone", []string{"--set", "cloudflareZone="}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			apps := renderApplications(t, append([]string{"--values", fixture}, tc.args...)...)
+			sources := get[[]any](t, apps["oauth2-proxy"], "spec", "sources")
+			if len(sources) != 3 {
+				t.Fatalf("oauth2-proxy has %d sources, want 3", len(sources))
+			}
+			shared := get[object](t, map[string]any{"s": sources[0]}, "s")
+			host := get[object](t, map[string]any{"s": sources[2]}, "s")
+			for _, key := range []string{"repoURL", "chart"} {
+				if got, want := get[string](t, host, key), get[string](t, shared, key); got != want {
+					t.Errorf("host-only source %s = %q, want the shared proxy's %q", key, got, want)
+				}
+			}
+			if got, want := get[string](t, host, "targetRevision"), get[string](t, versions, "oauth2Proxy", "chart"); got != want {
+				t.Errorf("host-only targetRevision = %q, want %q from versions.yaml", got, want)
+			}
+			if got := get[string](t, host, "helm", "releaseName"); got != "oauth2-proxy-host" {
+				t.Errorf("host-only releaseName = %q, want oauth2-proxy-host", got)
+			}
+
+			sharedValues := get[object](t, shared, "helm", "valuesObject")
+			hostValues := get[object](t, host, "helm", "valuesObject")
+			if got := get[string](t, hostValues, "fullnameOverride"); got != "oauth2-proxy-host" {
+				t.Errorf("host-only fullnameOverride = %q, want oauth2-proxy-host", got)
+			}
+			if got := get[bool](t, hostValues, "ingress", "enabled"); got {
+				t.Errorf("host-only ingress.enabled = true; its /oauth2/ routes come from each Environment")
+			}
+			hostArgs := get[object](t, hostValues, "extraArgs")
+			// No redirect-url: the callback is built from the requested
+			// host. No cookie-domain: the cookies are host-only.
+			for _, arg := range []string{"redirect-url", "cookie-domain", "whitelist-domain"} {
+				if value, set := hostArgs[arg]; set {
+					t.Errorf("host-only extraArgs.%s = %v, want it unset", arg, value)
+				}
+			}
+			if got := get[string](t, hostArgs, "cookie-name"); got != "__Host-itema_login" {
+				t.Errorf("host-only cookie-name = %q, want __Host-itema_login", got)
+			}
+
+			// Everything else is the shared proxy's.
+			sharedArgs := get[object](t, sharedValues, "extraArgs")
+			for key, value := range sharedArgs {
+				if key == "redirect-url" || key == "cookie-domain" || key == "whitelist-domain" || key == "cookie-name" {
+					continue
+				}
+				if hostArgs[key] != value {
+					t.Errorf("host-only extraArgs.%s = %v, want the shared proxy's %v", key, hostArgs[key], value)
+				}
+			}
+			for key := range hostArgs {
+				if _, ok := sharedArgs[key]; !ok && key != "cookie-name" {
+					t.Errorf("host-only extraArgs.%s is set, the shared proxy has no such argument", key)
+				}
+			}
+			for key, value := range sharedValues {
+				if key == "fullnameOverride" || key == "ingress" || key == "extraArgs" {
+					continue
+				}
+				if !reflect.DeepEqual(hostValues[key], value) {
+					t.Errorf("host-only %s = %v, want the shared proxy's %v", key, hostValues[key], value)
+				}
+			}
+			for key := range hostValues {
+				if _, ok := sharedValues[key]; !ok {
+					t.Errorf("host-only %s is set, the shared proxy has no such value", key)
+				}
+			}
+		})
+	}
+}
+
 // ForwardAuth checks oauth2-proxy's root address, whose answer to an
 // unauthenticated browser is a redirect to Entra ID, not /oauth2/auth's bare
 // 401.
@@ -301,6 +387,27 @@ func TestLoginMiddlewares(t *testing.T) {
 	}
 	if got := get[string](t, auth, "spec", "forwardAuth", "address"); got != "http://oauth2-proxy.oauth2-proxy.svc.cluster.local/" {
 		t.Errorf("itema-login-auth address = %q, want oauth2-proxy's root address", got)
+	}
+
+	// The host-only proxy's Middleware is the same but for the address.
+	host := readYAML(t, "components/oauth2-proxy-login/middleware-host.yaml")
+	if got := get[string](t, host, "metadata", "namespace") + "/" + get[string](t, host, "metadata", "name"); got != "oauth2-proxy/itema-login-host-auth" {
+		t.Errorf("host-only Middleware = %s, want oauth2-proxy/itema-login-host-auth", got)
+	}
+	want := get[object](t, auth, "spec", "forwardAuth")
+	got := get[object](t, host, "spec", "forwardAuth")
+	if address := get[string](t, got, "address"); address != "http://oauth2-proxy-host.oauth2-proxy.svc.cluster.local/" {
+		t.Errorf("itema-login-host-auth address = %q, want the host-only proxy's root address", address)
+	}
+	for key, value := range want {
+		if key != "address" && !reflect.DeepEqual(got[key], value) {
+			t.Errorf("itema-login-host-auth forwardAuth.%s = %v, want itema-login-auth's %v", key, got[key], value)
+		}
+	}
+	for key := range got {
+		if _, ok := want[key]; !ok {
+			t.Errorf("itema-login-host-auth forwardAuth.%s is set, itema-login-auth has no such field", key)
+		}
 	}
 }
 

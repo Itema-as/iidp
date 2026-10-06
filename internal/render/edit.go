@@ -125,8 +125,9 @@ func AddDomain(valuesYAML []byte, host string) (out []byte, changed bool, err er
 
 // EnableLogin edits an Environment's values.yaml to turn the Itema login
 // Capability on for cookieDomain. On an Environment that already has login
-// on, it only rewrites the cookie domain, which the chart checks custom
-// domains against.
+// on, it only rewrites the cookie domain, by which the chart decides which
+// custom domains sign in through the shared login and which on their own
+// host.
 func EnableLogin(valuesYAML []byte, cookieDomain string) ([]byte, error) {
 	root, err := decodeDocument(valuesYAML, "values.yaml")
 	if err != nil {
