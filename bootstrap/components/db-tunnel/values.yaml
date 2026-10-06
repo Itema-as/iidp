@@ -1,0 +1,34 @@
+# Set by the db-tunnel Application in the bootstrap; the defaults are
+# placeholders.
+
+# The tunnel is served at https://db.<baseDomain>.
+baseDomain: app.itma.no
+
+# The numeric id of the GitHub org every Application repository belongs to
+# (Itema-as). An Application's binding must carry it.
+githubOrgId: 1230559
+
+image:
+  repository: ghcr.io/itema-as/iidp-db-tunnel
+  # Empty: bootstrapRevision without its leading v, so bumping the bootstrap
+  # pin bumps the tunnel with it.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# The bootstrap revision the Platform repository pins (a v* release tag).
+bootstrapRevision: ""
+
+# The GitHub REST API root; empty means https://api.github.com.
+githubAPI: ""
+
+# The Platform repository each check clones with the developer's token.
+platformRepository: https://github.com/Itema-as/iidp-platform.git
+
+# Small on purpose, like the Deploy gate's: a session is two copies of a
+# connection's bytes, and a check one shallow clone and a few calls.
+resources:
+  requests:
+    cpu: 5m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

@@ -1,0 +1,69 @@
+# One replica: a session lives in the process that opened it, and a
+# Ctrl-C's cancel request must reach that same process.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iidp-db-tunnel
+  labels:
+    {{- include "db-tunnel.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: iidp-db-tunnel
+  template:
+    metadata:
+      labels:
+        {{- include "db-tunnel.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: iidp-db-tunnel
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: db-tunnel
+          image: {{ printf "%s:%s" .Values.image.repository (include "db-tunnel.tag" .) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: IIDP_TUNNEL_ORG_ID
+              value: {{ .Values.githubOrgId | int64 | toString | quote }}
+            - name: IIDP_TUNNEL_PLATFORM_REPO
+              value: {{ .Values.platformRepository | quote }}
+            {{- with .Values.githubAPI }}
+            - name: IIDP_TUNNEL_GITHUB_API
+              value: {{ . | quote }}
+            {{- end }}
+            - name: HOME
+              value: /tmp
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # git's clones of the Platform repository.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
