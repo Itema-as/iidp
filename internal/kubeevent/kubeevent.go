@@ -61,33 +61,50 @@ type Sink interface {
 	CreateEvent(ctx context.Context, event Event) error
 }
 
-// Environment is an Event at now about the ArgoCD Application named
-// regarding, in argocd, reported by controller from this pod. Its note is
-// cut to NoteLimit.
-func Environment(regarding, controller, action, reason, eventType, note string, annotations map[string]string, now time.Time) Event {
+// Spec is what an Event about an Environment's ArgoCD Application says.
+type Spec struct {
+	// Regarding is the ArgoCD Application's name, <app>-<environment>.
+	Regarding string
+	// Controller is the reportingController, such as
+	// iidp.itema.no/deploy-gate.
+	Controller string
+	// Component is the reportingInstance when the pod's name cannot be
+	// read, such as iidp-deploy-gate.
+	Component string
+	Action    string
+	Reason    string
+	// Type is Normal or Warning.
+	Type        string
+	Note        string
+	Annotations map[string]string
+}
+
+// New is the Event spec describes, at now, in argocd. Its note is cut to
+// NoteLimit.
+func New(spec Spec, now time.Time) Event {
 	now = now.UTC()
 	return Event{
 		APIVersion: "events.k8s.io/v1",
 		Kind:       "Event",
 		Metadata: Metadata{
-			Name:        name(regarding, now),
+			Name:        name(spec.Regarding, now),
 			Namespace:   platformstate.ArgoCDNamespace,
-			Annotations: annotations,
+			Annotations: spec.Annotations,
 		},
 		// metav1.MicroTime's format: exactly six fractional digits.
 		EventTime:           now.Format("2006-01-02T15:04:05.000000Z07:00"),
-		ReportingController: controller,
-		ReportingInstance:   reportingInstance(controller),
-		Action:              action,
-		Reason:              reason,
+		ReportingController: spec.Controller,
+		ReportingInstance:   reportingInstance(spec.Component),
+		Action:              spec.Action,
+		Reason:              spec.Reason,
 		Regarding: ObjectReference{
 			APIVersion: "argoproj.io/v1alpha1",
 			Kind:       "Application",
 			Namespace:  platformstate.ArgoCDNamespace,
-			Name:       regarding,
+			Name:       spec.Regarding,
 		},
-		Note: Truncate(note, NoteLimit),
-		Type: eventType,
+		Note: Truncate(spec.Note, NoteLimit),
+		Type: spec.Type,
 	}
 }
 
@@ -140,13 +157,13 @@ func name(regarding string, now time.Time) string {
 	return fmt.Sprintf("%s.%x%s", regarding, now.UnixNano(), hex.EncodeToString(suffix))
 }
 
-// reportingInstance is the pod's name, which is its hostname, or else the
-// controller's name without its iidp.itema.no/ prefix.
-func reportingInstance(controller string) string {
+// reportingInstance is the pod's name, which is its hostname, or else
+// component.
+func reportingInstance(component string) string {
 	if name, err := os.Hostname(); err == nil && name != "" {
 		return Truncate(name, 128)
 	}
-	return "iidp-" + strings.TrimPrefix(controller, "iidp.itema.no/")
+	return component
 }
 
 // Truncate cuts s to at most n bytes, on a character boundary.

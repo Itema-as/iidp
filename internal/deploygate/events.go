@@ -87,7 +87,10 @@ func (g *Gate) record(application, environment, action, reason, eventType, note 
 		return
 	}
 	regarding := render.Environment{Application: application, Environment: environment}.Name()
-	event := kubeevent.Environment(regarding, ReportingController, action, reason, eventType, note, annotations, time.Now())
+	event := kubeevent.New(kubeevent.Spec{
+		Regarding: regarding, Controller: ReportingController, Component: "iidp-deploy-gate",
+		Action: action, Reason: reason, Type: eventType, Note: note, Annotations: annotations,
+	}, time.Now())
 	g.events.Add(1)
 	go func() {
 		defer g.events.Done()

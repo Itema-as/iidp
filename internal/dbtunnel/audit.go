@@ -82,7 +82,10 @@ func (t *Tunnel) record(g Grant, reason, eventType, note string, annotations map
 		return
 	}
 	regarding := render.Environment{Application: g.Application, Environment: g.Environment}.Name()
-	event := kubeevent.Environment(regarding, ReportingController, eventAction, reason, eventType, note, annotations, time.Now())
+	event := kubeevent.New(kubeevent.Spec{
+		Regarding: regarding, Controller: ReportingController, Component: "iidp-db-tunnel",
+		Action: eventAction, Reason: reason, Type: eventType, Note: note, Annotations: annotations,
+	}, time.Now())
 	t.events.Add(1)
 	go func() {
 		defer t.events.Done()

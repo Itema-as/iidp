@@ -69,7 +69,7 @@ func TestTruncateKeepsNotesWithinTheAPIServersLimit(t *testing.T) {
 	if len(got) > kubeevent.NoteLimit || !utf8.ValidString(got) || !strings.HasSuffix(got, "…") {
 		t.Errorf("Truncate = %d bytes, valid UTF-8 %t, want at most %d ending in …", len(got), utf8.ValidString(got), kubeevent.NoteLimit)
 	}
-	event := kubeevent.Environment("shop-prod", "iidp.itema.no/deploy-gate", "Deploy", "DeployRefused", "Warning", long, nil, time.Now())
+	event := kubeevent.New(kubeevent.Spec{Regarding: "shop-prod", Controller: "iidp.itema.no/deploy-gate", Component: "iidp-deploy-gate", Action: "Deploy", Reason: "DeployRefused", Type: "Warning", Note: long}, time.Now())
 	if len(event.Note) > kubeevent.NoteLimit {
 		t.Errorf("an Event's note is %d bytes, want at most %d", len(event.Note), kubeevent.NoteLimit)
 	}
