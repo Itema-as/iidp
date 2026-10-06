@@ -270,9 +270,15 @@ func TestDBAccessRefusesWhatTheChartRefusesWithItsMessage(t *testing.T) {
 func TestDBAccessRefusesAnEnvironmentWithoutADatabase(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML+"agePublicKey: "+testAgePublicKey+"\n")
 	createShopApplication(t, url)
-	_, stderr, code := dbAccess(t, url, cli.Dependencies{}, "shop", "--env", "prod")
-	if code == 0 || !strings.Contains(stderr, "iidp app add-capability shop --postgres") {
-		t.Errorf("exit %d, stderr %q: want a refusal pointing at add-capability --postgres", code, stderr)
+	if _, stderr, code := createApplication(t, url, cli.Dependencies{}, "--name", "tool", "--kind", "web-service", "--staging"); code != 0 {
+		t.Fatalf("seeding tool: %s", stderr)
+	}
+	// staging's default read-write, push, is no refusal of its own.
+	for _, args := range [][]string{{"shop", "--env", "prod"}, {"tool", "--env", "staging"}} {
+		_, stderr, code := dbAccess(t, url, cli.Dependencies{}, args...)
+		if code == 0 || !strings.Contains(stderr, "iidp app add-capability "+args[0]+" --postgres") {
+			t.Errorf("%v: exit %d, stderr %q: want a refusal pointing at add-capability --postgres", args, code, stderr)
+		}
 	}
 }
 

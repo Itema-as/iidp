@@ -178,25 +178,31 @@ with the same messages, for the CLI.
 {{- if not (kindIs "map" $explicit) -}}
 {{- fail (printf "postgres.access must be a mapping with readWrite and readOnly, got %v" $explicit) -}}
 {{- end -}}
+{{- /* A level that is empty or null is unset, as internal/render reads it. */ -}}
+{{- $set := dict -}}
 {{- range $key := list "readWrite" "readOnly" -}}
-{{- if and (hasKey $explicit $key) (not (has (get $explicit $key | toString) $levels)) -}}
-{{- fail (printf "postgres.access.%s must be none, pull, push, maintain or admin, got %q" $key (get $explicit $key | toString)) -}}
+{{- $level := get $explicit $key | default "" | toString -}}
+{{- if $level -}}
+{{- $_ := set $set $key $level -}}
 {{- end -}}
 {{- end -}}
 {{- range $key := list "readWrite" "readOnly" -}}
-{{- if and (hasKey $explicit $key) (ne (get $explicit $key | toString) "none") (not $.Values.postgres.enabled) -}}
-{{- fail (printf "postgres.access.%s: %s needs postgres.enabled: true; there is no database to give access to" $key (get $explicit $key | toString)) -}}
+{{- $level := get $set $key | default "" -}}
+{{- if and $level (not (has $level $levels)) -}}
+{{- fail (printf "postgres.access.%s must be none, pull, push, maintain or admin, got %q" $key $level) -}}
+{{- end -}}
+{{- end -}}
+{{- range $key := list "readWrite" "readOnly" -}}
+{{- $level := get $set $key | default "" -}}
+{{- if and $level (ne $level "none") (not $.Values.postgres.enabled) -}}
+{{- fail (printf "postgres.access.%s: %s needs postgres.enabled: true; there is no database to give access to" $key $level) -}}
 {{- end -}}
 {{- end -}}
 {{- $access := dict "readWrite" "push" "readOnly" "none" -}}
 {{- if eq (include "application.environment" .) "prod" -}}
 {{- $_ := set $access "readWrite" "none" -}}
 {{- end -}}
-{{- range $key := list "readWrite" "readOnly" -}}
-{{- if hasKey $explicit $key -}}
-{{- $_ := set $access $key (get $explicit $key | toString) -}}
-{{- end -}}
-{{- end -}}
+{{- $access = merge $set $access -}}
 {{- $rank := dict -}}
 {{- range $i, $level := $levels -}}
 {{- $_ := set $rank $level $i -}}

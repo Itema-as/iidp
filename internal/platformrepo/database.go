@@ -88,8 +88,14 @@ func (w *Writer) attemptSetDatabaseAccess(ctx context.Context, application, envi
 	if err != nil {
 		return DatabaseAccessResult{}, fmt.Errorf("%s: %w", valuesRelPath, err)
 	}
-	// The explicit levels are checked as the chart checks them, before the
-	// Capability is, so the refusal is the chart's own.
+	if !current.Enabled {
+		// The levels given are checked first, so a level other than none
+		// is refused with the chart's own message.
+		if _, err := render.ResolveDatabaseAccess(environment, false, change); err != nil {
+			return DatabaseAccessResult{}, err
+		}
+		return DatabaseAccessResult{}, fmt.Errorf("%w: the %s Environment of %q has no Postgres Capability; add it with iidp app add-capability %s --postgres", ErrNoDatabase, environment, application, application)
+	}
 	access := current.Access
 	if change.ReadWrite != "" {
 		access.ReadWrite = change.ReadWrite
@@ -97,11 +103,8 @@ func (w *Writer) attemptSetDatabaseAccess(ctx context.Context, application, envi
 	if change.ReadOnly != "" {
 		access.ReadOnly = change.ReadOnly
 	}
-	if access, err = render.ResolveDatabaseAccess(environment, current.Enabled, access); err != nil {
+	if access, err = render.ResolveDatabaseAccess(environment, true, access); err != nil {
 		return DatabaseAccessResult{}, err
-	}
-	if !current.Enabled {
-		return DatabaseAccessResult{}, fmt.Errorf("%w: the %s Environment of %q has no Postgres Capability; add it with iidp app add-capability %s --postgres", ErrNoDatabase, environment, application, application)
 	}
 
 	files, err := w.writeDatabaseAccess(ctx, dir, cfg, application, environment, access, true)

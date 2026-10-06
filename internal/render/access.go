@@ -22,9 +22,10 @@ const (
 // accessLevels are the levels from least to most permission.
 var accessLevels = []string{AccessNone, AccessPull, AccessPush, AccessMaintain, AccessAdmin}
 
-// ErrInvalidDatabaseAccess is wrapped by every refusal of database access
-// levels. Its messages are the chart's own (application.postgres.access in
-// chart/application/templates/_helpers.tpl), word for word.
+// ErrInvalidDatabaseAccess is what errors.Is matches every refusal of
+// database access levels to. The refusals' messages are the chart's own
+// (application.postgres.access in chart/application/templates/_helpers.tpl),
+// word for word.
 var ErrInvalidDatabaseAccess = errors.New("invalid database access")
 
 // accessError is a refusal of database access levels: the chart's message
