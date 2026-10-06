@@ -7,8 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/Itema-as/iidp/internal/platformstate"
 	valuesrender "github.com/Itema-as/iidp/internal/render"
 )
 
@@ -17,8 +16,8 @@ import (
 // them.
 
 const (
-	readWriteAnnotation = "iidp.itema.no/db-access-read-write"
-	readOnlyAnnotation  = "iidp.itema.no/db-access-read-only"
+	readWriteAnnotation = platformstate.DatabaseAccessReadWriteAnnotation
+	readOnlyAnnotation  = platformstate.DatabaseAccessReadOnlyAnnotation
 )
 
 // managedRoles returns the Cluster's spec.managed.roles, keyed by name.
@@ -196,6 +195,7 @@ var databaseAccessRefusals = []struct{ fixture, message string }{
 	{"refuse-db-access-unknown-level.yaml", `postgres.access.readWrite must be none, pull, push, maintain or admin, got "triage"`},
 	{"refuse-db-access-read-only-stricter.yaml", `postgres.access.readOnly: admin needs more permission than postgres.access.readWrite: pull; whoever may write may also read, so readOnly must need no more permission than readWrite`},
 	{"refuse-db-access-without-postgres.yaml", `postgres.access.readOnly: pull needs postgres.enabled: true; there is no database to give access to`},
+	{"refuse-db-access-read-only-maintain.yaml", `postgres.access.readOnly: maintain needs more permission than postgres.access.readWrite: push; whoever may write may also read, so readOnly must need no more permission than readWrite`},
 }
 
 func TestRenderingRefusesDatabaseAccessItCannotHonour(t *testing.T) {
@@ -212,7 +212,7 @@ func TestRenderingRefusesDatabaseAccessItCannotHonour(t *testing.T) {
 	}
 }
 
-// The CLI checks the same values with internal/render before it writes
+// The CLI reads the same values with internal/render before it writes
 // them, and must say exactly what the chart says.
 func TestTheCLIRefusesTheSameDatabaseAccessWithTheSameMessage(t *testing.T) {
 	for _, tc := range databaseAccessRefusals {
@@ -221,23 +221,41 @@ func TestTheCLIRefusesTheSameDatabaseAccessWithTheSameMessage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var values struct {
-				Environment string `yaml:"environment"`
-				Postgres    struct {
-					Enabled bool `yaml:"enabled"`
-					Access  struct {
-						ReadWrite string `yaml:"readWrite"`
-						ReadOnly  string `yaml:"readOnly"`
-					} `yaml:"access"`
-				} `yaml:"postgres"`
+			if _, err := valuesrender.ReadDatabase(data); err == nil || err.Error() != tc.message {
+				t.Fatalf("the CLI's check says %v, want %q", err, tc.message)
 			}
-			if err := yaml.Unmarshal(data, &values); err != nil {
+		})
+	}
+}
+
+// The chart's defaults are internal/render's, which iidp app status and
+// iidp app db access read the values file with.
+func TestTheChartsDefaultLevelsAreTheCLIs(t *testing.T) {
+	for _, environment := range []string{"prod", "staging", "pr-3"} {
+		t.Run(environment, func(t *testing.T) {
+			values := "application:\n  name: shop\nenvironment: " + environment + "\nplatform:\n  baseDomain: app.itma.no\n" +
+				"  backupsBucket: itema-iidp-db-backups\n  objectStorageEndpoint: https://hel1.your-objectstorage.com\n" +
+				"image:\n  repository: ghcr.io/itema-as/shop\n  tag: 1.0.0\npostgres:\n  enabled: true\n"
+			file := filepath.Join(t.TempDir(), "values.yaml")
+			if err := os.WriteFile(file, []byte(values), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, err = valuesrender.ResolveDatabaseAccess(values.Environment, values.Postgres.Enabled,
-				valuesrender.DatabaseAccess{ReadWrite: values.Postgres.Access.ReadWrite, ReadOnly: values.Postgres.Access.ReadOnly})
-			if err == nil || err.Error() != tc.message {
-				t.Fatalf("the CLI's check says %v, want %q", err, tc.message)
+			out, err := helmTemplateFile(t, file)
+			if err != nil {
+				t.Fatalf("helm template: %v\n%s", err, out)
+			}
+			fullname := "shop-" + environment
+			if environment == "prod" {
+				fullname = "shop"
+			}
+			annotations := annotationsOf(t, mustObject(t, parseObjects(t, out), "Cluster/"+fullname+"-db"))
+			chart := valuesrender.DatabaseAccess{ReadWrite: annotations[readWriteAnnotation].(string), ReadOnly: annotations[readOnlyAnnotation].(string)}
+			db, err := valuesrender.ReadDatabase([]byte(values))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if chart != db.Access || chart != valuesrender.DefaultDatabaseAccess(environment) {
+				t.Errorf("the chart's levels %+v, internal/render's %+v and its default %+v differ", chart, db.Access, valuesrender.DefaultDatabaseAccess(environment))
 			}
 		})
 	}
