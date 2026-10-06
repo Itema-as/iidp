@@ -25,8 +25,8 @@ const (
 	MaxSession = 8 * time.Hour
 )
 
-// startupTimeout bounds the client's startup and the tunnel's own login,
-// the check included.
+// startupTimeout bounds a check call, and a connection's startup: the
+// client's startup packet, the check and the tunnel's own login.
 const startupTimeout = time.Minute
 
 // The request codes of the startup packets that are not a

@@ -115,7 +115,9 @@ func requestOf(r *http.Request) Request {
 func (t *Tunnel) serveCheck(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	req := requestOf(r)
-	grant, err := t.Check(r.Context(), req)
+	ctx, cancel := context.WithTimeout(r.Context(), startupTimeout)
+	defer cancel()
+	grant, err := t.Check(ctx, req)
 	if err != nil {
 		status := http.StatusInternalServerError
 		var ref *Refusal
