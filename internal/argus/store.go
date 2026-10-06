@@ -160,13 +160,18 @@ func (s *Store) Put(source, key string, obj any) {
 	case platformstate.Event:
 		// A new Warning Event is a feed entry, once the store has
 		// seeded the feed with those from before it started. The Deploy
-		// gate's refusals are the Deploy's own note.
+		// gate's refusals are the Deploy's own note, and the database
+		// tunnel's Events are notes in the tunnel's own words.
 		for other, byKey := range s.objects {
 			if _, ok := byKey[key].(platformstate.Event); ok && other != source {
 				had = true // another informer holds it too
 			}
 		}
-		if !had && s.seeded && o.Type == "Warning" && o.Reason != platformstate.ReasonDeployRefused {
+		switch {
+		case had || !s.seeded:
+		case platformstate.IsDatabaseSessionEvent(o):
+			s.publishNotes([]Note{sessionNote(o, s.argoCDLocked())}, now)
+		case o.Type == "Warning" && o.Reason != platformstate.ReasonDeployRefused:
 			s.publishNotes([]Note{eventNote(o, s.argoCDLocked())}, now)
 		}
 	}
@@ -427,6 +432,13 @@ func eventNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplication) 
 		message = string(r[:299]) + "…"
 	}
 	return Note{At: e.Time(), Place: placeOf(e, argoCD), Loudness: Quiet, FeedOnly: true, Message: message}
+}
+
+// sessionNote is the feed entry for one of the database tunnel's Events,
+// in the tunnel's own words. A session's end only reports something
+// finished.
+func sessionNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplication) Note {
+	return Note{At: e.Time(), Place: placeOf(e, argoCD), Loudness: Quiet, FeedOnly: e.Reason == platformstate.ReasonDatabaseSessionEnded, Message: e.Note}
 }
 
 // sortedKeys are the keys of a and b together, sorted.

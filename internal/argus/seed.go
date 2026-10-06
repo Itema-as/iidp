@@ -24,8 +24,10 @@ import (
 //     failed or is running;
 //   - each Deploy the Deploy gate's Events still show, accepted or
 //     refused;
+//   - each session the database tunnel's Events still show, its start,
+//     its end or its refusal;
 //   - the Warning Events of the last hour, except the gate's refusals,
-//     which are the Deploys above.
+//     which are the Deploys above, and the tunnel's.
 func (s *Store) Seed() {
 	s.Recompute()
 	s.mu.Lock()
@@ -52,7 +54,12 @@ func (s *Store) Seed() {
 	}
 	for _, byKey := range s.objects {
 		for _, obj := range byKey {
-			if e, ok := obj.(platformstate.Event); ok && e.Type == "Warning" && e.Reason != platformstate.ReasonDeployRefused && now.Sub(e.Time()) <= seedWarningsFor {
+			e, ok := obj.(platformstate.Event)
+			switch {
+			case !ok:
+			case platformstate.IsDatabaseSessionEvent(e):
+				notes = append(notes, sessionNote(e, argoCD))
+			case e.Type == "Warning" && e.Reason != platformstate.ReasonDeployRefused && now.Sub(e.Time()) <= seedWarningsFor:
 				notes = append(notes, eventNote(e, argoCD))
 			}
 		}

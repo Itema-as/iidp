@@ -121,3 +121,58 @@ func TestSeedFillsTheFeedAndMarksTheSeam(t *testing.T) {
 		t.Errorf("a second Seed changed the feed from %d to %d notes", len(feed), n)
 	}
 }
+
+// sessionEvent is the database tunnel's Event about a session on app's
+// env at d from t0.
+func sessionEvent(app, env, reason, note string, d time.Duration) obj {
+	typ := "Normal"
+	if reason == platformstate.ReasonDatabaseSessionRefused {
+		typ = "Warning"
+	}
+	return obj{
+		"kind": "Event",
+		"metadata": obj{"name": app + "-" + env + "." + reason + d.String(), "namespace": "argocd", "creationTimestamp": at(d), "annotations": obj{
+			"iidp.itema.no/application": app, "iidp.itema.no/environment": env, "iidp.itema.no/login": "octocat", "iidp.itema.no/role": app + "_write",
+		}},
+		"reason": reason, "note": note, "type": typ, "eventTime": t0.Add(d).Format("2006-01-02T15:04:05.000000Z07:00"),
+		"regarding": obj{"kind": "Application", "namespace": "argocd", "name": app + "-" + env},
+	}
+}
+
+// The database tunnel's sessions are in their Environment's activity, with
+// the tunnel's own words: seeded from the Events still there, and each new
+// one as it comes. A refusal is not also a Warning note, and an end is
+// feed-only.
+func TestDatabaseSessionsAreTheirEnvironmentsActivity(t *testing.T) {
+	s, clock := newStore(t)
+	put(t, s, argoApp("shop", "staging"),
+		sessionEvent("shop", "staging", platformstate.ReasonDatabaseSessionStarted, "octocat connected to shop staging's database as shop_write (read-write)", -40*time.Minute),
+		sessionEvent("shop", "staging", platformstate.ReasonDatabaseSessionEnded, "octocat's session on shop staging's database as shop_write ended after 5m0s, as the client closed it: 120 bytes from the client, 900 to it", -35*time.Minute),
+	)
+	s.Seed()
+
+	clock.add(time.Minute)
+	put(t, s,
+		sessionEvent("shop", "staging", platformstate.ReasonDatabaseSessionRefused, "octocat was refused shop staging's database: your permission on Itema-as/shop is pull", time.Minute),
+		sessionEvent("shop", "staging", platformstate.ReasonDatabaseSessionStarted, "octocat connected to shop staging's database as shop_write (read-write)", time.Minute),
+	)
+	var got []string
+	for _, n := range s.Snapshot().Feed {
+		if n.Seam {
+			got = append(got, "SEAM")
+			continue
+		}
+		got = append(got, fmt.Sprintf("%s %s %s/%s feedOnly=%v: %s", n.At.Sub(t0), n.Loudness, n.Place.Application, n.Place.Environment, n.FeedOnly, n.Message))
+	}
+	want := []string{
+		"-1h0m0s quiet shop/staging feedOnly=true: shop staging synced commit 1111111",
+		"-40m0s quiet shop/staging feedOnly=true: octocat connected to shop staging's database as shop_write (read-write)",
+		"-35m0s quiet shop/staging feedOnly=true: octocat's session on shop staging's database as shop_write ended after 5m0s, as the client closed it: 120 bytes from the client, 900 to it",
+		"SEAM",
+		"1m0s quiet shop/staging feedOnly=false: octocat was refused shop staging's database: your permission on Itema-as/shop is pull",
+		"1m0s quiet shop/staging feedOnly=false: octocat connected to shop staging's database as shop_write (read-write)",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("feed:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
