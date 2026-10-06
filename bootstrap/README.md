@@ -231,7 +231,7 @@ Its ServiceAccount `iidp-db-tunnel/iidp-db-tunnel` may (`components/db-tunnel/te
 
 | Kind | Where | Verbs | Why |
 |---|---|---|---|
-| `clusters.postgresql.cnpg.io` | every namespace (the ClusterRole `iidp-db-tunnel`) | `get`, `list` | The Environment's `Cluster`: its access levels, and each role's name and password Secret |
+| `clusters.postgresql.cnpg.io` | every namespace (the ClusterRole `iidp-db-tunnel`) | `get` | The Environment's `Cluster`: its access levels, and each role's name and password Secret |
 | `events` (`events.k8s.io`) | `argocd` only (the Role `iidp-db-tunnel-events`) | `create` | An Event for each session start, session end and refusal, in the namespace of the ArgoCD Application it points at |
 | `secrets` | each Environment's namespace, by name | `get` | The open access roles' password Secrets, and no others: a `Role` and `RoleBinding` `<fullname>-db-tunnel` the application chart renders with `resourceNames` ([`chart/application/README.md`](../chart/application/README.md), "Database access") |
 
