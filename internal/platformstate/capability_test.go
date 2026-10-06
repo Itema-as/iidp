@@ -509,3 +509,37 @@ func TestObjectsDecodeTheAPIsJSON(t *testing.T) {
 		t.Errorf("node = %+v", n)
 	}
 }
+
+// An Environment's database access is read from the annotations the chart
+// sets on its Cluster, so Argus shows what is deployed.
+func TestDatabaseAccessComesFromTheClustersAnnotations(t *testing.T) {
+	f := env()
+	cluster := pgCluster("Cluster in healthy state", cond("Ready", "True", "ClusterIsReady", "", time.Hour))
+	cluster["metadata"].(obj)["annotations"] = obj{
+		"iidp.itema.no/db-access-read-write": "push",
+		"iidp.itema.no/db-access-read-only":  "none",
+	}
+	f.clusters = []obj{cluster}
+	got := f.state(t)
+	if got.DatabaseAccess == nil || *got.DatabaseAccess != (platformstate.DatabaseAccess{ReadWrite: "push", ReadOnly: "none"}) {
+		t.Errorf("DatabaseAccess = %+v, want read-write push and read-only none", got.DatabaseAccess)
+	}
+	data, err := json.Marshal(got.Environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"databaseAccess":{"readWrite":"push","readOnly":"none"}`) {
+		t.Errorf("JSON = %s, want databaseAccess", data)
+	}
+
+	// A chart from before database access sets no annotations, and an
+	// Environment without Postgres has no Cluster: neither has levels.
+	f.clusters = []obj{pgCluster("Cluster in healthy state", cond("Ready", "True", "ClusterIsReady", "", time.Hour))}
+	if got := f.state(t); got.DatabaseAccess != nil {
+		t.Errorf("DatabaseAccess = %+v without annotations, want none", got.DatabaseAccess)
+	}
+	f.clusters = nil
+	if got := f.state(t); got.DatabaseAccess != nil {
+		t.Errorf("DatabaseAccess = %+v without a Cluster, want none", got.DatabaseAccess)
+	}
+}

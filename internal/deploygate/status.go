@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/platformstate"
+	"github.com/Itema-as/iidp/internal/render"
 )
 
 // StatusPath is the read endpoint iidp app status calls, followed by the
@@ -118,12 +120,34 @@ func (g *Gate) status(ctx context.Context, r *http.Request, application string) 
 			env.Image.DeployedAt = &at
 		}
 	}
+	for i := range envs {
+		envs[i].DatabaseAccess = databaseAccess(dir, application, envs[i].Name)
+	}
 	if cfg, err := platformrepo.LoadConfig(dir); err == nil {
 		for i := range envs {
 			envs[i].Links = platformstate.LinksOf(cfg.ArgoCDURL, cfg.GrafanaURL, envs[i])
 		}
 	}
 	return platformstate.Status{Application: application, Repository: readable.FullName, Environments: envs}, binding.RepositoryID, nil
+}
+
+// databaseAccess is an Environment's database access, from its values file
+// in the clone at dir. A Preview Environment has staging's, since it
+// renders from staging's values file. It is nil without Postgres, and when
+// the file cannot be read or holds levels the chart would refuse.
+func databaseAccess(dir, application, environment string) *platformstate.DatabaseAccess {
+	if environment != "prod" {
+		environment = "staging"
+	}
+	values, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(platformrepo.EnvironmentDir(application, environment)), "values.yaml"))
+	if err != nil {
+		return nil
+	}
+	db, err := render.ReadDatabase(values)
+	if err != nil || !db.Enabled {
+		return nil
+	}
+	return &platformstate.DatabaseAccess{ReadWrite: db.Access.ReadWrite, ReadOnly: db.Access.ReadOnly}
 }
 
 // cloneRefusal words a failed clone of the Platform repository with the

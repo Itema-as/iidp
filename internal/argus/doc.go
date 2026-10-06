@@ -76,11 +76,19 @@
 //	                "grafana": "https://itema.grafana.net/explore?..."},
 //	      "condition": {"state": "Healthy"},
 //	      "activity": null,
+//	      "databaseAccess": {"readWrite": "push",
+//	                         "readOnly": "none"},
 //	      "capabilities": [Capability...],
 //	      "deploys": [Deploy...]             oldest first
 //	    }
 //	  ]
 //	}
+//
+// databaseAccess is who among the Application's developers may reach the
+// database, read from the annotations the chart sets on the Environment's
+// Cluster: each level the lowest permission on the Application repository
+// that qualifies (pull, push, maintain or admin), or none. Absent without
+// Postgres, and for a Cluster from a chart older than database access.
 //
 // image, migration and a task's lastRun are null when there is none;
 // argocd is never null here, since Argus knows an Environment only by its

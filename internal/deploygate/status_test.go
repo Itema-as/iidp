@@ -448,3 +448,49 @@ func TestStatusIsUnavailableWithoutClusterAccess(t *testing.T) {
 		t.Errorf("status = %d %s, want 503", code, body)
 	}
 }
+
+// The status reads each Environment's database access from its values in
+// the Platform repository, so the gate needs nothing more in the cluster.
+// A Preview Environment has staging's.
+func TestStatusShowsEachEnvironmentsDatabaseAccess(t *testing.T) {
+	e, _ := shopStatusEnv(t)
+	statusOf := func() map[string]*platformstate.DatabaseAccess {
+		t.Helper()
+		code, body := e.status(readerToken, "shop")
+		if code != http.StatusOK {
+			t.Fatalf("status = %d: %s", code, body)
+		}
+		var got platformstate.Status
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]*platformstate.DatabaseAccess{}
+		for _, env := range got.Environments {
+			out[env.Name] = env.DatabaseAccess
+		}
+		return out
+	}
+	for name, access := range statusOf() {
+		if access != nil {
+			t.Errorf("%s without Postgres has database access %+v, want none", name, access)
+		}
+	}
+
+	withPostgres := func(environment, access string) string {
+		return valuesWith(environment, "1.0.1", "small") + "postgres:\n  enabled: true\n" + access
+	}
+	pushCommit(t, e.platform, "Postgres", map[string]string{
+		"applications/shop/prod/values.yaml":    withPostgres("prod", "  access:\n    readWrite: none\n    readOnly: maintain\n"),
+		"applications/shop/staging/values.yaml": withPostgres("staging", ""),
+	})
+	got := statusOf()
+	for name, want := range map[string]platformstate.DatabaseAccess{
+		"prod":    {ReadWrite: "none", ReadOnly: "maintain"},
+		"staging": {ReadWrite: "push", ReadOnly: "none"},
+		"pr-7":    {ReadWrite: "push", ReadOnly: "none"},
+	} {
+		if got[name] == nil || *got[name] != want {
+			t.Errorf("%s database access = %+v, want %+v", name, got[name], want)
+		}
+	}
+}

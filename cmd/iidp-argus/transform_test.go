@@ -118,6 +118,13 @@ func TestTransformsKeepOnlyWhatTheModelReads(t *testing.T) {
 				"conditions": []any{obj{"type": "LastBackupSucceeded", "status": "False", "message": "exit status 2"}}}}),
 			platformstate.PostgresCluster{}, `"phase":"Cluster in healthy state"`,
 			[]string{"storage", "plugins", "currentPrimary", "expirations", "last-applied", "managedFields"}},
+		// The chart's database access levels stay, for the detail card.
+		{"clusters", fat(obj{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster",
+			"metadata": obj{"name": "shop-db", "namespace": "shop-prod", "labels": iidpLabels,
+				"annotations": obj{"iidp.itema.no/db-access-read-write": "push", "iidp.itema.no/db-access-read-only": "none"}},
+			"spec": obj{"instances": 1, "managed": obj{"roles": []any{obj{"name": "shop_write", "passwordSecret": obj{"name": "shop-db-write"}}}}}}),
+			platformstate.PostgresCluster{}, `"iidp.itema.no/db-access-read-write":"push"`,
+			[]string{"managed", "shop_write", "last-applied", "managedFields"}},
 		{"certificates", fat(obj{"apiVersion": "cert-manager.io/v1", "kind": "Certificate",
 			"metadata": obj{"name": "shop-www-tls", "namespace": "shop-prod"},
 			"spec":     obj{"dnsNames": []any{"www.shop.example"}, "secretName": "shop-www-tls", "issuerRef": obj{"name": "letsencrypt-http01"}},

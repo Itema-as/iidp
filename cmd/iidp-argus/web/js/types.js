@@ -25,6 +25,7 @@
  *   migration: Run | null, tasks: Task[], addresses: string[],
  *   links?: {argocd?: string, grafana?: string},
  *   condition?: Condition, activity: Activity | null,
+ *   databaseAccess?: {readWrite: string, readOnly: string},
  *   capabilities: Capability[], deploys: Deploy[]
  * }} Environment
  * @typedef {{name: string, environments: Environment[]}} Application

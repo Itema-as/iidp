@@ -16,6 +16,7 @@ import (
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/platformstate"
+	"github.com/Itema-as/iidp/internal/render"
 )
 
 type statusOptions struct {
@@ -33,8 +34,9 @@ func newAppStatusCommand(deps Dependencies) *cobra.Command {
 			"changing (Arriving, Unreleased, Deploying, Updating or Leaving), and whether\n" +
 			"that change is stuck and why; ArgoCD's sync and health and its last sync, the\n" +
 			"image running and when it was deployed, the pods ready and their restarts,\n" +
-			"the last migration, the last run of each Scheduled task, the addresses, and\n" +
-			"links to ArgoCD and to the logs in Grafana Cloud. It shows no logs.\n\n" +
+			"the last migration, who among the developers may reach the database, the last\n" +
+			"run of each Scheduled task, the addresses, and links to ArgoCD and to the logs\n" +
+			"in Grafana Cloud. It shows no logs.\n\n" +
 			"It asks the Deploy gate's service at https://deploy.<baseDomain> (baseDomain\n" +
 			"from the Platform repository's platform.yaml), sending your gh auth token.\n" +
 			"The service shows the status only to someone who can read the Application's\n" +
@@ -190,6 +192,9 @@ func printStatus(out io.Writer, status platformstate.Status) {
 		}
 		if env.Migration != nil {
 			line("Migration", "last run "+runText(*env.Migration))
+		}
+		if a := env.DatabaseAccess; a != nil {
+			line("Database", databaseAccessText(render.DatabaseAccess{ReadWrite: a.ReadWrite, ReadOnly: a.ReadOnly}))
 		}
 		label := "Tasks"
 		for _, task := range env.Tasks {

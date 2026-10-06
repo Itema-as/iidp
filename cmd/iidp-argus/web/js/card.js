@@ -119,6 +119,7 @@ export function environmentCard(app, env, { feed, platform, nowMs, capability })
     /** @type {[string, string][]} */
     const rows = [['Last migration', runText(env.migration, nowMs)]];
     if (postgres) rows.push(['Backups', postgres.condition.warning ? `failing: ${postgres.condition.warning.replace(/^backups are failing: /, '')}` : 'no failure reported']);
+    if (env.databaseAccess) rows.push(['Developer access', `read-write ${env.databaseAccess.readWrite} · read-only ${env.databaseAccess.readOnly}`]);
     sections.push({ title: 'Database', rows });
   }
   if (env.tasks.length) {
