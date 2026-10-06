@@ -14,8 +14,8 @@ metadata:
     # rendering it; the Application shows OutOfSync until someone deletes it
     # deliberately.
     {{- include "application.postgres.keepOnPrune" . | nindent 4 }}
-    # The levels the database tunnel lets developers in at, set even when
-    # both are none.
+    # Who among the Application's developers may reach the database, by
+    # their permission on its repository; set even when both are none.
     {{- $access := include "application.postgres.access" . | fromJson }}
     iidp.itema.no/db-access-read-write: {{ $access.readWrite | quote }}
     iidp.itema.no/db-access-read-only: {{ $access.readOnly | quote }}
