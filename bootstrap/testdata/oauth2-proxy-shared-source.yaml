@@ -1,0 +1,99 @@
+# The helm block of the shared oauth2-proxy's chart source, as the bootstrap
+# renders it with the kind fixture's platform.yaml. bootstrap_test.go requires the rendering to
+# equal it, so a change meant for the host-only proxy cannot reach the shared
+# one by way of the values they share. Update it only on purpose.
+helm:
+  releaseName: oauth2-proxy
+  valuesObject:
+    alphaConfig:
+      configData:
+        injectResponseHeaders:
+          - name: X-Auth-Request-User
+            values:
+              - claimSource:
+                  claim: user
+          - name: X-Auth-Request-Email
+            values:
+              - claimSource:
+                  claim: email
+          - name: X-Auth-Request-Preferred-Username
+            values:
+              - claimSource:
+                  claim: preferred_username
+          - name: X-Auth-Request-Groups
+            values:
+              - claimSource:
+                  claim: groups
+        providers:
+          - clientID: ${ENTRA_CLIENT_ID}
+            clientSecret: ${ENTRA_CLIENT_SECRET}
+            id: itema-entra
+            loginURL: https://oauth2-proxy-entra.invalid/authorize
+            oidcConfig:
+              emailClaim: email
+              groupsClaim: groups
+              issuerURL: https://login.microsoftonline.com/${ENTRA_TENANT}/v2.0
+              jwksURL: https://oauth2-proxy-entra.invalid/keys
+              skipDiscovery: true
+              userIDClaim: email
+            provider: entra-id
+            redeemURL: https://oauth2-proxy-entra.invalid/token
+            scope: openid email profile
+        upstreamConfig:
+          upstreams:
+            - id: itema-login
+              path: /
+              static: true
+              staticCode: 200
+      enabled: true
+    extraArgs:
+      cookie-domain: .example.test
+      cookie-name: __Secure-itema_login
+      cookie-secure: "true"
+      footer: '-'
+      redirect-url: https://auth.app.example.test/oauth2/callback
+      reverse-proxy: "true"
+      session-cookie-minimal: "true"
+      skip-provider-button: "true"
+      whitelist-domain: .example.test
+    extraEnv:
+      - name: ENTRA_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            key: clientID
+            name: oauth2-proxy-entra
+      - name: ENTRA_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            key: clientSecret
+            name: oauth2-proxy-entra
+      - name: ENTRA_TENANT
+        valueFrom:
+          secretKeyRef:
+            key: tenant
+            name: oauth2-proxy-entra
+      - name: OAUTH2_PROXY_COOKIE_SECRET
+        valueFrom:
+          secretKeyRef:
+            key: cookieSecret
+            name: oauth2-proxy-entra
+    fullnameOverride: oauth2-proxy
+    ingress:
+      annotations:
+        traefik.ingress.kubernetes.io/router.entrypoints: websecure
+        traefik.ingress.kubernetes.io/router.tls: "true"
+      className: traefik
+      enabled: true
+      hosts:
+        - auth.app.example.test
+      tls:
+        - hosts:
+            - auth.app.example.test
+    proxyVarsAsSecrets: false
+    replicaCount: 1
+    resources:
+      limits:
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 32Mi

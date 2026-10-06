@@ -277,6 +277,19 @@ func TestOauth2ProxyCookieDomain(t *testing.T) {
 	}
 }
 
+// The shared proxy's values are pinned, so an edit to the values both
+// proxies share cannot change it without this file changing too.
+func TestSharedOauth2ProxyIsPinned(t *testing.T) {
+	apps := renderApplications(t, "--values", fixture)
+	sources := get[[]any](t, apps["oauth2-proxy"], "spec", "sources")
+	got := get[object](t, map[string]any{"s": sources[0]}, "s", "helm")
+	want := get[object](t, readYAML(t, "testdata/oauth2-proxy-shared-source.yaml"), "helm")
+	if !reflect.DeepEqual(got, want) {
+		gotYAML, _ := yaml.Marshal(got)
+		t.Errorf("the shared oauth2-proxy's helm block differs from testdata/oauth2-proxy-shared-source.yaml; got:\n%s", gotYAML)
+	}
+}
+
 // The host-only proxy serves custom domains outside the login cookie domain.
 // It is the shared proxy apart from where the callback and the cookie live:
 // both on the requested host. Everything else, the Entra Secret included,

@@ -63,7 +63,7 @@ so the refusal happens whichever object Helm renders first. No output.
 {{- fail "env must not set DATABASE_URL; the Postgres Capability injects it" -}}
 {{- end -}}
 {{- if .Values.login.enabled -}}
-{{- $_ = include "application.login.checkDomains" . -}}
+{{- $_ = include "application.login.checkPlatformAddress" . -}}
 {{- end -}}
 {{- $_ = include "application.tasks.check" . -}}
 {{- $_ = include "application.login.groups" . -}}
@@ -274,7 +274,7 @@ Refuses login.enabled when the Platform address is outside the login cookie
 domain, which only a wrong hand-set platform.loginCookieDomain can cause: the
 shared login's cookie would never reach it. No output.
 */}}
-{{- define "application.login.checkDomains" -}}
+{{- define "application.login.checkPlatformAddress" -}}
 {{- $cookieDomain := include "application.login.cookieDomain" . -}}
 {{- $platformHost := include "application.host" . -}}
 {{- if not (hasSuffix (printf ".%s" $cookieDomain) $platformHost) -}}
@@ -346,8 +346,8 @@ with sign-in groups.
 {{- end -}}
 
 {{/*
-The Environment's own copy of the host-only Middleware, rendered only with
-sign-in groups and custom domains outside the login cookie domain.
+The name of the Environment's own copy of the host-only Middleware, rendered
+only with sign-in groups and custom domains outside the login cookie domain.
 */}}
 {{- define "application.login.hostMiddleware" -}}
 {{- printf "%s-itema-login-host" (include "application.fullname" .) -}}

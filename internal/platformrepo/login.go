@@ -10,8 +10,8 @@ import (
 // LoginCookieDomain is the domain the Itema login cookie is set for,
 // without the leading dot: CloudflareZone, or BaseDomain when platform.yaml
 // has no zone. The bootstrap's oauth2-proxy derives its cookie domain the
-// same way (iidp-bootstrap.loginCookieDomain), and the chart sorts custom
-// domains by it.
+// same way (iidp-bootstrap.loginCookieDomain), and the chart decides by it
+// which login each custom domain signs in through.
 func (c Config) LoginCookieDomain() string {
 	if c.CloudflareZone != "" {
 		return c.CloudflareZone

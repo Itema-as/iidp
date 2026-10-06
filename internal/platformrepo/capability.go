@@ -248,12 +248,11 @@ func (w *Writer) attemptAddCapabilities(ctx context.Context, application string,
 	}
 
 	res := Result{
-		Config:  cfg,
-		Files:   files,
-		Address: "https://" + application + "." + cfg.BaseDomain,
-		Domains: domainPlans,
-		Login:   caps.Login || prod.Login.Enabled,
-
+		Config:             cfg,
+		Files:              files,
+		Address:            "https://" + application + "." + cfg.BaseDomain,
+		Domains:            domainPlans,
+		Login:              caps.Login || prod.Login.Enabled,
 		LoginCallbackHosts: loginCallbackHosts,
 	}
 	switch {
@@ -319,8 +318,8 @@ func checkCapabilitiesAbsent(application string, caps Capabilities, prod environ
 // returning the paths it wrote and the edited values.yaml. loginOn is
 // whether the Application already has Itema login: custom domains added
 // to its prod then also write platform.loginCookieDomain, which older
-// values.yaml files lack. Without it the chart would sort the domains by
-// baseDomain and send one inside the zone to the host-only login.
+// values.yaml files lack. Without it the chart would judge the domains
+// against baseDomain and send one inside the zone to the host-only login.
 func applyCapabilitiesToEnvironment(dir, application, environment string, caps Capabilities, cfg Config, loginOn bool) (files []string, newValues []byte, err error) {
 	valuesRelPath := path.Join(EnvironmentDir(application, environment), "values.yaml")
 	valuesAbsPath := filepath.Join(dir, filepath.FromSlash(valuesRelPath))
