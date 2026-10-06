@@ -52,7 +52,7 @@ func testDatabaseAccess(ctx context.Context, t *testing.T, cluster *Cluster) {
 	if n, err := strconv.Atoi(version); err != nil || n < 140000 {
 		t.Fatalf("server_version_num = %q, want PostgreSQL 14 or later", version)
 	}
-	t.Logf("CloudNativePG's default image runs PostgreSQL %s", version)
+	t.Logf("CloudNativePG's default image runs PostgreSQL with server_version_num %s", version)
 
 	// The table is the owner's, as a migration would make it.
 	if out, err := cluster.Kubectl(ctx, "-n", namespace, "exec", db+"-1", "-c", "postgres", "--",
