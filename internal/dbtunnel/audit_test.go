@@ -1,7 +1,9 @@
 package dbtunnel_test
 
 import (
+	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -149,4 +151,40 @@ func values(m map[string]string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// A developer refused for their permission on the repository is recorded
+// on the Environment they asked for, auto resolved, once it is one the
+// Platform repository has. A Preview Environment is only known by its
+// Cluster, which the permission check comes before.
+func TestARepositoryRefusalIsRecordedOnTheEnvironment(t *testing.T) {
+	e := newEnv(t)
+	server := e.serving(t, newFakePostgres(t, nil))
+	for _, tc := range []struct{ token, application, environment string }{
+		{strangerToken, "shop", "prod"},
+		{strangerToken, "shop", "auto"},
+		{adminToken, "notes", "prod"},
+		{adminToken, "later", "prod"},
+		{strangerToken, "shop", "pr-7"},
+		{adminToken, "notes", "staging"},
+	} {
+		if _, err := client(server, tc.token).Check(context.Background(), tc.application, tc.environment, false); err == nil {
+			t.Fatalf("%s %s %s was let in", tc.token, tc.application, tc.environment)
+		}
+	}
+	e.tunnel.WaitForEvents()
+	var got []string
+	for _, ev := range e.events.all() {
+		got = append(got, ev.Reason+" "+ev.Regarding.Name+" "+ev.Metadata.Annotations["iidp.itema.no/login"])
+	}
+	sort.Strings(got)
+	want := []string{
+		"DatabaseSessionRefused later-prod admin-developer",
+		"DatabaseSessionRefused notes-prod admin-developer",
+		"DatabaseSessionRefused shop-prod stranger-developer",
+		"DatabaseSessionRefused shop-staging stranger-developer",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("Events:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
 }

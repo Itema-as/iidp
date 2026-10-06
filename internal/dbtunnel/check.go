@@ -79,11 +79,13 @@ var purpose = repoaccess.Purpose{Service: "the database tunnel", Action: "reach 
 const noToken = "no GitHub token: send your own as Authorization: Bearer <token>, which iidp app db connect takes from gh auth"
 
 // check runs the full check for one connection, in order: the
-// developer's GitHub login; their permission on the Application
-// repository, read the way the Deploy gate's status endpoint reads it;
-// the Environment; its access levels and roles, from its Cluster, which is
-// what is deployed rather than what the Platform repository says; the
-// role for the developer's permission; and that role's password.
+// developer's GitHub login; the Environment, from the Platform repository
+// cloned with their token, so that a refusal from here on is recorded on
+// it; their permission on the Application repository, read the way the
+// Deploy gate's status endpoint reads it; the Environment's access levels
+// and roles, from its Cluster, which is what is deployed rather than what
+// the Platform repository says; the role for the developer's permission;
+// and that role's password.
 func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 	grant := Grant{Application: req.Application, Environment: req.Environment}
 	if err := platformrepo.ValidateName(req.Application); err != nil {
@@ -123,11 +125,6 @@ func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 	if len(environments) == 0 {
 		return grant, refuse(http.StatusNotFound, "there is no Application %s on the Platform: %s has no Environment for it", req.Application, platform.Repository)
 	}
-	repo, binding, err := repoaccess.Check(ctx, dir, req.Application, t.OrgID, gh, purpose)
-	if err != nil {
-		return grant, accessRefusal(err)
-	}
-
 	if grant.Environment == api.EnvironmentAuto {
 		grant.Environment = "prod"
 		if slices.Contains(environments, "staging") {
@@ -140,9 +137,16 @@ func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 	if grant.Environment == "prod" {
 		grant.Cluster = req.Application + "-db"
 	}
+	// A Preview Environment is only known once its Cluster is found.
 	preview := platformstate.IsPreview(grant.Environment)
 	if !preview && !slices.Contains(environments, grant.Environment) {
 		return grant, refuse(http.StatusNotFound, "unknown Environment: %s has no %s Environment", req.Application, grant.Environment)
+	}
+	grant.known = !preview
+
+	repo, binding, err := repoaccess.Check(ctx, dir, req.Application, t.OrgID, gh, purpose)
+	if err != nil {
+		return grant, accessRefusal(err)
 	}
 
 	var cluster postgresCluster
@@ -151,7 +155,6 @@ func (t *Tunnel) check(ctx context.Context, req Request) (Grant, error) {
 	case isNotFound(err) && preview:
 		return grant, refuse(http.StatusNotFound, "there is no Preview Environment for pull request %s of %s with a database: label the pull request %s and give it a few minutes, or check its number", strings.TrimPrefix(grant.Environment, "pr-"), req.Application, render.PreviewLabel)
 	case isNotFound(err):
-		grant.known = true
 		if hasDatabase(dir, req.Application, grant.Environment) {
 			return grant, refuse(http.StatusConflict, "%s %s's database is not running yet: ArgoCD has not created it", req.Application, grant.Environment)
 		}
