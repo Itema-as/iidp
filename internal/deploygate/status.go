@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Itema-as/iidp/internal/git"
 	"github.com/Itema-as/iidp/internal/github"
 	"github.com/Itema-as/iidp/internal/platform"
 	"github.com/Itema-as/iidp/internal/platformrepo"
 	"github.com/Itema-as/iidp/internal/platformstate"
 	"github.com/Itema-as/iidp/internal/render"
+	"github.com/Itema-as/iidp/internal/repoaccess"
 )
 
 // StatusPath is the read endpoint iidp app status calls, followed by the
@@ -66,9 +66,9 @@ func (g *Gate) status(ctx context.Context, r *http.Request, application string) 
 		return platformstate.Status{}, 0, err
 	}
 	defer os.RemoveAll(dir)
-	repo, err := git.CloneWithHistory(ctx, g.PlatformRepo, platformrepo.Branch, dir, git.Auth{Token: token})
+	repo, err := repoaccess.Clone(ctx, g.PlatformRepo, dir, token, true, statusPurpose)
 	if err != nil {
-		return platformstate.Status{}, 0, cloneRefusal(err)
+		return platformstate.Status{}, 0, accessRefusal(err)
 	}
 
 	environments, err := repositoryEnvironments(dir, application)
@@ -78,25 +78,9 @@ func (g *Gate) status(ctx context.Context, r *http.Request, application string) 
 	if len(environments) == 0 {
 		return platformstate.Status{}, 0, refuse(http.StatusNotFound, "there is no Application %s on the Platform: %s has no Environment for it", application, platform.Repository)
 	}
-	binding, ok, err := platformrepo.ReadRepositoryBinding(dir, application)
-	if err != nil || !ok || !binding.Complete() {
-		return platformstate.Status{}, 0, refuse(http.StatusForbidden, "refused: %s is not bound to an Application repository, so there is no repository whose readers may see its status. Bind it first: iidp app bind %s --repo %s/<repository>", application, application, platform.Org)
-	}
-	if binding.RepositoryOwnerID != g.OrgID {
-		return platformstate.Status{}, binding.RepositoryID, refuse(http.StatusForbidden, "refused: %s is bound to a repository outside %s (owner id %d); rebind it with iidp app bind %s --repo %s/<repository> --rebind", application, platform.Org, binding.RepositoryOwnerID, application, platform.Org)
-	}
-
-	gh := &github.Client{Token: token, BaseURL: g.GitHubAPI}
-	readable, err := gh.RepositoryByID(ctx, binding.RepositoryID)
-	switch {
-	case github.IsUnauthorized(err):
-		return platformstate.Status{}, binding.RepositoryID, refuse(http.StatusUnauthorized, "GitHub does not accept your token; run gh auth login again")
-	case github.IsNotFound(err), err == nil && !readable.CanPull:
-		// GitHub answers 404, not 403, for a private repository the user
-		// cannot see: both mean no access.
-		return platformstate.Status{}, binding.RepositoryID, refuse(http.StatusForbidden, "refused: you cannot read %s's Application repository (%s, repository id %d) on GitHub, and only its readers may see %s's status. Ask for read access to it", application, binding.Repository, binding.RepositoryID, application)
-	case err != nil:
-		return platformstate.Status{}, binding.RepositoryID, refuse(http.StatusBadGateway, "the Deploy gate could not ask GitHub whether you can read %s's repository: %v", application, err)
+	readable, binding, err := repoaccess.Check(ctx, dir, application, g.OrgID, &github.Client{Token: token, BaseURL: g.GitHubAPI}, statusPurpose)
+	if err != nil {
+		return platformstate.Status{}, binding.RepositoryID, accessRefusal(err)
 	}
 
 	if g.Cluster == nil {
@@ -160,19 +144,24 @@ func databaseAccess(dir, application, environment string) *platformstate.Databas
 	}
 }
 
-// cloneRefusal words a failed clone of the Platform repository with the
-// caller's token. GitHub answers "Repository not found" to a token that may
-// not read it, and "Authentication failed" to one it does not accept.
-func cloneRefusal(err error) error {
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "Authentication failed"), strings.Contains(msg, "Invalid username or token"):
-		return refuse(http.StatusUnauthorized, "GitHub does not accept your token; run gh auth login again")
-	case strings.Contains(msg, "not found"), strings.Contains(msg, "403"):
-		return refuse(http.StatusForbidden, "refused: your GitHub login cannot read the Platform repository %s", platform.Repository)
-	default:
-		return refuse(http.StatusBadGateway, "the Deploy gate could not read the Platform repository %s: %v", platform.Repository, err)
+// statusPurpose words the status endpoint's repository check.
+var statusPurpose = repoaccess.Purpose{Service: "the Deploy gate", Action: "see %s status"}
+
+// accessRefusal answers a repository check's refusal with its HTTP status.
+func accessRefusal(err error) error {
+	var ref *repoaccess.Refusal
+	if !errors.As(err, &ref) {
+		return err
 	}
+	status := map[repoaccess.Reason]int{
+		repoaccess.TokenRejected:      http.StatusUnauthorized,
+		repoaccess.PlatformUnreadable: http.StatusForbidden,
+		repoaccess.NotBound:           http.StatusForbidden,
+		repoaccess.OutsideOrg:         http.StatusForbidden,
+		repoaccess.NoAccess:           http.StatusForbidden,
+		repoaccess.Unavailable:        http.StatusBadGateway,
+	}[ref.Reason]
+	return refuse(status, "%s", ref.Message)
 }
 
 // repositoryEnvironments are the Environments the Platform repository has
