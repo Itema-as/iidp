@@ -12,9 +12,12 @@ size: small
 login:
   enabled: true
 domains:
-  # Inside the cookie domain: allowed.
+  # Directly under the base domain: the wildcard, on the Platform Ingress,
+  # behind the shared login.
+  - butikk.app.itma.no
+  # Inside the cookie domain: the HTTP-01 Ingress, behind the shared login.
   - x.itma.no
-  # Outside it: refused, and named.
+  # Outside it: behind the host-only login, with their own /oauth2/ route.
   - shop.example.com
   # Ends with the cookie domain's characters but is not under it.
   - notitma.no

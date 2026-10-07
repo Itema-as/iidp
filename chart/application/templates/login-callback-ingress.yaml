@@ -1,0 +1,46 @@
+{{- include "application.validate" . -}}
+{{- $hostOnly := (include "application.login.hostOnlyDomains" . | fromJson).hosts -}}
+{{- if and (include "application.released" .) $hostOnly }}
+{{- /*
+Sends https://<host>/oauth2/ on each custom domain outside the login cookie
+domain to the host-only oauth2-proxy, where its sign-in callback is, without
+going through ForwardAuth. Its rule is longer than the Application's
+PathPrefix(`/`), so Traefik prefers it.
+
+It lives in the proxy's namespace because Traefik routes an Ingress only to
+Services in its own namespace. The name carries the Environment's namespace,
+so no two Environments write the same object, and ArgoCD prunes it with the
+Environment. The certificates come from the HTTP-01 Ingress in the
+Environment's namespace: Traefik serves them by SNI.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ printf "%s-%s-oauth2" .Release.Namespace (include "application.fullname" .) }}
+  namespace: oauth2-proxy
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        {{- range $hostOnly }}
+        - {{ . }}
+        {{- end }}
+  rules:
+    {{- range $hostOnly }}
+    - host: {{ . }}
+      http:
+        paths:
+          - path: /oauth2/
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth2-proxy-host
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

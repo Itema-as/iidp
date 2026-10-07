@@ -142,7 +142,7 @@ var releasedObjects = []string{
 	"CronJob/shop-nightly-cleanup",
 	"Deployment/shop",
 	"Ingress/shop",
-	"Ingress/shop-http01",
+	"Ingress/shop-shop-example-com",
 	"Job/shop-final-backup",
 	"Job/shop-migrate",
 	"ObjectStore/shop-db",

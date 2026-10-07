@@ -63,7 +63,7 @@ so the refusal happens whichever object Helm renders first. No output.
 {{- fail "env must not set DATABASE_URL; the Postgres Capability injects it" -}}
 {{- end -}}
 {{- if .Values.login.enabled -}}
-{{- $_ = include "application.login.checkDomains" . -}}
+{{- $_ = include "application.login.checkPlatformAddress" . -}}
 {{- end -}}
 {{- $_ = include "application.tasks.check" . -}}
 {{- $_ = include "application.login.groups" . -}}
@@ -319,6 +319,7 @@ the base domain is covered by the wildcard certificate.
 {{- $wildcard := list -}}
 {{- $foreign := list -}}
 {{- $seen := dict -}}
+{{- $names := dict -}}
 {{- range .Values.domains -}}
 {{- $host := . | toString -}}
 {{- if or (gt (len $host) 253) (not (regexMatch `^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$` $host)) -}}
@@ -337,6 +338,11 @@ the base domain is covered by the wildcard certificate.
 {{- if gt (len (include "application.tlsSecretName" (list $ $host))) 253 -}}
 {{- fail (printf "domains: %q is too long for the name of its TLS secret (%s-<host>-tls must be at most 253 characters)" $host (include "application.fullname" $)) -}}
 {{- end -}}
+{{- $name := include "application.domainIngressName" (list $ $host) -}}
+{{- if hasKey $names $name -}}
+{{- fail (printf "domains: %q and %q would share the Ingress %s and the TLS secret %s; keep one of them" (get $names $name) $host $name (include "application.tlsSecretName" (list $ $host))) -}}
+{{- end -}}
+{{- $_ := set $names $name $host -}}
 {{- $foreign = append $foreign $host -}}
 {{- end -}}
 {{- end -}}
@@ -351,27 +357,38 @@ The domain the Itema login cookie is set for, without the leading dot.
 {{- end -}}
 
 {{/*
-Refuses login.enabled when a host of the Environment is outside the login
-cookie domain: the browser would never send that host the cookie, so every
-request would go back to sign in. No output.
+Refuses login.enabled when the Platform address is outside the login cookie
+domain, which only a wrong hand-set platform.loginCookieDomain can cause: the
+shared login's cookie would never reach it. No output.
 */}}
-{{- define "application.login.checkDomains" -}}
+{{- define "application.login.checkPlatformAddress" -}}
 {{- $cookieDomain := include "application.login.cookieDomain" . -}}
-{{- $suffix := printf ".%s" $cookieDomain -}}
 {{- $platformHost := include "application.host" . -}}
-{{- if not (hasSuffix $suffix $platformHost) -}}
+{{- if not (hasSuffix (printf ".%s" $cookieDomain) $platformHost) -}}
 {{- fail (printf "login.enabled needs the Platform address %q inside platform.loginCookieDomain %q, the domain the Itema login cookie is set for" $platformHost $cookieDomain) -}}
 {{- end -}}
-{{- $outside := list -}}
+{{- end -}}
+
+{{/*
+The custom domains outside the login cookie domain, as JSON:
+{"hosts": [...]}, empty without login. The shared login's cookie never
+reaches them, so they sign in through the bootstrap's host-only
+oauth2-proxy, whose callback and cookies stay on each host. The Platform
+address is inside the cookie domain, so none of them is directly under the
+base domain: they are all among application.domains' foreign hosts.
+*/}}
+{{- define "application.login.hostOnlyDomains" -}}
+{{- $hosts := list -}}
+{{- if .Values.login.enabled -}}
+{{- $cookieDomain := include "application.login.cookieDomain" . -}}
 {{- range .Values.domains -}}
 {{- $host := . | toString -}}
-{{- if not (or (eq $host $cookieDomain) (hasSuffix $suffix $host)) -}}
-{{- $outside = append $outside $host -}}
+{{- if not (or (eq $host $cookieDomain) (hasSuffix (printf ".%s" $cookieDomain) $host)) -}}
+{{- $hosts = append $hosts $host -}}
 {{- end -}}
 {{- end -}}
-{{- if $outside -}}
-{{- fail (printf "login.enabled needs every custom domain inside platform.loginCookieDomain %q, the domain the Itema login cookie is set for; outside it: %s" $cookieDomain (join ", " $outside)) -}}
 {{- end -}}
+{{- dict "hosts" $hosts | toJson -}}
 {{- end -}}
 
 {{/*
@@ -416,26 +433,50 @@ with sign-in groups.
 {{- end -}}
 
 {{/*
-The Itema login middleware annotation: the bootstrap's shared middleware,
-or with sign-in groups the Environment's own. Empty without login.
+The name of the Environment's own copy of the host-only Middleware, rendered
+only with sign-in groups and custom domains outside the login cookie domain.
+*/}}
+{{- define "application.login.hostMiddleware" -}}
+{{- printf "%s-itema-login-host" (include "application.fullname" .) -}}
+{{- end -}}
+
+{{/*
+The Itema login middleware annotation, from a list of the root context and
+whether the Ingress carries hosts outside the login cookie domain: the
+bootstrap's shared or host-only middleware, or with sign-in groups the
+Environment's own copy of it. Empty without login.
 
 cert-manager's HTTP-01 challenge does not pass through it: the solver
 serves the challenge path from an Ingress of its own, and Traefik picks that
 router because a longer rule wins.
 */}}
 {{- define "application.login.annotation" -}}
-{{- if .Values.login.enabled -}}
-{{- if include "application.login.groups" . -}}
-traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s@kubernetescrd" .Release.Namespace (include "application.login.middleware" .) }}
+{{- $root := index . 0 -}}
+{{- $hostOnly := index . 1 -}}
+{{- if $root.Values.login.enabled -}}
+{{- if include "application.login.groups" $root -}}
+{{- $middleware := ternary (include "application.login.hostMiddleware" $root) (include "application.login.middleware" $root) $hostOnly -}}
+traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s@kubernetescrd" $root.Release.Namespace $middleware }}
 {{- else -}}
-traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-itema-login-auth@kubernetescrd
+traefik.ingress.kubernetes.io/router.middlewares: {{ ternary "oauth2-proxy-itema-login-host-auth@kubernetescrd" "oauth2-proxy-itema-login-auth@kubernetescrd" $hostOnly }}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 
 {{/*
+The Ingress of a foreign host, from a list of the root context and the
+host. Dots become dashes, so application.domains refuses two hosts that
+would share it.
+*/}}
+{{- define "application.domainIngressName" -}}
+{{- printf "%s-%s" (include "application.fullname" (index . 0)) (replace "." "-" (index . 1)) -}}
+{{- end -}}
+
+{{/*
 The Secret cert-manager writes a foreign host's certificate into, from a
-list of the root context and the host.
+list of the root context and the host. The name is kept as it was when
+foreign hosts shared one Ingress, so an Environment moving to an Ingress
+per host keeps its certificates.
 */}}
 {{- define "application.tlsSecretName" -}}
 {{- $root := index . 0 -}}

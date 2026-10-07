@@ -10,8 +10,8 @@ import (
 // LoginCookieDomain is the domain the Itema login cookie is set for,
 // without the leading dot: CloudflareZone, or BaseDomain when platform.yaml
 // has no zone. The bootstrap's oauth2-proxy derives its cookie domain the
-// same way (iidp-bootstrap.loginCookieDomain), and the chart checks custom
-// domains against it.
+// same way (iidp-bootstrap.loginCookieDomain), and the chart decides by it
+// which login each custom domain signs in through.
 func (c Config) LoginCookieDomain() string {
 	if c.CloudflareZone != "" {
 		return c.CloudflareZone
@@ -20,8 +20,8 @@ func (c Config) LoginCookieDomain() string {
 }
 
 // HostsOutsideLoginCookieDomain returns the hosts of domains that are not
-// cookieDomain itself or under it, in the order given: the ones the login
-// cookie would never reach.
+// cookieDomain itself or under it, in the order given: the ones the shared
+// login cookie never reaches, which sign in on their own host instead.
 func HostsOutsideLoginCookieDomain(domains []string, cookieDomain string) []string {
 	var outside []string
 	for _, host := range domains {
@@ -32,31 +32,12 @@ func HostsOutsideLoginCookieDomain(domains []string, cookieDomain string) []stri
 	return outside
 }
 
-// CheckLoginDomains refuses Itema login together with custom domains that
-// are not all inside cfg's login cookie domain, naming the ones outside.
-// The chart enforces the same rule (application.login.checkDomains).
-func CheckLoginDomains(cfg Config, domains []string) error {
-	cookieDomain := cfg.LoginCookieDomain()
-	outside := HostsOutsideLoginCookieDomain(domains, cookieDomain)
-	if len(outside) == 0 {
-		return nil
-	}
-	return fmt.Errorf("--login refused, custom domains outside %s: %s. %s", cookieDomain, strings.Join(outside, ", "), loginDomainRule(cookieDomain))
-}
-
-// checkDomainsForLogin is CheckLoginDomains for add-capability --domain on
-// an Application that already has Itema login.
-func checkDomainsForLogin(cfg Config, application string, added []string) error {
-	cookieDomain := cfg.LoginCookieDomain()
-	outside := HostsOutsideLoginCookieDomain(added, cookieDomain)
-	if len(outside) == 0 {
-		return nil
-	}
-	return fmt.Errorf("--domain %s refused: %q has Itema login. %s", strings.Join(outside, ", "), application, loginDomainRule(cookieDomain))
-}
-
-func loginDomainRule(cookieDomain string) string {
-	return fmt.Sprintf("Itema login needs every custom domain inside %s, the domain its sign-in cookie is set for (%s's cloudflareZone, or baseDomain without one); the cookie never reaches a host outside it", cookieDomain, ConfigFile)
+// LoginCallbackURL is the sign-in callback of a custom domain outside the
+// login cookie domain. The bootstrap's host-only oauth2-proxy serves it on
+// the host itself, so the Entra app registration must list it as a redirect
+// URI.
+func LoginCallbackURL(host string) string {
+	return "https://" + host + "/oauth2/callback"
 }
 
 // groupIDPattern is an Entra ID object id: a GUID, compared lowercased.

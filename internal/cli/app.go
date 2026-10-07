@@ -164,21 +164,7 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 	p := prompt.New(cmd.InOrStdin(), out)
 
 	if interactive {
-		// The wizard reads platform.yaml only to decide whether to offer
-		// Itema login for the custom domains it was given.
-		loginCookieDomain := func() (string, error) {
-			token, err := deps.TokenSource.Token()
-			if err != nil {
-				return "", fmt.Errorf("not logged in to GitHub, so %s cannot be read: %w", platform.Repository, err)
-			}
-			w := &platformrepo.Writer{URL: opts.platformRepo, Auth: git.Auth{Token: token}}
-			cfg, err := w.ReadConfig(cmd.Context())
-			if err != nil {
-				return "", err
-			}
-			return cfg.LoginCookieDomain(), nil
-		}
-		if err := runWizard(cmd, opts, p, loginCookieDomain); err != nil {
+		if err := runWizard(cmd, opts, p); err != nil {
 			return err
 		}
 	} else if err := opts.checkRequiredFlags(cmd); err != nil {
@@ -312,9 +298,6 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		if err != nil {
 			return err
 		}
-		if err := checkLoginDomains(plan, cfg); err != nil {
-			return err
-		}
 		if err := checkPasswordEncryption(plan, cfg, deps); err != nil {
 			return err
 		}
@@ -349,9 +332,6 @@ func runAppCreate(cmd *cobra.Command, opts *createOptions, deps Dependencies) er
 		// gives the base domain for the Deploy gate's URL.
 		cfg, err := platformWriter.CheckAvailable(cmd.Context(), plan.name)
 		if err != nil {
-			return err
-		}
-		if err := checkLoginDomains(plan, cfg); err != nil {
 			return err
 		}
 		if err := checkPasswordEncryption(plan, cfg, deps); err != nil {
@@ -523,16 +503,6 @@ func checkPasswordEncryption(plan createPlan, cfg platformrepo.Config, deps Depe
 		return nil
 	}
 	return errors.New("--postgres with --staging writes staging's database password, encrypted with sops, which is not installed or not on PATH; install it from https://github.com/getsops/sops")
-}
-
-// checkLoginDomains refuses --login together with a --domain outside the
-// login cookie domain in platform.yaml. It runs before the Application
-// repository is created or the pull request opened; the Writer checks again.
-func checkLoginDomains(plan createPlan, cfg platformrepo.Config) error {
-	if !plan.login {
-		return nil
-	}
-	return platformrepo.CheckLoginDomains(cfg, plan.domains)
 }
 
 // checkAdoptPreview returns the errors Adopter.Adopt would, so the wizard
@@ -715,8 +685,6 @@ func (o createOptions) plan(cmd *cobra.Command) (createPlan, error) {
 	if err := checkPostgresKind(o.postgres, kind); err != nil {
 		return createPlan{}, err
 	}
-	// --domain against --login needs platform.yaml, so checkLoginDomains
-	// checks it after the clone.
 	loginGroups, err := parseLoginGroups(o.loginGroups)
 	if err != nil {
 		return createPlan{}, err
@@ -898,7 +866,7 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 	}
 	printPreviews(out, res)
 	if res.Login {
-		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
+		fmt.Fprintf(out, "  Login:    Itema (Entra ID) sign-in required; one sign-in covers every protected address inside %s\n", res.Config.LoginCookieDomain())
 		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(res.LoginGroups))
 	}
 	printDatabases(out, name, res)
@@ -909,6 +877,7 @@ func printCreated(out io.Writer, name string, res platformrepo.Result) {
 		fmt.Fprintf(out, "  Grafana:  %s\n", res.Config.GrafanaURL)
 	}
 	printDomains(out, res)
+	printLoginCallbacks(out, res)
 	fmt.Fprintf(out, "\nThe Environment deploys once the deploy workflow writes the first image tag.\n")
 }
 
@@ -961,4 +930,33 @@ func printDomains(out io.Writer, res platformrepo.Result) {
 	for _, d := range cnames {
 		fmt.Fprintf(out, "  CNAME %s -> %s\n", d.Host, target)
 	}
+}
+
+// entraLoginApp is the display name the bootstrap wizard gives oauth2-proxy's
+// Entra app registration.
+const entraLoginApp = "iidp-oauth2-proxy"
+
+// printLoginCallbacks lists the redirect URIs the Entra app registration
+// needs for custom domains outside the login cookie domain, each of which
+// signs in on its own host. It prints the az command and the portal steps
+// for the Platform admin, and runs neither.
+func printLoginCallbacks(out io.Writer, res platformrepo.Result) {
+	if len(res.LoginCallbackHosts) == 0 {
+		return
+	}
+	uris := make([]string, 0, len(res.LoginCallbackHosts))
+	for _, host := range res.LoginCallbackHosts {
+		uris = append(uris, platformrepo.LoginCallbackURL(host))
+	}
+	fmt.Fprintf(out, "\nItema login on custom domains outside %s signs in on each host. Ask the Platform admin to add these redirect URIs to the %s app registration in Entra ID:\n", res.Config.LoginCookieDomain(), entraLoginApp)
+	for _, uri := range uris {
+		fmt.Fprintf(out, "  %s\n", uri)
+	}
+	// --web-redirect-uris replaces the whole list, so the command reads
+	// the URIs already there and writes them back with the new ones.
+	fmt.Fprintln(out, "With az, keeping the redirect URIs already there:")
+	fmt.Fprintf(out, "  app=$(az ad app list --display-name %s --query '[0].appId' -o tsv)\n", entraLoginApp)
+	fmt.Fprintf(out, "  az ad app update --id \"$app\" --web-redirect-uris $( (az ad app show --id \"$app\" --query 'web.redirectUris[]' -o tsv; printf '%%s\\n' %s) | sort -u)\n", strings.Join(uris, " "))
+	fmt.Fprintf(out, "Or in the Microsoft Entra admin center: App registrations > %s > Authentication > Web > Redirect URIs > Add URI, once per URI, then Save.\n", entraLoginApp)
+	fmt.Fprintln(out, "Until then, signing in on these hosts ends at Entra ID's error AADSTS50011 (redirect URI mismatch).")
 }

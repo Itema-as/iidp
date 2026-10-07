@@ -116,7 +116,6 @@ type Application struct {
 	// keeps its Platform address.
 	Domains []string
 	// Login is the Itema login Capability, written into every Environment.
-	// Refused together with a domain outside Config.LoginCookieDomain.
 	Login bool
 	// LoginGroups are the sign-in groups, Entra ID group object ids,
 	// written into every Environment: with any, only their members get past
@@ -150,6 +149,10 @@ type Result struct {
 	// LoginGroups are the Application's sign-in groups once the run is
 	// done; none means any Itema user gets in.
 	LoginGroups []string
+	// LoginCallbackHosts are the custom domains outside the login cookie
+	// domain that this run puts behind Itema login, in the order given.
+	// Each needs its LoginCallbackURL added to the Entra app registration.
+	LoginCallbackHosts []string
 	// PreviewAddress is the address of a Preview Environment, with
 	// <number> for the pull request's, or "" when the Application has no
 	// Preview Environments.
@@ -353,11 +356,6 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 	if err != nil {
 		return Result{}, err
 	}
-	if app.Login {
-		if err := CheckLoginDomains(cfg, app.Domains); err != nil {
-			return Result{}, err
-		}
-	}
 	if len(app.LoginGroups) > 0 && !app.Login {
 		return Result{}, fmt.Errorf("%w: give --login with --login-group", ErrLoginGroupsWithoutLogin)
 	}
@@ -479,6 +477,7 @@ func (w *Writer) attemptCreate(ctx context.Context, app Application, retry, prev
 	}
 	if app.Login {
 		res.LoginGroups = app.LoginGroups
+		res.LoginCallbackHosts = HostsOutsideLoginCookieDomain(app.Domains, cfg.LoginCookieDomain())
 	}
 	if app.Staging {
 		res.StagingAddress = "https://" + stagingAddress

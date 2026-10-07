@@ -227,9 +227,10 @@ func printAddCapabilityResult(out io.Writer, name string, res platformrepo.Resul
 	}
 	printPreviews(out, res)
 	if res.Login {
-		fmt.Fprintln(out, "  Login:    Itema (Entra ID) sign-in required; sign in once to reach every protected address")
+		fmt.Fprintf(out, "  Login:    Itema (Entra ID) sign-in required; one sign-in covers every protected address inside %s\n", res.Config.LoginCookieDomain())
 		fmt.Fprintf(out, "  Sign-in groups: %s\n", signInGroupsText(res.LoginGroups))
 	}
 	printDatabases(out, name, res)
 	printDomains(out, res)
+	printLoginCallbacks(out, res)
 }

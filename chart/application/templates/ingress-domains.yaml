@@ -1,0 +1,42 @@
+{{- include "application.validate" . -}}
+{{- $domains := include "application.domains" . | fromJson -}}
+{{- $hostOnly := (include "application.login.hostOnlyDomains" . | fromJson).hosts -}}
+{{- if include "application.released" . }}
+{{- /*
+One Ingress per custom domain the wildcard certificate does not cover,
+carrying its own certificate from platform.httpIssuer. Traefik stops loading
+an Ingress's certificates at the first Secret that does not exist, so a
+domain still waiting for its DNS record, and therefore for its certificate,
+must not share an Ingress with another. Keeping them off the Platform
+Ingress also keeps cert-manager's ingress-shim, which acts on every host of
+the Ingress it finds the issuer annotation on, from trying to issue for the
+wildcard hosts. Each Ingress also names the login its host signs in
+through: the shared one, or the host-only one outside the login cookie
+domain.
+*/}}
+{{- range $domains.foreign }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "application.domainIngressName" (list $ .) }}
+  labels:
+    {{- include "application.labels" $ | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    cert-manager.io/cluster-issuer: {{ $.Values.platform.httpIssuer | quote }}
+    {{- with include "application.login.annotation" (list $ (has . $hostOnly)) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ . }}
+      secretName: {{ include "application.tlsSecretName" (list $ .) }}
+  rules:
+    - host: {{ . }}
+      {{- include "application.ingressPaths" $ | nindent 6 }}
+{{- end }}
+{{- end }}

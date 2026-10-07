@@ -96,34 +96,43 @@ func TestDomainUnderTheBaseDomainJoinsThePlatformIngressWithoutASecret(t *testin
 	}
 }
 
-func TestForeignDomainsGetTheirOwnCertificatesOnASecondIngress(t *testing.T) {
+// Each foreign host gets an Ingress of its own, so a host whose certificate
+// is not issued yet cannot affect another: Traefik stops loading an
+// Ingress's certificates at the first Secret that does not exist.
+func TestEachForeignDomainGetsAnIngressOfItsOwn(t *testing.T) {
 	cases := []struct {
 		fixture, name, issuer string
 		port                  int
 		wildcardHosts         []string
-		foreign               []tlsEntry
+		// foreign maps each foreign host's Ingress name to its tls entry.
+		foreign map[string]tlsEntry
 	}{
 		{
 			fixture: "custom-domain-foreign.yaml", name: "shop", issuer: "letsencrypt-http01", port: 3000,
 			wildcardHosts: []string{"shop.app.itma.no"},
-			foreign: []tlsEntry{
-				{hosts: []string{"shop.example.com"}, secretName: "shop-shop-example-com-tls"},
-				{hosts: []string{"www.shop.example.com"}, secretName: "shop-www-shop-example-com-tls"},
+			foreign: map[string]tlsEntry{
+				"shop-shop-example-com":     {hosts: []string{"shop.example.com"}, secretName: "shop-shop-example-com-tls"},
+				"shop-www-shop-example-com": {hosts: []string{"www.shop.example.com"}, secretName: "shop-www-shop-example-com-tls"},
 			},
 		},
 		{
 			fixture: "custom-domains-mixed.yaml", name: "shop-staging", issuer: "letsencrypt-staging-http01", port: 8080,
 			wildcardHosts: []string{"shop-staging.app.itma.no", "butikk-staging.app.itma.no"},
-			foreign: []tlsEntry{
-				{hosts: []string{"test.shop.app.itma.no"}, secretName: "shop-staging-test-shop-app-itma-no-tls"},
-				{hosts: []string{"shop-staging.itma.no"}, secretName: "shop-staging-shop-staging-itma-no-tls"},
+			foreign: map[string]tlsEntry{
+				"shop-staging-test-shop-app-itma-no": {hosts: []string{"test.shop.app.itma.no"}, secretName: "shop-staging-test-shop-app-itma-no-tls"},
+				"shop-staging-shop-staging-itma-no":  {hosts: []string{"shop-staging.itma.no"}, secretName: "shop-staging-shop-staging-itma-no-tls"},
 			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
 			objects := render(t, tc.fixture)
-			if want := []string{"ConfigMap/iidp-domains", "Deployment/" + tc.name, "Ingress/" + tc.name, "Ingress/" + tc.name + "-http01", "Service/" + tc.name}; !slices.Equal(keys(objects), want) {
+			want := []string{"ConfigMap/iidp-domains", "Deployment/" + tc.name, "Ingress/" + tc.name, "Service/" + tc.name}
+			for name := range tc.foreign {
+				want = append(want, "Ingress/"+name)
+			}
+			slices.Sort(want)
+			if !slices.Equal(keys(objects), want) {
 				t.Fatalf("rendered %v, want exactly %v", keys(objects), want)
 			}
 
@@ -140,42 +149,36 @@ func TestForeignDomainsGetTheirOwnCertificatesOnASecondIngress(t *testing.T) {
 				t.Errorf("Platform Ingress tls = %+v, want one entry for %v with no secretName", tls, tc.wildcardHosts)
 			}
 
-			foreign := mustObject(t, objects, "Ingress/"+tc.name+"-http01")
-			annotations := get[map[string]any](t, foreign, "metadata", "annotations")
-			if got := annotations["cert-manager.io/cluster-issuer"]; got != tc.issuer {
-				t.Errorf("cert-manager.io/cluster-issuer = %v, want %q", got, tc.issuer)
-			}
-			if got := annotations["traefik.ingress.kubernetes.io/router.entrypoints"]; got != "websecure" {
-				t.Errorf("router.entrypoints = %v, want websecure", got)
-			}
-			if got := annotations["traefik.ingress.kubernetes.io/router.tls"]; got != "true" {
-				t.Errorf("router.tls = %v, want \"true\"", got)
-			}
-			if class := get[string](t, foreign, "spec", "ingressClassName"); class != "traefik" {
-				t.Errorf("ingressClassName = %q, want traefik", class)
-			}
-
-			var foreignHosts []string
-			for _, e := range tc.foreign {
-				foreignHosts = append(foreignHosts, e.hosts...)
-			}
-			if hosts := ingressHosts(t, foreign); !slices.Equal(hosts, foreignHosts) {
-				t.Errorf("foreign Ingress hosts = %v, want %v", hosts, foreignHosts)
-			}
-			assertEveryRuleRoutesTo(t, foreign, tc.name, tc.port)
-
-			// One tls entry per host, each with its own secret, so
-			// cert-manager issues one Certificate per host.
-			if tls := tlsEntries(t, foreign); !slices.EqualFunc(tls, tc.foreign, func(a, b tlsEntry) bool {
-				return slices.Equal(a.hosts, b.hosts) && a.secretName == b.secretName
-			}) {
-				t.Errorf("foreign Ingress tls = %+v, want %+v", tls, tc.foreign)
-			}
-
-			// The second Ingress is the Environment's too.
-			labels := get[map[string]any](t, foreign, "metadata", "labels")
-			if labels["app.kubernetes.io/instance"] != tc.name || labels["iidp.itema.no/application"] != "shop" {
-				t.Errorf("foreign Ingress labels = %v, want the Environment's", labels)
+			for name, entry := range tc.foreign {
+				foreign := mustObject(t, objects, "Ingress/"+name)
+				annotations := get[map[string]any](t, foreign, "metadata", "annotations")
+				if got := annotations["cert-manager.io/cluster-issuer"]; got != tc.issuer {
+					t.Errorf("%s cert-manager.io/cluster-issuer = %v, want %q", name, got, tc.issuer)
+				}
+				if got := annotations["traefik.ingress.kubernetes.io/router.entrypoints"]; got != "websecure" {
+					t.Errorf("%s router.entrypoints = %v, want websecure", name, got)
+				}
+				if got := annotations["traefik.ingress.kubernetes.io/router.tls"]; got != "true" {
+					t.Errorf("%s router.tls = %v, want \"true\"", name, got)
+				}
+				if class := get[string](t, foreign, "spec", "ingressClassName"); class != "traefik" {
+					t.Errorf("%s ingressClassName = %q, want traefik", name, class)
+				}
+				if hosts := ingressHosts(t, foreign); !slices.Equal(hosts, entry.hosts) {
+					t.Errorf("%s hosts = %v, want %v", name, hosts, entry.hosts)
+				}
+				assertEveryRuleRoutesTo(t, foreign, tc.name, tc.port)
+				// One tls entry with the host's own secret, so cert-manager
+				// issues one Certificate for this Ingress. The secret's name
+				// is the one the chart has always given it, so an Environment
+				// moving to this layout keeps its certificate.
+				if tls := tlsEntries(t, foreign); len(tls) != 1 || !slices.Equal(tls[0].hosts, entry.hosts) || tls[0].secretName != entry.secretName {
+					t.Errorf("%s tls = %+v, want %+v", name, tls, entry)
+				}
+				labels := get[map[string]any](t, foreign, "metadata", "labels")
+				if labels["app.kubernetes.io/instance"] != tc.name || labels["iidp.itema.no/application"] != "shop" {
+					t.Errorf("%s labels = %v, want the Environment's", name, labels)
+				}
 			}
 		})
 	}
@@ -218,6 +221,7 @@ func TestRenderingRefusesBadDomains(t *testing.T) {
 		{"refuse-domain-duplicate.yaml", `domains: "shop.example.com" is listed twice`},
 		{"refuse-domain-platform-address.yaml", `domains: "shop-staging.app.itma.no" is this Environment's Platform address, which is always served; remove it`},
 		{"refuse-domain-too-long.yaml", `is too long for the name of its TLS secret (shop-staging-<host>-tls must be at most 253 characters)`},
+		{"refuse-domain-same-name.yaml", `domains: "a-b.example.com" and "a.b-example.com" would share the Ingress shop-a-b-example-com and the TLS secret shop-a-b-example-com-tls; keep one of them`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
@@ -232,8 +236,8 @@ func TestRenderingRefusesBadDomains(t *testing.T) {
 	}
 }
 
-// These fixtures render objects the Web service fixtures do not (a second
-// Ingress, envFrom), so they are validated too.
+// These fixtures render objects the Web service fixtures do not (an Ingress
+// per foreign host, envFrom), so they are validated too.
 func TestStaticSiteDomainAndSecretFixturesPassKubeconform(t *testing.T) {
 	requireTool(t, "kubeconform")
 	version := kubernetesVersion(t)

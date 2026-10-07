@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -52,6 +53,131 @@ func TestCheckSignInRedirect(t *testing.T) {
 			defer server.Close()
 			cluster := &Cluster{HTTPSPort: serverPort(t, server.URL), Log: t.Logf}
 			err := cluster.CheckSignInRedirect(context.Background(), host, path, want, time.Second)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("got %v, want no error", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("got %v, want an error mentioning %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// For a custom domain outside the login cookie domain, CheckSignInRedirect
+// wants the host-only proxy's redirect: the callback on the host itself, a
+// CSRF cookie with no Domain, and the path alone to return to.
+func TestCheckSignInRedirectHostOnly(t *testing.T) {
+	want := SignIn{
+		LoginURL:   "https://idp.example.test/authorize",
+		HostOnly:   true,
+		CSRFCookie: "__Host-itema_login_csrf",
+	}
+	const host, path = "shop.other.test", "/orders?page=2&sort=date"
+	const callback = "https://" + host + "/oauth2/callback"
+	csrf := &http.Cookie{Name: want.CSRFCookie, Value: "x", Path: "/", Secure: true}
+	redirect := func(callback, state string, cookie *http.Cookie) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			http.SetCookie(w, cookie)
+			q := url.Values{"redirect_uri": {callback}, "state": {state}}
+			http.Redirect(w, r, want.LoginURL+"?"+q.Encode(), http.StatusFound)
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		handler http.HandlerFunc
+		wantErr string
+	}{
+		{"redirect to the provider", redirect(callback, "hash:"+path, csrf), ""},
+		{"callback on the auth address", redirect("https://auth.app.example.test/oauth2/callback", "hash:"+path, csrf), "redirect_uri"},
+		{"CSRF cookie with a Domain", redirect(callback, "hash:"+path, &http.Cookie{Name: want.CSRFCookie, Value: "x", Path: "/", Secure: true, Domain: ".other.test"}), "no __Host-itema_login_csrf cookie for the host alone"},
+		{"CSRF cookie not Secure", redirect(callback, "hash:"+path, &http.Cookie{Name: want.CSRFCookie, Value: "x", Path: "/"}), "no __Host-itema_login_csrf cookie for the host alone"},
+		{"path lost", redirect(callback, "hash:/", csrf), "state"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(tc.handler)
+			defer server.Close()
+			cluster := &Cluster{HTTPSPort: serverPort(t, server.URL), Log: t.Logf}
+			err := cluster.CheckSignInRedirect(context.Background(), host, path, want, time.Second)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("got %v, want no error", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("got %v, want an error mentioning %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// The callback must be answered by oauth2-proxy itself.
+func TestLoginCallbackAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    int
+		header    http.Header
+		ok, retry bool
+	}{
+		{"oauth2-proxy's error page", http.StatusInternalServerError, nil, true, false},
+		{"oauth2-proxy's forbidden page", http.StatusForbidden, nil, true, false},
+		{"no route yet", http.StatusNotFound, nil, false, true},
+		{"no endpoint yet", http.StatusServiceUnavailable, nil, false, true},
+		{"sent to sign-in", http.StatusFound, http.Header{"Location": {"https://idp.example.test/authorize"}}, false, false},
+		{"the Application", http.StatusOK, http.Header{"Server": {"nginx/1.30.0"}}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{StatusCode: tc.status, Status: strconv.Itoa(tc.status), Header: tc.header}
+			if resp.Header == nil {
+				resp.Header = http.Header{}
+			}
+			ok, retry, message := loginCallbackAnswer(resp)
+			if ok != tc.ok || retry != tc.retry {
+				t.Errorf("ok, retry = %v, %v (%s), want %v, %v", ok, retry, message, tc.ok, tc.retry)
+			}
+		})
+	}
+}
+
+// checkServedCertificate must pass only when the server presents exactly
+// the certificate wanted for the SNI it was sent.
+func TestCheckServedCertificate(t *testing.T) {
+	const host = "shop.other.test"
+	certPEM, keyPEM, der, err := selfSignedCertificate(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errorPage := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }
+	for _, tc := range []struct {
+		name string
+		// fromHandshake is the first handshake that presents the host's
+		// certificate; 0 means none does.
+		fromHandshake int
+		wantErr       string
+	}{
+		{"the host's certificate", 1, ""},
+		// Traefik loads the Secret after the first poll: a reused
+		// connection would keep the default certificate.
+		{"the host's certificate once loaded", 2, ""},
+		{"the default certificate", 0, "presented a certificate other than"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(errorPage))
+			server.StartTLS()
+			defaultCert := server.TLS.Certificates[0]
+			handshakes := 0
+			server.TLS.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+				handshakes++
+				if tc.fromHandshake > 0 && handshakes >= tc.fromHandshake {
+					return &pair, nil
+				}
+				return &defaultCert, nil
+			}
+			server.TLS.Certificates = nil
+			defer server.Close()
+			cluster := &Cluster{HTTPSPort: serverPort(t, server.URL), Log: t.Logf}
+			err := cluster.checkServedCertificate(context.Background(), host, "/oauth2/callback", der, 5*time.Second)
 			switch {
 			case tc.wantErr == "" && err != nil:
 				t.Fatalf("got %v, want no error", err)

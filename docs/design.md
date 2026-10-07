@@ -41,7 +41,7 @@ The shared understanding reached in the design session on 2026-09-20. Vocabulary
    ```
 5. Staging Environment? [no]
 6. Custom domain? [none]. If the domain is in the Platform's Cloudflare zone (`platform.yaml`'s `cloudflareZone`), everything is automatic. Otherwise, including a domain on another Cloudflare zone, the closing summary prints the CNAME to create.
-7. Itema login? [no]. Available on Platform addresses and on custom domains inside `cloudflareZone`, the sign-in cookie's domain; not asked when a custom domain is outside it.
+7. Itema login? [no]. Available on Platform addresses and on every custom domain. A custom domain outside `cloudflareZone`, the sign-in cookie's domain, signs in on its own host and needs a redirect URI on the Entra app registration, which the closing summary prints.
 8. Size: small / medium / large [small]
 9. Summary screen, confirm.
 

@@ -106,8 +106,8 @@ func TestAppCreateWizardFlagsPreAnswerQuestions(t *testing.T) {
 	}
 }
 
-// Itema login is offered when every custom domain is inside platform.yaml's
-// cloudflareZone, the login cookie's domain.
+// Itema login is offered with custom domains inside platform.yaml's
+// cloudflareZone, the login cookie's domain, as with any other.
 func TestAppCreateWizardOffersLoginForDomainsInsideTheZone(t *testing.T) {
 	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
 	gh := newFakeGitHub(t)
@@ -121,7 +121,7 @@ func TestAppCreateWizardOffersLoginForDomainsInsideTheZone(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Itema login") || strings.Contains(stdout, "not offered") {
+	if !strings.Contains(stdout, "Itema login?") {
 		t.Errorf("stdout does not ask the Itema login question:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "Login:      Itema (Entra ID) sign-in required") {
@@ -136,32 +136,6 @@ func TestAppCreateWizardOffersLoginForDomainsInsideTheZone(t *testing.T) {
 	}
 	if got, ok := lookup(t, values, "domains").([]any); !ok || len(got) != 2 {
 		t.Errorf("values.yaml domains = %v, want both domains", lookup(t, values, "domains"))
-	}
-}
-
-// The wizard says why it skips the login question, naming the domain.
-func TestAppCreateWizardSkipsLoginForADomainOutsideTheZone(t *testing.T) {
-	url := newPlatformRepository(t, testCapabilitiesPlatformYAML)
-	gh := newFakeGitHub(t)
-
-	// postgres, staging, domain, size, confirm: no login answer.
-	stdin := "n\nn\nx.itma.no, shop.example.com\n\ny\n"
-
-	stdout, stderr, code := createApplicationInteractive(t, url, cli.Dependencies{GitHubAPI: gh.srv.URL}, stdin,
-		"--name", "shop", "--path", "create", "--framework", "nextjs")
-
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
-	}
-	if strings.Contains(stdout, "Itema login?") {
-		t.Errorf("stdout asks the Itema login question, want it skipped:\n%s", stdout)
-	}
-	if want := "Itema login is not offered: its sign-in cookie is set for itma.no, and shop.example.com outside it."; !strings.Contains(stdout, want) {
-		t.Errorf("stdout lacks %q:\n%s", want, stdout)
-	}
-	values := readYAML(t, filepath.Join(cloneMain(t, url), "applications/shop/prod/values.yaml"))
-	if got := lookup(t, values, "login", "enabled"); got != false {
-		t.Errorf("values.yaml login.enabled = %v, want false", got)
 	}
 }
 
