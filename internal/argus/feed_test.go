@@ -284,3 +284,43 @@ func TestSeedLeavesOutAProbeFailingWhileItsPodStarted(t *testing.T) {
 		t.Errorf("after the grace, the feed's Warnings are %q, want %q", got, want)
 	}
 }
+
+// A probe that failed on an earlier Pod of the same name, as a
+// StatefulSet re-creates one, is not judged by the new Pod's start.
+func TestAProbeFailingOnAnEarlierPodOfTheSameNameIsNews(t *testing.T) {
+	s, _ := newStore(t)
+	put(t, s, argoApp("shop", "prod"), envDeployment("shop", "prod", "1.0.0"),
+		shopPod("shop-0", true, -30*time.Second, -40*time.Second),
+		warning("shop-prod", "shop-0", "Unhealthy", "Liveness probe failed", -5*time.Minute),
+	)
+	s.Seed()
+	want := []string{"-5m0s Pod shop-0: Unhealthy: Liveness probe failed"}
+	if got := warningNotes(s); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("seeded Warnings = %q, want %q", got, want)
+	}
+}
+
+// A dropped probe failure that the kubelet updates in place, as the same
+// probe fails again on the Pod once it is running, is news then, once.
+func TestADroppedProbeFailureThatFailsAgainIsNews(t *testing.T) {
+	s, clock := newStore(t)
+	put(t, s, servingShop()...)
+	s.Seed()
+	put(t, s, shopPod("shop-b", false, 0, 0))
+	clock.add(2 * time.Second)
+	put(t, s, warning("shop-prod", "shop-b", "Unhealthy", "Readiness probe failed: connection refused", 2*time.Second))
+	clock.add(8 * time.Second)
+	put(t, s, shopPod("shop-b", true, 10*time.Second, 0))
+	s.Recompute()
+
+	clock.add(10 * time.Minute)
+	for _, d := range []time.Duration{10 * time.Minute, 10*time.Minute + 10*time.Second} {
+		again := warning("shop-prod", "shop-b", "Unhealthy", "Readiness probe failed: connection refused", d)
+		put(t, s, again)
+		s.Recompute()
+	}
+	want := []string{"10m0s Pod shop-b: Unhealthy: Readiness probe failed: connection refused"}
+	if got := warningNotes(s); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("feed's Warnings = %q, want %q", got, want)
+	}
+}

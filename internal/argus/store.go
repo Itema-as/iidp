@@ -91,6 +91,10 @@ type Store struct {
 	// out of the feed until it is known whether the Pods turned ready
 	// in time (probeFateLocked).
 	held map[string]platformstate.Event
+	// dropped are the Event keys of the failed probes dropped as their
+	// Pods turned ready in time. The kubelet updates such an Event in
+	// place when the probe fails again, which is news.
+	dropped map[string]bool
 
 	apps          map[string]platformstate.Application
 	appJSON       map[string][]byte
@@ -122,6 +126,7 @@ func NewStore(now func() time.Time, log *slog.Logger) *Store {
 		outOfSyncSince: map[string]time.Time{},
 		deployedAt:     map[string]time.Time{},
 		held:           map[string]platformstate.Event{},
+		dropped:        map[string]bool{},
 		apps:           map[string]platformstate.Application{},
 		appJSON:        map[string][]byte{},
 		components:     map[string]platformstate.Component{},
@@ -173,6 +178,10 @@ func (s *Store) Put(source, key string, obj any) {
 				had = true // another informer holds it too
 			}
 		}
+		if was, ok := old.(platformstate.Event); ok && s.dropped[key] && o.Time().After(was.Time()) {
+			delete(s.dropped, key)
+			had = false // the dropped probe failed again
+		}
 		if !had && s.seeded {
 			if n, _, ok := s.eventNoteOrHoldLocked(key, o, s.argoCDLocked(), now); ok {
 				s.publishNotes([]Note{n}, now)
@@ -188,6 +197,9 @@ func (s *Store) Delete(source, key string) {
 	defer s.mu.Unlock()
 	if o, ok := s.objects[source][key].(platformstate.ArgoCDApplication); ok {
 		delete(s.outOfSyncSince, o.Metadata.Namespace+"/"+o.Metadata.Name)
+	}
+	if _, ok := s.objects[source][key].(platformstate.Event); ok {
+		delete(s.dropped, key)
 	}
 	delete(s.objects[source], key)
 	s.poke()
@@ -467,6 +479,7 @@ func (s *Store) eventNoteOrHoldLocked(key string, e platformstate.Event, argoCD 
 			s.held[key] = e
 			return Note{}, false, false
 		case fateDrop:
+			s.dropped[key] = true
 			return Note{}, false, false
 		}
 	}
@@ -489,6 +502,8 @@ func (s *Store) settledNotesLocked(now time.Time) []Note {
 			continue
 		case fatePublish:
 			notes = append(notes, eventNote(e, argoCD))
+		case fateDrop:
+			s.dropped[key] = true
 		}
 		delete(s.held, key)
 	}
@@ -505,16 +520,20 @@ const (
 )
 
 // probeFateLocked is what becomes of e, a failed probe, at now; held says
-// it is already held. The Pod was starting if it was not yet ready when
-// the probe failed, within NotReadyGrace of its creation, as on every
-// rollout before the app listens. Such a probe is dropped if the Pod
-// turned ready within the grace, or, once held, went; it is published if
-// the Pod was still not ready at the end of the grace, and held until it
-// is known which. Any other failed probe, or one about a Pod the store
-// does not have, is published at once.
+// it is already held. The Pod counts as starting if the probe failed
+// within NotReadyGrace of its creation and the Pod has not been ready
+// since before then, as on every rollout before the app listens. Its
+// Ready condition shows only the last transition, so a young Pod that
+// went ready, not ready and ready again counts as starting too. Such a
+// probe is dropped if the Pod turned ready within the grace, or, once
+// held, went; it is published if the Pod was still not ready at the end
+// of the grace, and held until it is known which. Any other failed probe,
+// or one about a Pod the store does not have, is published at once. A
+// probe from before the Pod's creation failed on an earlier Pod of the
+// same name, which the store does not have.
 func (s *Store) probeFateLocked(e platformstate.Event, held bool, now time.Time) fate {
 	pod, ok := s.podLocked(e.Regarding.Namespace + "/" + e.Regarding.Name)
-	if !ok {
+	if !ok || e.Time().Before(pod.Metadata.CreationTimestamp) {
 		if held {
 			return fateDrop
 		}
