@@ -87,6 +87,14 @@ type Store struct {
 	deployedAt map[string]time.Time
 	// platform is where the card links out to.
 	platform Platform
+	// held are the failed probes, by Event key, of Pods still starting:
+	// out of the feed until it is known whether the Pods turned ready
+	// in time (probeFateLocked).
+	held map[string]platformstate.Event
+	// dropped are the Event keys of the failed probes dropped as their
+	// Pods turned ready in time. The kubelet updates such an Event in
+	// place when the probe fails again, which is news.
+	dropped map[string]bool
 
 	apps          map[string]platformstate.Application
 	appJSON       map[string][]byte
@@ -117,6 +125,8 @@ func NewStore(now func() time.Time, log *slog.Logger) *Store {
 		objects:        map[string]map[string]any{},
 		outOfSyncSince: map[string]time.Time{},
 		deployedAt:     map[string]time.Time{},
+		held:           map[string]platformstate.Event{},
+		dropped:        map[string]bool{},
 		apps:           map[string]platformstate.Application{},
 		appJSON:        map[string][]byte{},
 		components:     map[string]platformstate.Component{},
@@ -160,15 +170,20 @@ func (s *Store) Put(source, key string, obj any) {
 	case platformstate.Event:
 		// A new Warning Event is a feed entry, once the store has
 		// seeded the feed with those from before it started. The Deploy
-		// gate's refusals are the Deploy's own note, and the database
-		// tunnel's Events are notes in the tunnel's own words.
+		// gate's refusals are the Deploy's own note, the database
+		// tunnel's Events are notes in the tunnel's own words, and a
+		// failed probe on a starting Pod may be held.
 		for other, byKey := range s.objects {
 			if _, ok := byKey[key].(platformstate.Event); ok && other != source {
 				had = true // another informer holds it too
 			}
 		}
+		if was, ok := old.(platformstate.Event); ok && s.dropped[key] && o.Time().After(was.Time()) {
+			delete(s.dropped, key)
+			had = false // the dropped probe failed again
+		}
 		if !had && s.seeded {
-			if n, _, ok := eventFeedNote(o, s.argoCDLocked()); ok {
+			if n, _, ok := s.eventNoteOrHoldLocked(key, o, s.argoCDLocked(), now); ok {
 				s.publishNotes([]Note{n}, now)
 			}
 		}
@@ -182,6 +197,9 @@ func (s *Store) Delete(source, key string) {
 	defer s.mu.Unlock()
 	if o, ok := s.objects[source][key].(platformstate.ArgoCDApplication); ok {
 		delete(s.outOfSyncSince, o.Metadata.Namespace+"/"+o.Metadata.Name)
+	}
+	if _, ok := s.objects[source][key].(platformstate.Event); ok {
+		delete(s.dropped, key)
 	}
 	delete(s.objects[source], key)
 	s.poke()
@@ -323,6 +341,10 @@ func (s *Store) Recompute() {
 		frames = append(frames, frame("cluster", cluster))
 	}
 
+	if !quiet {
+		notes = append(notes, s.settledNotesLocked(now)...)
+	}
+
 	s.broadcast(frames)
 	s.publishNotes(notes, now)
 }
@@ -444,6 +466,114 @@ func eventFeedNote(e platformstate.Event, argoCD []platformstate.ArgoCDApplicati
 		return eventNote(e, argoCD), true, true
 	}
 	return Note{}, false, false
+}
+
+// eventNoteOrHoldLocked is the feed entry the Event e (key) makes of its
+// own, as eventFeedNote says. A failed probe on a starting Pod makes none
+// yet: it is held, or dropped if the Pod turned ready within the grace
+// (probeFateLocked).
+func (s *Store) eventNoteOrHoldLocked(key string, e platformstate.Event, argoCD []platformstate.ArgoCDApplication, now time.Time) (n Note, warning, ok bool) {
+	if isProbeFailure(e) {
+		switch s.probeFateLocked(e, false, now) {
+		case fateHold:
+			s.held[key] = e
+			return Note{}, false, false
+		case fateDrop:
+			s.dropped[key] = true
+			return Note{}, false, false
+		}
+	}
+	return eventFeedNote(e, argoCD)
+}
+
+// settledNotesLocked is the notes of the held probe failures whose Pods
+// were still not ready at the end of the grace, in key order. It forgets
+// those and the ones whose Pods turned ready in time or went.
+func (s *Store) settledNotesLocked(now time.Time) []Note {
+	if len(s.held) == 0 {
+		return nil
+	}
+	argoCD := s.argoCDLocked()
+	var notes []Note
+	for _, key := range sortedKeys(s.held, nil) {
+		e := s.held[key]
+		switch s.probeFateLocked(e, true, now) {
+		case fateHold:
+			continue
+		case fatePublish:
+			notes = append(notes, eventNote(e, argoCD))
+		case fateDrop:
+			s.dropped[key] = true
+		}
+		delete(s.held, key)
+	}
+	return notes
+}
+
+// What becomes of a failed probe's Event (probeFateLocked).
+type fate int
+
+const (
+	fatePublish fate = iota
+	fateHold
+	fateDrop
+)
+
+// probeFateLocked is what becomes of e, a failed probe, at now; held says
+// it is already held. The Pod counts as starting if the probe failed
+// within NotReadyGrace of its creation and the Pod has not been ready
+// since before then, as on every rollout before the app listens. Its
+// Ready condition shows only the last transition, so a young Pod that
+// went ready, not ready and ready again counts as starting too. Such a
+// probe is dropped if the Pod turned ready within the grace, or, once
+// held, went; it is published if the Pod was still not ready at the end
+// of the grace, and held until it is known which. Any other failed probe,
+// or one about a Pod the store does not have, is published at once. A
+// probe from before the Pod's creation failed on an earlier Pod of the
+// same name, which the store does not have.
+func (s *Store) probeFateLocked(e platformstate.Event, held bool, now time.Time) fate {
+	pod, ok := s.podLocked(e.Regarding.Namespace + "/" + e.Regarding.Name)
+	if !ok || e.Time().Before(pod.Metadata.CreationTimestamp) {
+		if held {
+			return fateDrop
+		}
+		return fatePublish
+	}
+	created := pod.Metadata.CreationTimestamp
+	if e.Time().Sub(created) > platformstate.NotReadyGrace {
+		return fatePublish
+	}
+	if platformstate.PodReady(pod) {
+		readyAt, ok := platformstate.ReadySince(pod)
+		switch {
+		case !ok || readyAt.Before(e.Time()):
+			return fatePublish // ready when the probe failed
+		case readyAt.Sub(created) > platformstate.NotReadyGrace:
+			return fatePublish
+		}
+		return fateDrop
+	}
+	if now.Sub(created) > platformstate.NotReadyGrace {
+		return fatePublish
+	}
+	return fateHold
+}
+
+// podLocked is the Pod key (namespace/name), from whichever informer
+// has it.
+func (s *Store) podLocked(key string) (platformstate.Pod, bool) {
+	for _, byKey := range s.objects {
+		if p, ok := byKey[key].(platformstate.Pod); ok {
+			return p, true
+		}
+	}
+	return platformstate.Pod{}, false
+}
+
+// isProbeFailure reports a kubelet's Warning that a Pod's readiness,
+// liveness or startup probe failed.
+func isProbeFailure(e platformstate.Event) bool {
+	return e.Type == "Warning" && e.Reason == "Unhealthy" && e.Regarding.Kind == "Pod"
 }
 
 // sessionNote is the feed entry for one of the Database tunnel's Events,

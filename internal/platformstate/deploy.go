@@ -304,7 +304,7 @@ func servingTag(f facts, tag string) bool {
 	}
 	ready := 0
 	for _, pod := range f.pods {
-		if podReady(pod) && podTag(pod) == tag {
+		if PodReady(pod) && podTag(pod) == tag {
 			ready++
 		}
 	}

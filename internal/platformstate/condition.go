@@ -187,9 +187,20 @@ func runningPods(pods []Pod, selector map[string]string) []Pod {
 	return out
 }
 
-func podReady(pod Pod) bool {
+// PodReady reports whether pod's Ready condition is True.
+func PodReady(pod Pod) bool {
 	c, ok := conditionOf(pod.Status.Conditions, "Ready")
 	return ok && c.Status == conditionTrue
+}
+
+// ReadySince is when pod last turned ready, if it is ready and its Ready
+// condition says when.
+func ReadySince(pod Pod) (time.Time, bool) {
+	c, ok := conditionOf(pod.Status.Conditions, "Ready")
+	if !ok || c.Status != conditionTrue || c.LastTransitionTime == nil {
+		return time.Time{}, false
+	}
+	return *c.LastTransitionTime, true
 }
 
 // podUnknown reports a pod whose state the kubelet no longer reports, as
@@ -272,7 +283,7 @@ func served(f facts) bool {
 	ready := 0
 	tag := templateTag(f.workload)
 	for _, pod := range f.pods {
-		if podReady(pod) {
+		if PodReady(pod) {
 			ready++
 		}
 		if t := podTag(pod); t != "" && t != tag {
@@ -293,7 +304,7 @@ func podsCondition(pods []Pod, desired int, shortSince time.Time, graced bool, n
 	unknown := ""
 	for _, pod := range pods {
 		switch {
-		case podReady(pod):
+		case PodReady(pod):
 			ready++
 		case podUnknown(pod) && unknown == "":
 			unknown = fmt.Sprintf("the state of %s is unknown", pod.Metadata.Name)
@@ -301,7 +312,7 @@ func podsCondition(pods []Pod, desired int, shortSince time.Time, graced bool, n
 	}
 	if ready < desired {
 		for _, pod := range pods {
-			if podReady(pod) {
+			if PodReady(pod) {
 				continue
 			}
 			if why := failingAtOnce(pod); why != "" {
@@ -310,7 +321,7 @@ func podsCondition(pods []Pod, desired int, shortSince time.Time, graced bool, n
 		}
 		since := shortSince
 		for _, pod := range pods {
-			if !podReady(pod) && !podUnknown(pod) && notReadySince(pod).Before(since) {
+			if !PodReady(pod) && !podUnknown(pod) && notReadySince(pod).Before(since) {
 				since = notReadySince(pod)
 			}
 		}
@@ -716,7 +727,7 @@ func arrivingStuck(f facts, current *Deploy) string {
 	case f.workload != nil:
 		ready := 0
 		for _, pod := range f.pods {
-			if podReady(pod) {
+			if PodReady(pod) {
 				ready++
 			}
 		}
