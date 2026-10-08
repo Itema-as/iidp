@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -249,4 +250,25 @@ func TestAppAddCapabilityLoginGroupPrintsNoRedirectURIs(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
 	}
 	assertLoginCallbacks(t, stdout, nil)
+}
+
+// The help of both commands says what --login does with a custom domain
+// outside the zone, and no longer that it is refused.
+func TestHelpSaysDomainsOutsideTheZoneSignInOnTheirOwnHost(t *testing.T) {
+	for _, command := range [][]string{{"app", "create"}, {"app", "add-capability"}} {
+		t.Run(strings.Join(command, " "), func(t *testing.T) {
+			var out bytes.Buffer
+			cli.Run(append(command, "--help"), strings.NewReader(""), &out, &out)
+			// Lines are wrapped, so compare with whitespace collapsed.
+			help := strings.Join(strings.Fields(out.String()), " ")
+			for _, stale := range []string{"refused while", "must then be inside", "go together only"} {
+				if strings.Contains(help, stale) {
+					t.Errorf("--help still says %q:\n%s", stale, out.String())
+				}
+			}
+			if !strings.Contains(help, "signs in on its own host") || !strings.Contains(help, "redirect URI") {
+				t.Errorf("--help does not say a custom domain outside cloudflareZone signs in on its own host and needs a redirect URI:\n%s", out.String())
+			}
+		})
+	}
 }

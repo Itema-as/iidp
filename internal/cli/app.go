@@ -133,7 +133,7 @@ func newAppCreateCommand(deps Dependencies) *cobra.Command {
 	_ = f.MarkHidden("app-dir")
 	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod: its own address, its own database, the same Capabilities")
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to serve besides the Platform address, for prod only (repeatable)")
-	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included; every --domain must then be inside platform.yaml's cloudflareZone, the sign-in cookie's domain, which the browser sends to every host in it")
+	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included. One sign-in covers every --domain inside platform.yaml's cloudflareZone, the sign-in cookie's domain, which the browser sends to every host in it; a --domain outside it signs in on its own host and needs a redirect URI on the Entra app registration, which the command prints")
 	f.StringArrayVar(&opts.loginGroups, "login-group", nil, "Entra group object id (a GUID) whose members may sign in; repeatable, a member of any one gets in. Needs --login. Without it, every Itema user gets in")
 	f.BoolVar(&opts.previews, "previews", false, "Give every open pull request labelled "+render.PreviewLabel+" on the Application repository a Preview Environment at <name>-pr-<number>.<baseDomain>: staging's values and secrets, the smallest size, Itema login, an empty database without backups, removed when the pull request closes. Needs --staging, and --path create or adopt")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
