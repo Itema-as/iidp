@@ -176,3 +176,111 @@ func TestDatabaseSessionsAreTheirEnvironmentsActivity(t *testing.T) {
 		t.Errorf("feed:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// shopPod is shop's prod pod name, created at created from t0, ready or
+// not since since.
+func shopPod(name string, ready bool, since, created time.Duration) obj {
+	p := pod("shop-prod", name, "shop", "1.0.1", ready, since)
+	p["metadata"].(obj)["creationTimestamp"] = at(created)
+	return p
+}
+
+// warningNotes are the feed's notes from Warning Events, by message.
+func warningNotes(s *Store) []string {
+	var out []string
+	for _, n := range s.Snapshot().Feed {
+		if strings.HasPrefix(n.Message, "Pod ") {
+			out = append(out, fmt.Sprintf("%s %s", n.At.Sub(t0), n.Message))
+		}
+	}
+	return out
+}
+
+// A probe failing on a Pod that is starting, as on every rollout before
+// the app listens, is held: it is news only if the Pod is still not ready
+// NotReadyGrace after its creation, and then with the Event's own time. A
+// probe failing on a Pod that is not starting is news at once.
+func TestAProbeFailingOnAStartingPodIsNewsOnlyIfThePodStaysUnready(t *testing.T) {
+	s, clock := newStore(t)
+	put(t, s, servingShop()...)
+	s.Seed()
+
+	// Ready within the grace: no note.
+	put(t, s, shopPod("shop-ready", false, 0, 0))
+	clock.add(2 * time.Second)
+	put(t, s, warning("shop-prod", "shop-ready", "Unhealthy", "Readiness probe failed: connection refused", 2*time.Second))
+	s.Recompute()
+	clock.add(5 * time.Second)
+	put(t, s, shopPod("shop-ready", true, 7*time.Second, 0))
+	s.Recompute()
+
+	// Gone within the grace: no note.
+	put(t, s, shopPod("shop-gone", false, 7*time.Second, 7*time.Second))
+	put(t, s, warning("shop-prod", "shop-gone", "Unhealthy", "Readiness probe failed: connection refused", 8*time.Second))
+	s.Recompute()
+	s.Delete("pods", "shop-prod/shop-gone")
+	s.Recompute()
+
+	// Still not ready after the grace: the Event's note, late.
+	put(t, s, shopPod("shop-stuck", false, 7*time.Second, 7*time.Second))
+	put(t, s, warning("shop-prod", "shop-stuck", "Unhealthy", "Readiness probe failed: connection refused", 9*time.Second))
+	s.Recompute()
+	clock.add(platformstate.NotReadyGrace) // t0+67s: 60 s after the Pod's creation
+	s.Recompute()
+	if got := warningNotes(s); len(got) != 0 {
+		t.Fatalf("within the grace, the feed has %q", got)
+	}
+	clock.add(time.Second)
+	s.Recompute()
+	s.Recompute() // published once
+	want := []string{"9s Pod shop-stuck: Unhealthy: Readiness probe failed: connection refused"}
+	if got := warningNotes(s); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("after the grace, the feed's Warnings are %q, want %q", got, want)
+	}
+
+	// Not ready at the end of the grace, though ready before Argus next
+	// looked: the note, late.
+	put(t, s, shopPod("shop-late", false, 8*time.Second, 8*time.Second))
+	put(t, s, warning("shop-prod", "shop-late", "Unhealthy", "Readiness probe failed: connection refused", 10*time.Second))
+	s.Recompute()
+	clock.add(2 * time.Second) // t0+70s
+	put(t, s, shopPod("shop-late", true, 69*time.Second, 8*time.Second))
+	s.Recompute()
+	want = append(want, "10s Pod shop-late: Unhealthy: Readiness probe failed: connection refused")
+	if got := warningNotes(s); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("after a Pod ready just after the grace, the feed's Warnings are %q, want %q", got, want)
+	}
+
+	// Not starting: news at once, whether the Pod is old or young and
+	// already ready.
+	put(t, s, warning("shop-prod", "shop-a", "Unhealthy", "Liveness probe failed", 70*time.Second))
+	put(t, s, shopPod("shop-young", true, 60*time.Second, 50*time.Second))
+	put(t, s, warning("shop-prod", "shop-young", "Unhealthy", "Liveness probe failed", 70*time.Second))
+	want = append(want, "1m10s Pod shop-a: Unhealthy: Liveness probe failed", "1m10s Pod shop-young: Unhealthy: Liveness probe failed")
+	if got := warningNotes(s); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("after probes failing on running Pods, the feed's Warnings are %q, want %q", got, want)
+	}
+}
+
+// Seeding applies the same rule to the last hour's Warning Events: a
+// probe that failed while its Pod was starting is left out if the Pod
+// turned ready within the grace, and held if it is still starting.
+func TestSeedLeavesOutAProbeFailingWhileItsPodStarted(t *testing.T) {
+	s, clock := newStore(t)
+	put(t, s, argoApp("shop", "prod"), envDeployment("shop", "prod", "1.0.0"),
+		shopPod("shop-a", true, -29*time.Minute, -30*time.Minute),
+		warning("shop-prod", "shop-a", "Unhealthy", "Readiness probe failed: connection refused", -30*time.Minute+2*time.Second),
+		shopPod("shop-b", false, -10*time.Second, -10*time.Second),
+		warning("shop-prod", "shop-b", "Unhealthy", "Readiness probe failed: connection refused", -8*time.Second),
+	)
+	s.Seed()
+	if got := warningNotes(s); len(got) != 0 {
+		t.Fatalf("seeded Warnings = %q, want none", got)
+	}
+	clock.add(platformstate.NotReadyGrace)
+	s.Recompute()
+	want := []string{"-8s Pod shop-b: Unhealthy: Readiness probe failed: connection refused"}
+	if got := warningNotes(s); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("after the grace, the feed's Warnings are %q, want %q", got, want)
+	}
+}
