@@ -57,12 +57,14 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 			"labelled " + render.PreviewLabel + " on the Application repository a Preview Environment, with\n" +
 			"staging's values and secrets; it needs a staging Environment (already\n" +
 			"there or added with --staging) and a repository binding (iidp app bind).\n\n" +
-			"Itema login and custom domains go together only inside platform.yaml's\n" +
-			"cloudflareZone, the domain the sign-in cookie is set for: --login is\n" +
-			"refused while prod has, or is given, a custom domain outside it, and so\n" +
-			"is --domain outside it for an Application that has Itema login. The\n" +
-			"browser sends the cookie to every host in the zone, including ones the\n" +
-			"Platform does not run.",
+			"With Itema login, one sign-in covers every custom domain inside\n" +
+			"platform.yaml's cloudflareZone, the domain the sign-in cookie is set\n" +
+			"for. The browser sends the cookie to every host in the zone, including\n" +
+			"ones the Platform does not run. A custom domain outside the zone signs\n" +
+			"in on its own host, and its callback must be a redirect URI on the\n" +
+			"Entra app registration: --login, and --domain for an Application that\n" +
+			"has Itema login, print it for each such domain, with an az command\n" +
+			"for the Platform admin.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAppAddCapability(cmd, args[0], opts, deps)
@@ -76,7 +78,7 @@ func newAppAddCapabilityCommand(deps Dependencies) *cobra.Command {
 	f.BoolVar(&opts.staging, "staging", false, "Add a staging Environment next to prod, copying prod's values (its secrets are not copied)")
 	f.StringArrayVar(&opts.domains, "domain", nil, "Custom domain to add to prod (repeatable)")
 	f.StringVar(&opts.size, "size", "", "New size for every Environment: small, medium or large")
-	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included; refused while a custom domain is outside platform.yaml's cloudflareZone, the sign-in cookie's domain")
+	f.BoolVar(&opts.login, "login", false, "Require Itema (Entra ID) sign-in on every address of every Environment, custom domains included; a custom domain outside platform.yaml's cloudflareZone, the sign-in cookie's domain, signs in on its own host and needs a redirect URI on the Entra app registration, which the command prints")
 	f.StringArrayVar(&opts.loginGroups, "login-group", nil, "Entra group object id (a GUID) whose members may sign in; repeatable, a member of any one gets in. Replaces the sign-in groups of every Environment; --login-group '' removes them all. Needs Itema login, already on or given with --login")
 	f.BoolVar(&opts.previews, "previews", false, "Give every open pull request labelled "+render.PreviewLabel+" on the Application repository a Preview Environment at <name>-pr-<number>.<baseDomain>: staging's values and secrets, the smallest size, Itema login, an empty database without backups, removed when the pull request closes. Needs a staging Environment and a repository binding")
 	f.StringVar(&opts.platformRepo, "platform-repo", platform.RepositoryURL, "Git URL of the Platform repository")
