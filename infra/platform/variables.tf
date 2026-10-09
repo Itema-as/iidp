@@ -10,9 +10,9 @@ variable "server_name" {
 }
 
 variable "server_type" {
-  description = "Machine size. CPX22 (2 vCPU, 4 GB) is the default; CPX32 is the first step up."
+  description = "Machine size. CPX32 (4 vCPU, 8 GB) is the default; CPX42 is the next step up, CPX22 the step back down. A change is applied in place; see infra/README.md, \"Resizing the node\"."
   type        = string
-  default     = "cpx22"
+  default     = "cpx32"
 }
 
 variable "location" {
