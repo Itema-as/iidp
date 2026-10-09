@@ -300,6 +300,30 @@ ssh $NODE "grep -h -e validation_failure -e audit-violations /var/lib/rancher/k3
 
 `jq` runs on your machine. An empty result for the Application namespaces is what the rollout wants before the guardrails are switched to Deny.
 
+## Resizing the node
+
+Hetzner changes the server type of the existing server, so the disk, and with it every Application database and the age key, stays. Every Application is down while the node is off, a few minutes. The disk keeps its size (`keep_disk` in [`platform/hetzner.tf`](platform/hetzner.tf)), so moving back to a smaller type stays possible; Hetzner never shrinks a disk.
+
+1. Change `server_type` in [`platform/variables.tf`](platform/variables.tf) (or `terraform.tfvars`) and commit.
+2. Shut the node down cleanly, so Postgres stops on its own terms. The provider otherwise cuts the power to a running server before resizing it:
+
+   ```sh
+   cd infra/platform
+   source ../tofu-env.sh
+   ssh root@$(tofu output -raw node_public_ipv4) poweroff
+   ```
+
+   Wait until the Hetzner Console shows the server as off.
+3. Plan, and check the plan before applying it. It must update `hcloud_server.node` in place (`~`) and change nothing else; a replace (`-/+`) would destroy every database on the node:
+
+   ```sh
+   tofu plan
+   tofu apply
+   ```
+
+   `apply` changes the type and powers the server back on. If it fails, the server may stay off; look at it in the Hetzner Console before running `apply` again.
+4. Once k3s is back, a minute or two after boot, `KUBECONFIG=~/.kube/iidp.yaml kubectl get node -o jsonpath='{.status.capacity}'` shows the new CPU and memory, and every Application in ArgoCD returns to Synced and Healthy.
+
 ## Rebuilding the node
 
 Only for disaster recovery, after confirming the database backups in the backup bucket are current. A rebuild **destroys every local volume, so every Application database on the node, and the age key**.

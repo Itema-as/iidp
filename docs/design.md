@@ -6,8 +6,8 @@ The shared understanding reached in the design session on 2026-09-20. Vocabulary
 
 | Area | Decision |
 |---|---|
-| Hosting | One Hetzner CPX22 in Helsinki, k3s on Ubuntu 24.04 via OpenTofu and cloud-init, state in Hetzner Object Storage, manual k3s version bumps |
-| Cost | ~€29 node + ~€7 Object Storage, no load balancer |
+| Hosting | One Hetzner CPX32 in Helsinki (a CPX22 until 2026-10-09, disk kept at 80 GB), k3s on Ubuntu 24.04 via OpenTofu and cloud-init, state in Hetzner Object Storage, manual k3s version bumps |
+| Cost | ~€53 node + ~€7 Object Storage, no load balancer |
 | On-node Platform | ArgoCD, Traefik, cert-manager, external-dns, CloudNativePG, Grafana Alloy, SOPS via KSOPS, oauth2-proxy |
 | Off-node | Grafana Cloud free tier for logs and metrics, GHCR for images, Cloudflare DNS for `itma.no` |
 | Rejected | Istio, Kafka, Keycloak, Harbor, Nexus, OpenSearch, Vault, Supabase in Phase 1; Crossplane deferred, Kyverno replaced by built-in admission in Phase 2 (see ADR-0004) |

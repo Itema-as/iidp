@@ -71,6 +71,10 @@ resource "hcloud_server" "node" {
   location    = var.location
   image       = var.image
 
+  # A resize leaves the disk at its current size. Hetzner never shrinks a
+  # disk, so a grown one would rule out ever moving back to a smaller type.
+  keep_disk = true
+
   ssh_keys     = [hcloud_ssh_key.admin.id]
   firewall_ids = [hcloud_firewall.node.id]
 
