@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appLayout, componentPlaces, distance, orbitRadius, ringOf } from '../web/js/layout.js';
+import { appLayout, componentPlaces, distance, orbitRadius, ringOf, COMPONENT_GROUPS, COMPONENT_RADIUS, CORE_RADIUS, FLOOR } from '../web/js/layout.js';
+import { COMPONENTS } from '../web/js/card.js';
 import { declutter } from '../web/js/labels.js';
 
 test('ring k holds 6k slots, every other ring offset half a step', () => {
@@ -28,13 +29,32 @@ test('prod and staging, then three Preview Environments, and the rest counted', 
   assert.deepEqual(L.filament.end, L.centre, 'one filament, from the core to the hub');
 });
 
-test('components keep their places on the ring whichever others there are', () => {
+test('components keep their places in their groups whichever others there are', () => {
   const a = componentPlaces(['argocd', 'traefik', 'deploy-gate']);
-  const b = componentPlaces(['argocd', 'traefik', 'deploy-gate', 'cert-manager', 'something-new']);
-  assert.deepEqual(a.get('argocd'), [0, 0, 0]);
-  assert.deepEqual(a.get('traefik'), b.get('traefik'));
-  assert.deepEqual(a.get('deploy-gate'), b.get('deploy-gate'));
-  assert.ok(distance(b.get('something-new'), [0, 0, 0]) > distance(b.get('traefik'), [0, 0, 0]));
+  const b = componentPlaces(['argocd', 'traefik', 'deploy-gate', 'cert-manager', 'k3s', 'something-new']);
+  assert.deepEqual(a.places.get('argocd'), [0, 0, 0]);
+  assert.deepEqual(a.places.get('traefik'), b.places.get('traefik'));
+  assert.deepEqual(a.places.get('deploy-gate'), b.places.get('deploy-gate'));
+  assert.deepEqual(b.places.get('k3s'), FLOOR);
+  assert.ok(distance(b.places.get('something-new'), [0, 0, 0]) > distance(b.places.get('traefik'), [0, 0, 0]));
+  assert.deepEqual(a.groups.map((g) => g.key), ['edge', 'delivery'], 'a group none of whose members the Platform has is not drawn');
+  assert.deepEqual(b.groups.map((g) => [g.key, g.members]), [['edge', ['traefik', 'cert-manager']], ['delivery', ['deploy-gate']], ['other', ['something-new']]]);
+});
+
+test('every known component but the core and the floor is in exactly one group', () => {
+  const grouped = COMPONENT_GROUPS.flatMap((g) => g.members);
+  assert.equal(new Set(grouped).size, grouped.length);
+  assert.deepEqual([...grouped, 'argocd', 'k3s'].sort(), Object.keys(COMPONENTS).sort());
+});
+
+test('no two components overlap, nor any the core, and k3s is beneath the core', () => {
+  const { places } = componentPlaces(Object.keys(COMPONENTS));
+  const ring = [...places].filter(([n]) => n !== 'argocd' && n !== 'k3s');
+  for (let i = 0; i < ring.length; i++) {
+    assert.ok(distance(ring[i][1], [0, 0, 0]) > CORE_RADIUS + 3, ring[i][0]);
+    for (let j = i + 1; j < ring.length; j++) assert.ok(distance(ring[i][1], ring[j][1]) > COMPONENT_RADIUS * 3, `${ring[i][0]} and ${ring[j][0]}`);
+  }
+  assert.ok(places.get('k3s')[1] < -CORE_RADIUS - 2);
 });
 
 test('labels that would overlap: the more important one stays', () => {

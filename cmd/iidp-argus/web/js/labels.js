@@ -11,6 +11,7 @@ export const PRIORITY = {
   focused: 90,
   tag: 80,
   application: 70,
+  group: 60,
   component: 50,
   environment: 40,
   detail: 30,
