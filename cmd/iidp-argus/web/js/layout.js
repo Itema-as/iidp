@@ -1,25 +1,43 @@
 // @ts-check
 // Where things sit, as plain numbers: the Platform core (argocd) at the
-// centre with the other components on a ring round it, and each Application
-// on an orbit slot of its own, joined to the core by a filament. Nothing here
-// imports three.js; the drawing turns these into vectors.
+// centre, the other components in groups by role round it with k3s beneath
+// it as its floor, and each Application on an orbit slot of its own, joined
+// to the core by a filament. Nothing here imports three.js; the drawing turns
+// these into vectors.
 
 /** @typedef {import('./types.js').Vec} Vec */
 
-/** The radius of the ring the Platform components sit on. */
+/** The radius of the ring the groups of Platform components sit on. */
 export const COMPONENT_RING = 8.5;
 /** The radius of the Platform core's cloud. */
 export const CORE_RADIUS = 3;
+/** The radius of a Platform component's cloud. */
+export const COMPONENT_RADIUS = 0.7;
+/** Where k3s, the node itself, sits: beneath the core, as its floor. */
+export const FLOOR = /** @type {Vec} */ ([0, -6.5, 0]);
 
 /**
- * The components in the order they take places on the ring, so that each
- * keeps its place whichever others the Platform has. argocd is the core
- * itself. Any other component takes a place on an outer ring, by name.
+ * The Platform components by role, in the order the groups take places on
+ * the ring and their members places in their group, so that each keeps its
+ * place whichever others the Platform has. argocd is the core itself and
+ * k3s the floor. Any other component goes in a group of its own further
+ * out.
+ * @type {{key: string, title: string, members: string[]}[]}
  */
-export const COMPONENT_ORDER = [
-  'traefik', 'deploy-gate', 'cert-manager', 'cloudnative-pg', 'cnpg-barman-cloud', 'external-dns',
-  'oauth2-proxy', 'monitoring', 'guardrails', 'platform-tls', 'argus', 'db-tunnel', 'k3s',
+export const COMPONENT_GROUPS = [
+  { key: 'edge', title: 'Edge', members: ['traefik', 'cert-manager', 'platform-tls', 'external-dns', 'oauth2-proxy'] },
+  { key: 'delivery', title: 'Delivery', members: ['deploy-gate', 'guardrails'] },
+  { key: 'data', title: 'Data', members: ['cloudnative-pg', 'cnpg-barman-cloud', 'db-tunnel'] },
+  { key: 'watch', title: 'Watch', members: ['monitoring', 'argus'] },
 ];
+/**
+ * How far the groups are turned round the core: the camera's usual angle
+ * looks along the diagonal between two of them, so that none sits right in
+ * front of the core or behind it, under its labels.
+ */
+const GROUP_TURN = Math.PI / 2;
+/** The group of the components no other group names. */
+export const OTHER_GROUP = { key: 'other', title: 'Other' };
 
 /**
  * An orbit slot's ring and angle: ring k holds 6k Applications, and every
@@ -128,26 +146,58 @@ export function appLayout(slot, envNames) {
 }
 
 /**
- * Where each Platform component sits: argocd is the core, the known ones
- * have fixed places on the ring, and any other one a place further out.
+ * @typedef {{key: string, title: string, centre: Vec, members: string[]}} ComponentGroup
+ *   members: the group's components the Platform has.
+ */
+
+/**
+ * Where a group's members sit round its centre: on a small ring, each at
+ * the place its index in the group gives it.
+ * @param {Vec} centre @param {number} i @param {number} n
+ * @returns {Vec}
+ */
+function memberPlace(centre, i, n) {
+  if (n === 1) return centre;
+  const r = 0.9 + 0.2 * n;
+  const a = (i / n) * Math.PI * 2;
+  return [centre[0] + Math.cos(a) * r, centre[1] + Math.sin(a * 2) * 0.35, centre[2] + Math.sin(a) * r];
+}
+
+/**
+ * Where each Platform component sits, and the groups they sit in: argocd
+ * is the core, k3s the floor, the known ones have fixed places in their
+ * groups on the ring, and any other one a place in a group further out.
  * @param {string[]} names
- * @returns {Map<string, Vec>}
+ * @returns {{places: Map<string, Vec>, groups: ComponentGroup[]}}
  */
 export function componentPlaces(names) {
   /** @type {Map<string, Vec>} */
-  const out = new Map();
-  const others = names.filter((n) => n !== 'argocd' && !COMPONENT_ORDER.includes(n)).sort();
-  for (const name of names) {
-    if (name === 'argocd') {
-      out.set(name, [0, 0, 0]);
-      continue;
-    }
-    const i = COMPONENT_ORDER.indexOf(name);
-    const angle = i >= 0 ? (i / COMPONENT_ORDER.length) * Math.PI * 2 + 0.3 : (others.indexOf(name) / Math.max(1, others.length)) * Math.PI * 2;
-    const r = i >= 0 ? COMPONENT_RING : COMPONENT_RING + 3;
-    out.set(name, [Math.cos(angle) * r, 0, Math.sin(angle) * r]);
+  const places = new Map();
+  /** @type {ComponentGroup[]} */
+  const groups = [];
+  if (names.includes('argocd')) places.set('argocd', [0, 0, 0]);
+  if (names.includes('k3s')) places.set('k3s', FLOOR);
+  COMPONENT_GROUPS.forEach((g, gi) => {
+    const a = (gi / COMPONENT_GROUPS.length) * Math.PI * 2 + GROUP_TURN;
+    /** @type {Vec} */
+    const centre = [Math.cos(a) * COMPONENT_RING, 0, Math.sin(a) * COMPONENT_RING];
+    const members = g.members.filter((n) => names.includes(n));
+    if (!members.length) return;
+    g.members.forEach((n, i) => {
+      if (names.includes(n)) places.set(n, memberPlace(centre, i, g.members.length));
+    });
+    groups.push({ key: g.key, title: g.title, centre, members });
+  });
+  const others = names.filter((n) => !places.has(n)).sort();
+  if (others.length) {
+    // Between the first two groups, beyond the ring.
+    const a = (0.5 / COMPONENT_GROUPS.length) * Math.PI * 2 + GROUP_TURN;
+    /** @type {Vec} */
+    const centre = [Math.cos(a) * (COMPONENT_RING + 4), 0, Math.sin(a) * (COMPONENT_RING + 4)];
+    others.forEach((n, i) => places.set(n, memberPlace(centre, i, others.length)));
+    groups.push({ ...OTHER_GROUP, centre, members: others });
   }
-  return out;
+  return { places, groups };
 }
 
 /**
@@ -170,7 +220,7 @@ export function domainPlace(L, centre, R) {
  * @param {number[]} slots
  */
 export function platformReach(slots) {
-  let r = COMPONENT_RING + 2;
+  let r = COMPONENT_RING + 4;
   for (const s of slots) r = Math.max(r, orbitRadius(ringOf(s).k) + 5);
   return r;
 }

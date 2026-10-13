@@ -1,16 +1,16 @@
 // @ts-check
 // The Platform as a particle network: ArgoCD as a dense core with the other
-// components on a ring round it, each Application a hub on its orbit with one
-// filament to the core, each Environment a cloud of linked particles round its
-// hub, and Deploys travelling as beads. Everything is drawn again every frame
-// from the model and the times it holds, so a redraw never restarts an
-// animation.
+// components in groups by role round it and k3s as its floor, each
+// Application a hub on its orbit with one filament to the core, each
+// Environment a cloud of linked particles round its hub, and Deploys
+// travelling as beads. Everything is drawn again every frame from the model
+// and the times it holds, so a redraw never restarts an animation.
 
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { createParticles, starfield } from './particles.js';
 import {
-  appLayout, bezier, componentPlaces, domainPlace, envKind, lerp, platformReach, postgresPlace, CORE_RADIUS,
+  appLayout, bezier, componentPlaces, domainPlace, envKind, lerp, platformReach, postgresPlace, COMPONENT_RADIUS, CORE_RADIUS,
 } from '../layout.js';
 import { componentLook, envLook, warningTag } from '../look.js';
 import { beadsFor } from '../deploys.js';
@@ -99,7 +99,7 @@ function ringTexture() {
 /**
  * @typedef {{
  *   col: string | THREE.Color, alpha?: number, rad?: number, jit?: number, wave?: number, link?: number, speed?: number,
- *   size?: number, sparks?: boolean, freeze?: boolean, fragments?: number, outline?: boolean,
+ *   size?: number, sparks?: boolean, freeze?: boolean, fragments?: number, outline?: boolean, squash?: number,
  *   arrive?: {born: number, dur: number, stagger: number, L: AppLayout} | null, disperse?: number
  * }} Style
  */
@@ -319,6 +319,7 @@ export function createNetwork(stage, { reduced }) {
         pz *= f;
         a *= 1 - st.disperse;
       }
+      if (st.squash) py *= st.squash;
       let X = c[0] + px;
       let Y = c[1] + py;
       let Z = c[2] + pz;
@@ -639,30 +640,36 @@ export function createNetwork(stage, { reduced }) {
     if (coreLook?.shape === 'ring') hardRing([0, 0, 0], CORE_RADIUS * 1.5, C.stuck, 0.8);
     picks.push({ target: { kind: 'core' }, pos: [0, 0, 0], R: CORE_RADIUS * 1.07 });
     label('plat', 'PLATFORM', 'plat', [0, 5.6, 0], PRIORITY.application);
-    label('comp:argocd', 'ArgoCD', 'comp', [0, -3.9, 0], PRIORITY.component, 90);
+    label('comp:argocd', 'ArgoCD', 'comp', [0, -3.9, 0], PRIORITY.group, 90);
     if (coreLook?.tag) label('comp:argocd:tag', coreLook.tag.text, `tag ${coreLook.tag.tone}`, [0, 6.6, 0], PRIORITY.loudTag);
 
-    // The Platform's components on their ring. The Deploy gate lights up
+    // The Platform's components in their groups, and k3s as the floor. A
+    // member's name shows when the camera is near, when the pointer or the
+    // card is on it, or when it is not Healthy. The Deploy gate lights up
     // while a Deploy passes it.
     const names = [...model.components.keys()].sort();
-    places = componentPlaces(names);
+    const placed = componentPlaces(names);
+    places = placed.places;
     let gateBusy = false;
     for (const v of model.apps.values()) for (const e of v.app.environments) if (e.activity?.deploy?.hop === 'Accepted' && !e.activity.deploy.promote) gateBusy = true;
-    for (const name of names) {
-      if (name === 'argocd') continue;
+    const focus = view.selected ?? view.hover;
+    /** @param {string} name @param {number} at the nucleus to link to */
+    const component = (name, at) => {
       const c = /** @type {import('../types.js').Component} */ (model.components.get(name));
       const p = /** @type {Vec} */ (places.get(name));
       const look = componentLook(c);
       const gate = name === 'deploy-gate' && gateBusy;
+      const floor = name === 'k3s';
       /** @type {Style} */
       const st = {
         col: look.tone === 'stuck' ? COL.stuck : look.tone === 'degraded' ? COL.bad : look.tone === 'unknown' ? COL.unknown : COL.comp,
         wave: look.wave ? 0.85 : 0, jit: look.tone === 'degraded' ? 0.55 : 0, speed: look.tone === 'degraded' ? 4 : 1,
         sparks: look.tone === 'degraded', fragments: look.tone === 'degraded' ? 3 : 1, outline: look.tone === 'unknown',
-        freeze: look.tone === 'stuck', size: gate ? 1.5 : 1,
+        freeze: look.tone === 'stuck', size: gate ? 1.5 : 1, squash: floor ? 0.3 : 0,
       };
-      P.link(core, cluster(`comp:${name}`, p, 16, 0.95, st, t), gate ? 0.75 : 0.16);
-      if (look.shape === 'ring') hardRing(p, 1.5, C.stuck, 0.9);
+      const R = floor ? 2.2 : COMPONENT_RADIUS;
+      P.link(at, cluster(`comp:${name}`, p, floor ? 28 : 12, R, st, t), gate ? 0.75 : 0.22);
+      if (look.shape === 'ring') hardRing(p, R * 1.6, C.stuck, 0.9);
       if (name === 'monitoring') {
         // Signals rising out to Grafana Cloud.
         for (let i = 0; i < 3; i++) {
@@ -670,10 +677,21 @@ export function createNetwork(stage, { reduced }) {
           P.point(p[0], p[1] + 1 + k * 4, p[2], C.signal, (1 - k) * 0.8, 2);
         }
       }
-      picks.push({ target: { kind: 'component', name }, pos: p, R: 1.3 });
-      label(`comp:${name}`, componentName(name), 'comp', [p[0], p[1] + 1.7, p[2]], PRIORITY.component, 120);
-      if (look.tag) label(`comp:${name}:tag`, look.tag.text, `tag ${look.tag.tone}`, [p[0], p[1] + 2.6, p[2]], PRIORITY.loudTag);
+      picks.push({ target: { kind: 'component', name }, pos: p, R: floor ? R : 0.9 });
+      const loud = look.tone !== 'healthy' || (focus?.kind === 'component' && focus.name === name);
+      // The name below and the tag above, far enough apart that neither
+      // hides the other.
+      label(`comp:${name}`, componentName(name), 'comp', [p[0], p[1] - (floor ? 1.2 : 1.0), p[2]], loud ? PRIORITY.tag : PRIORITY.component, floor || loud ? 0 : 30);
+      if (look.tag) label(`comp:${name}:tag`, look.tag.text, `tag ${look.tag.tone}`, [p[0], p[1] + (floor ? -3.2 : 1.1), p[2]], PRIORITY.loudTag);
+    };
+    for (const g of placed.groups) {
+      const gate = gateBusy && g.members.includes('deploy-gate');
+      const hub = P.point(g.centre[0], g.centre[1], g.centre[2], lost ? lostGrey : C.comp, 0.5, 1.4);
+      P.link(core, hub, gate ? 0.75 : 0.16);
+      for (const name of g.members) component(name, hub);
+      label(`group:${g.key}`, g.title, 'group', [g.centre[0], g.centre[1] + 2.4, g.centre[2]], PRIORITY.group);
     }
+    if (places.has('k3s')) component('k3s', core);
 
     // The Applications.
     for (const view0 of model.apps.values()) {
@@ -732,7 +750,7 @@ export function createNetwork(stage, { reduced }) {
     const sp = sel ? placeOf(sel) : null;
     selection.visible = !!sp;
     if (sp && sel) {
-      const size = sel.kind === 'core' ? 9 : sel.kind === 'component' ? 3.4 : sel.cap ? 2 : envKind(sel.env) === 'preview' ? 3.2 : envKind(sel.env) === 'staging' ? 4.6 : 5.6;
+      const size = sel.kind === 'core' ? 9 : sel.kind === 'component' ? (sel.name === 'k3s' ? 6 : 2.2) : sel.cap ? 2 : envKind(sel.env) === 'preview' ? 3.2 : envKind(sel.env) === 'staging' ? 4.6 : 5.6;
       selection.position.set(...sp);
       selection.scale.set(size, size, 1);
       selection.material.opacity = view.selected ? 0.16 : 0.08 + 0.04 * Math.sin(t / 200);
@@ -790,7 +808,7 @@ export function createNetwork(stage, { reduced }) {
     screenRadius(target) {
       const p = placeOf(target);
       if (!p) return 0;
-      const R = target.kind === 'core' ? CORE_RADIUS * 1.2 : target.kind === 'component' ? 1.2 : target.cap ? 0.6 : envKind(target.env) === 'prod' ? 2.3 : envKind(target.env) === 'staging' ? 1.9 : 1.3;
+      const R = target.kind === 'core' ? CORE_RADIUS * 1.2 : target.kind === 'component' ? (target.name === 'k3s' ? 2.2 : 0.8) : target.cap ? 0.6 : envKind(target.env) === 'prod' ? 2.3 : envKind(target.env) === 'staging' ? 1.9 : 1.3;
       return stage.pixels(p, R);
     },
 
