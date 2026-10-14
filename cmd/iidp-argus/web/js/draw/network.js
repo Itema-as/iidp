@@ -60,19 +60,32 @@ const envOrder = (/** @type {string} */ a, /** @type {string} */ b) => {
   return rank(a) - rank(b) || a.localeCompare(b, 'en', { numeric: true });
 };
 
-/** Points spread through a ball: the first is the nucleus at the centre, the rest on a spiral at varying depth. */
+/** A number in [0, 1) that is the same for the same i and k, and looks random. */
+const noise = (/** @type {number} */ i, /** @type {number} */ k) => frac(Math.sin(i * 12.9898 + k * 78.233) * 43758.5453);
+
+/**
+ * Points spread through a ball: the first is the nucleus at the centre, the
+ * rest spread evenly over a sphere along a spiral, then each moved off the
+ * spiral and set at its own depth. Without the move, the links between
+ * near neighbours trace the spiral's arms, and the cloud looks like a shell.
+ */
 const directions = new Map();
 /** @param {number} n @returns {Vec[]} */
 function dirsFor(n) {
   if (!directions.has(n)) {
+    const spacing = Math.sqrt((4 * Math.PI) / n);
     /** @type {Vec[]} */
     const out = [];
     for (let i = 0; i < n; i++) {
       const y = 1 - ((i + 0.5) / n) * 2;
       const r = Math.sqrt(1 - y * y);
       const a = i * 2.39996;
-      const f = i === 0 ? 0 : 0.42 + 0.58 * frac(i * 0.618 + 0.13);
-      out.push([Math.cos(a) * r * f, y * f, Math.sin(a) * r * f]);
+      const m = spacing * 0.8;
+      const x1 = Math.cos(a) * r + (noise(i, 1) - 0.5) * m;
+      const y1 = y + (noise(i, 2) - 0.5) * m;
+      const z1 = Math.sin(a) * r + (noise(i, 3) - 0.5) * m;
+      const f = i === 0 ? 0 : (0.42 + 0.58 * noise(i, 4)) / (Math.hypot(x1, y1, z1) || 1);
+      out.push([x1 * f, y1 * f, z1 * f]);
     }
     directions.set(n, out);
   }

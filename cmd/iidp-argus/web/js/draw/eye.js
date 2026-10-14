@@ -31,22 +31,28 @@ const norm = (a) => {
   return [a[0] / l, a[1] / l, a[2] / l];
 };
 
+/** A number in [0, 1) that is the same for the same i and k, and looks random. */
+const noise = (/** @type {number} */ i, /** @type {number} */ k) => frac(Math.sin(i * 12.9898 + k * 78.233) * 43758.5453);
+
 /**
- * Points spread evenly over a sphere.
- * @param {number} n @returns {Vec[]}
+ * Points spread evenly over a sphere along a spiral. With scatter, each
+ * moves off the spiral by up to that share of the spacing between points,
+ * so that the links between near neighbours do not trace the spiral's arms.
+ * @param {number} n @param {number} [scatter] @returns {Vec[]}
  */
-function sphere(n) {
+function sphere(n, scatter = 0) {
+  const m = Math.sqrt((4 * Math.PI) / n) * scatter;
   /** @type {Vec[]} */
   const out = [];
   for (let i = 0; i < n; i++) {
     const y = 1 - ((i + 0.5) / n) * 2;
     const r = Math.sqrt(1 - y * y);
     const a = i * 2.39996;
-    out.push([Math.cos(a) * r, y, Math.sin(a) * r]);
+    out.push(norm([Math.cos(a) * r + (noise(i, 1) - 0.5) * m, y + (noise(i, 2) - 0.5) * m, Math.sin(a) * r + (noise(i, 3) - 0.5) * m]));
   }
   return out;
 }
-const SHELL = sphere(75);
+const SHELL = sphere(75, 0.8);
 const EYES = sphere(18);
 
 /**
