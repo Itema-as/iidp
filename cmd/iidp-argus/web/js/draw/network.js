@@ -1,6 +1,6 @@
 // @ts-check
-// The Platform as a particle network: ArgoCD as a dense core with the other
-// components in groups by role round it and k3s as its floor, each
+// The Platform as a particle network: ArgoCD as a core of watching eyes with
+// the other components in groups by role round it and k3s as its floor, each
 // Application a hub on its orbit with one filament to the core, each
 // Environment a cloud of linked particles round its hub, and Deploys
 // travelling as beads. Everything is drawn again every frame from the model
@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { createParticles, starfield } from './particles.js';
+import { eyes } from './eye.js';
 import {
   appLayout, bezier, componentPlaces, domainPlace, envKind, lerp, platformReach, postgresPlace, COMPONENT_RADIUS, CORE_RADIUS,
 } from '../layout.js';
@@ -615,6 +616,34 @@ export function createNetwork(stage, { reduced }) {
     }
   }
 
+  // Where the core's eyes look, eased towards what they look at.
+  /** @type {Vec} */
+  const gaze = [0, 0, 30];
+  const coreCol = new THREE.Color();
+  const coreHot = new THREE.Color();
+  /**
+   * What the core's eyes look at: what the pointer or the card is on, the
+   * viewer when that is the core itself, else an Environment at work, else
+   * each Application in turn.
+   * @param {number} t @param {View} view @returns {Vec}
+   */
+  function gazeTarget(t, view) {
+    const sel = view.selected ?? view.hover;
+    const viewer = stage.camera.position;
+    if (sel?.kind === 'core') return [viewer.x, viewer.y, viewer.z];
+    const p = sel ? placeOf(sel) : null;
+    if (p) return p;
+    for (const v of view.model.apps.values()) {
+      for (const e of v.app.environments) {
+        const s = e.activity?.state;
+        const at = s === 'Deploying' || s === 'Updating' || s === 'Arriving' ? envPos.get(`${v.name}/${e.name}`) : null;
+        if (at) return at;
+      }
+    }
+    const names = [...view.model.apps.keys()].sort();
+    return (names.length && where(names[Math.floor(t / 5000) % names.length])) || [viewer.x, viewer.y, viewer.z];
+  }
+
   /**
    * Draws one frame.
    * @param {number} t
@@ -628,19 +657,32 @@ export function createNetwork(stage, { reduced }) {
     P.begin();
     picks = [];
 
-    // The core: ArgoCD, dense and warm, breathing faster while it works.
+    // The core: ArgoCD as a ball of eyes. They ripple shut and open while
+    // it works, shake red when it is Degraded, freeze orange when it is
+    // stuck, and stay closed while its state is Unknown.
     const argo = model.components.get('argocd');
     const coreLook = argo ? componentLook(argo) : null;
-    const breathe = 1 + 0.05 * motion * Math.sin(t / (coreLook?.wave ? 160 : 700));
-    const core = cluster('core', [0, 0, 0], 150, CORE_RADIUS * breathe, {
-      col: coreLook?.tone === 'degraded' ? COL.bad : coreLook?.tone === 'stuck' ? COL.stuck : COL.core, alpha: 0.5, size: 0.9,
-      wave: coreLook?.wave ? 0.8 : 0, jit: coreLook?.tone === 'degraded' ? 0.5 : 0, speed: coreLook?.tone === 'degraded' ? 4 : 1,
-      sparks: coreLook?.tone === 'degraded', outline: coreLook?.tone === 'unknown',
-    }, t);
-    if (coreLook?.shape === 'ring') hardRing([0, 0, 0], CORE_RADIUS * 1.5, C.stuck, 0.8);
-    picks.push({ target: { kind: 'core' }, pos: [0, 0, 0], R: CORE_RADIUS * 1.07 });
+    const tone = coreLook?.tone;
+    const nd = node('core', {
+      col: tone === 'degraded' ? COL.bad : tone === 'stuck' ? COL.stuck : tone === 'unknown' ? COL.unknown : COL.core,
+      jit: tone === 'degraded' ? 1 : 0,
+    });
+    const to = gazeTarget(t, view);
+    if (tone !== 'stuck') for (let i = 0; i < 3; i++) gaze[i] += (to[i] - gaze[i]) * 0.035;
+    coreCol.copy(nd.col);
+    coreHot.copy(nd.col).lerp(C.white, tone === 'degraded' || tone === 'stuck' ? 0.35 : 0.55);
+    if (lost) {
+      coreCol.lerp(lostGrey, 0.8);
+      coreHot.lerp(lostGrey, 0.8);
+    }
+    const core = eyes({
+      P, c: [0, 0, 0], R: CORE_RADIUS, col: coreCol, hot: coreHot, alpha: 0.6, t, motion, basis, gaze,
+      open: tone === 'unknown' ? 0.04 : 1, dilate: coreLook?.wave ? 1 : 0, jit: nd.jit, freeze: tone === 'stuck',
+    });
+    if (coreLook?.shape === 'ring') hardRing([0, 0, 0], CORE_RADIUS * 1.2, C.stuck, 0.8);
+    picks.push({ target: { kind: 'core' }, pos: [0, 0, 0], R: CORE_RADIUS * 0.9 });
     label('plat', 'PLATFORM', 'plat', [0, 5.6, 0], PRIORITY.application);
-    label('comp:argocd', 'ArgoCD', 'comp', [0, -3.9, 0], PRIORITY.group, 90);
+    label('comp:argocd', 'ArgoCD', 'comp', [0, -3.4, 0], PRIORITY.group, 90);
     if (coreLook?.tag) label('comp:argocd:tag', coreLook.tag.text, `tag ${coreLook.tag.tone}`, [0, 6.6, 0], PRIORITY.loudTag);
 
     // The Platform's components in their groups, and k3s as the floor. A
@@ -750,7 +792,7 @@ export function createNetwork(stage, { reduced }) {
     const sp = sel ? placeOf(sel) : null;
     selection.visible = !!sp;
     if (sp && sel) {
-      const size = sel.kind === 'core' ? 9 : sel.kind === 'component' ? (sel.name === 'k3s' ? 6 : 2.2) : sel.cap ? 2 : envKind(sel.env) === 'preview' ? 3.2 : envKind(sel.env) === 'staging' ? 4.6 : 5.6;
+      const size = sel.kind === 'core' ? 7.5 : sel.kind === 'component' ? (sel.name === 'k3s' ? 6 : 2.2) : sel.cap ? 2 : envKind(sel.env) === 'preview' ? 3.2 : envKind(sel.env) === 'staging' ? 4.6 : 5.6;
       selection.position.set(...sp);
       selection.scale.set(size, size, 1);
       selection.material.opacity = view.selected ? 0.16 : 0.08 + 0.04 * Math.sin(t / 200);
@@ -808,7 +850,7 @@ export function createNetwork(stage, { reduced }) {
     screenRadius(target) {
       const p = placeOf(target);
       if (!p) return 0;
-      const R = target.kind === 'core' ? CORE_RADIUS * 1.2 : target.kind === 'component' ? (target.name === 'k3s' ? 2.2 : 0.8) : target.cap ? 0.6 : envKind(target.env) === 'prod' ? 2.3 : envKind(target.env) === 'staging' ? 1.9 : 1.3;
+      const R = target.kind === 'core' ? CORE_RADIUS : target.kind === 'component' ? (target.name === 'k3s' ? 2.2 : 0.8) : target.cap ? 0.6 : envKind(target.env) === 'prod' ? 2.3 : envKind(target.env) === 'staging' ? 1.9 : 1.3;
       return stage.pixels(p, R);
     },
 

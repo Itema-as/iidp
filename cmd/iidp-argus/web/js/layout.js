@@ -9,7 +9,7 @@
 
 /** The radius of the ring the groups of Platform components sit on. */
 export const COMPONENT_RING = 8.5;
-/** The radius of the Platform core's cloud. */
+/** How far the Platform core reaches from its centre, its eyes included. */
 export const CORE_RADIUS = 3;
 /** The radius of a Platform component's cloud. */
 export const COMPONENT_RADIUS = 0.7;
